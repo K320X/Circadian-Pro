@@ -1,0 +1,146 @@
+{
+  "title": "Circadian Pro",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Elige un nombre",
+        "description": "Crea una instancia de Circadian Pro. Cada instancia puede controlar varias luces.",
+        "data": {
+          "name": "Nombre"
+        }
+      },
+      "menu": {
+        "title": "Crear o duplicar",
+        "description": "Crea una nueva instancia o duplica una existente.",
+        "data": {
+          "action": "Acción"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ajustes generales",
+        "description": "Configura el comportamiento general. Después indicarás el Kelvin real del canal W y calibrarás 4000K y 1000K.",
+        "data": {
+          "lights": "Luces",
+          "interval": "Frecuencia de adaptación (s)",
+          "transition": "Transición (s)",
+          "initial_transition": "Transición inicial (s)",
+          "min_brightness": "Brillo mínimo (%)",
+          "max_brightness": "Brillo máximo (%)",
+          "min_color_temp": "Kelvin mínimo (K)",
+          "max_color_temp": "Kelvin máximo (K)",
+          "only_once": "Adaptar solo una vez",
+          "detect_non_ha_changes": "Detectar cambios fuera de Home Assistant",
+          "intercept": "Interceptar light.turn_on",
+          "multi_light_intercept": "Interceptación multi-luz",
+          "separate_turn_on_commands": "Separar comandos turn_on",
+          "send_split_delay": "Retraso entre comandos (ms)",
+          "skip_redundant_commands": "Omitir comandos redundantes",
+          "take_over_control": "Ceder control ante cambios manuales",
+          "autoreset_control_seconds": "Auto-reset del control manual (s)",
+          "adapt_delay": "Retardo tras encender (s)",
+          "sunrise_time": "Hora fija de amanecer",
+          "sunset_time": "Hora fija de atardecer",
+          "sunrise_offset": "Offset amanecer (s)",
+          "sunset_offset": "Offset atardecer (s)",
+          "min_sunrise_time": "Amanecer más temprano",
+          "max_sunrise_time": "Amanecer más tardío",
+          "min_sunset_time": "Atardecer más temprano",
+          "max_sunset_time": "Atardecer más tardío",
+          "sleep_brightness": "Brillo en modo noche (%)",
+          "sleep_rgb_or_color_temp": "Modo noche: definir con",
+          "sleep_color_temp": "Modo noche: temperatura de color (K)",
+          "sleep_rgb_color": "Modo noche: color RGB",
+          "sleep_transition": "Transición modo noche (s)",
+          "sleep_schedule_start": "Inicio horario modo noche",
+          "sleep_schedule_end": "Fin horario modo noche",
+          "brightness_mode": "Modo de brillo",
+          "brightness_mode_time_light": "Tiempo transición brillo (luz) (s)",
+          "brightness_mode_time_dark": "Tiempo transición brillo (oscuro) (s)",
+          "sleep_activation_mode": "Activación automática del modo noche"
+        },
+        "data_description": {
+          "lights": "Lista de luces que controlará esta instancia (puede estar vacía).",
+          "interval": "Frecuencia con la que se recalculan y aplican ajustes.",
+          "transition": "Duración de la transición cuando las luces se adaptan y también al activar/desactivar el modo noche.",
+          "initial_transition": "Duración de la primera transición al pasar de apagado a encendido.",
+          "min_brightness": "Brillo mínimo permitido.",
+          "max_brightness": "Brillo máximo permitido.",
+          "min_color_temp": "Kelvin mínimo del ciclo (más cálido).",
+          "max_color_temp": "Kelvin máximo del ciclo (más frío).",
+          "sleep_rgb_or_color_temp": "Cómo se define el color en modo noche.",
+          "sleep_brightness": "Brillo objetivo en modo noche.",
+          "sleep_color_temp": "Temperatura de color en modo noche (si eliges “temperatura de color”).",
+          "sleep_rgb_color": "Color RGB en modo noche (si eliges “RGB”). En este modo el canal W se fuerza a 0.",
+          "sleep_transition": "Duración de la transición al activar/desactivar modo noche.",
+          "sleep_schedule_start": "Hora de inicio de la franja del modo noche. Solo se usa si “Activación automática del modo noche” está en “Por franja horaria”. Formato HH:MM:SS. Ejemplo: 23:00:00.",
+          "sleep_schedule_end": "Hora de fin de la franja del modo noche. Solo se usa si “Activación automática del modo noche” está en “Por franja horaria”. Si el fin es menor que el inicio, se asume que cruza medianoche. Ejemplo: inicio 23:00:00 y fin 05:00:00.",
+          "take_over_control": "Si está activo, detiene adaptaciones cuando detecta un ajuste manual.",
+          "detect_non_ha_changes": "Si está activo, detecta cambios de estado que no provienen de Home Assistant. Requiere “Ceder control ante cambios manuales” para funcionar.",
+          "autoreset_control_seconds": "Tiempo en segundos para devolver el control a Circadian Pro tras un ajuste manual. 0 desactiva.",
+          "only_once": "Si está activo, adapta las luces solo al encenderse. Si está desactivado, las mantiene adaptadas de forma continua.",
+          "separate_turn_on_commands": "Usa llamadas separadas a light.turn_on para color y brillo. Útil para ciertas luces que no soportan ambos a la vez.",
+          "send_split_delay": "Retraso (ms) entre los comandos separados cuando “Separar comandos turn_on” está activo.",
+          "adapt_delay": "Espera en segundos entre encender la luz y aplicar la adaptación. Puede evitar parpadeos.",
+          "skip_redundant_commands": "Evita enviar comandos si el estado objetivo ya coincide con el estado registrado. Reduce tráfico y mejora respuesta. Desactiva si tu luz se desincroniza.",
+          "intercept": "Intercepta llamadas a light.turn_on para adaptar color y brillo al instante. Desactiva si tu luz no soporta light.turn_on con color y brillo.",
+          "multi_light_intercept": "Si “Interceptar light.turn_on” está activo, también intercepta llamadas que apuntan a varias luces, pudiendo dividir una llamada en varias.",
+          "sunrise_offset": "Ajusta la hora del amanecer sumando o restando segundos. Valores positivos lo retrasan y valores negativos lo adelantan.",
+          "sunset_offset": "Ajusta la hora del atardecer sumando o restando segundos. Valores positivos lo retrasan y valores negativos lo adelantan.",
+          "sunrise_time": "Fuerza una hora de amanecer constante cada día en lugar de usar la hora real calculada por el sol de Home Assistant y si está en None se usa el amanecer real según tu ubicación y la fecha.",
+          "min_sunrise_time": "Pone un límite para que el amanecer virtual no ocurra antes de esa hora aunque el amanecer real sea antes y si está en None no se aplica ningún límite.",
+          "max_sunrise_time": "Pone un límite para que el amanecer virtual no ocurra después de esa hora aunque el amanecer real sea después y si está en None no se aplica ningún límite.",
+          "sunset_time": "Fuerza una hora de atardecer constante cada día en lugar de usar la hora real calculada por el sol de Home Assistant y si está en None se usa el atardecer real según tu ubicación y la fecha.",
+          "min_sunset_time": "Pone un límite para que el atardecer virtual no ocurra antes de esa hora aunque el atardecer real sea antes y si está en None no se aplica ningún límite.",
+          "max_sunset_time": "Pone un límite para que el atardecer virtual no ocurra después de esa hora aunque el atardecer real sea después y si está en None no se aplica ningún límite.",
+          "brightness_mode": "Natural: Transición gradual y distribuida en ventana larga pre y post-evento solar\nLineal: Transición uniforme y distribuida linealmente en ventana fija alrededor del evento solar\nSigmoide: Transición rápida y concentrada en ventana corta alrededor del evento solar",
+          "brightness_mode_time_dark": "Define cuántos segundos dura la transición de brillo hacia el modo de noche alrededor del atardecer cuanto más alto más suave y lento será el cambio y solo se aplica si brightness_mode está en linear o tanh porque con default se ignora o casi no tiene efecto.",
+          "brightness_mode_time_light": "Define cuántos segundos dura la transición de brillo hacia el modo de día alrededor del amanecer cuanto más alto más suave y lento será el cambio y solo se aplica si brightness_mode está en linear o tanh porque con default se ignora o casi no tiene efecto.",
+          "sleep_activation_mode": "Define cuándo se activa automáticamente el modo noche. Desactivado: solo se activa si enciendes el switch de Modo noche manualmente. Por amanecer y atardecer: se activa desde el atardecer hasta el amanecer. Por franja horaria: se activa únicamente dentro de la franja que indiques más abajo."
+        }
+      },
+      "white_w_kelvin": {
+        "title": "Canal blanco (W)",
+        "description": "Indica el Kelvin real del canal blanco dedicado (W) de tu tira RGBW (por ejemplo, 3000K).",
+        "data": {
+          "white_w_kelvin": "Kelvin del canal W (K)"
+        },
+        "data_description": {
+          "white_w_kelvin": "Kelvin real del LED blanco dedicado (W) de tu tira. Desde 4000K hasta este valor, el canal W se mantiene al nivel de 4000K; por debajo, se reduce progresivamente hacia la calibración de 1000K."
+        }
+      },
+      "cal_neutral": {
+        "title": "Calibración 4000K",
+        "description": "Este es el panel de calibración de 4000K. Ajusta los colores y el blanco para obtener un blanco neutro agradable.",
+        "data": {
+          "cal_rgb_neutral_r": "Intensidad rojo (0–255)",
+          "cal_rgb_neutral_g": "Intensidad verde (0–255)",
+          "cal_rgb_neutral_b": "Intensidad azul (0–255)",
+          "cal_white_intensity_neutral": "Intensidad blanco W (0–100)"
+        }
+      },
+      "cal_warm": {
+        "title": "Calibración 1000K",
+        "description": "Este es el panel de calibración de 1000K. Ajusta los colores y el blanco para “forzar” un naranja cálido. Normalmente conviene bajar el blanco para que actúe más el rojo.",
+        "data": {
+          "cal_rgb_warm_r": "Intensidad rojo (0–255)",
+          "cal_rgb_warm_g": "Intensidad verde (0–255)",
+          "cal_rgb_warm_b": "Intensidad azul (0–255)",
+          "cal_white_intensity_warm": "Intensidad blanco W (0–100)"
+        }
+      }
+    },
+    "error": {
+      "option_error": "Uno o varios ajustes no son válidos.",
+      "entity_missing": "Una de las luces configuradas ya no existe.",
+      "invalid_brightness_range": "El brillo mínimo no puede ser mayor que el brillo máximo.",
+      "invalid_color_temp_range": "El Kelvin mínimo no puede ser mayor que el Kelvin máximo.",
+      "invalid_brightness_window": "En modo Lineal o Sigmoide, la suma de las ventanas de luz y oscuridad debe ser mayor que cero.",
+      "invalid_sunrise_bounds": "El amanecer más temprano no puede ser posterior al amanecer más tardío.",
+      "invalid_sunset_bounds": "El atardecer más temprano no puede ser posterior al atardecer más tardío."
+    }
+  }
+}

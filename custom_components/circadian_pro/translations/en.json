@@ -1,0 +1,136 @@
+{
+  "title": "Circadian Pro",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Choose a name",
+        "description": "Create a Circadian Pro instance. Each instance can control multiple lights.",
+        "data": {
+          "name": "Name"
+        }
+      },
+      "menu": {
+        "title": "Create or Duplicate",
+        "description": "Create a new instance or duplicate an existing one.",
+        "data": {
+          "action": "Action"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "General settings",
+        "description": "Configure general behavior. Next you'll enter the real Kelvin of the W channel and calibrate 4000K and 1000K.",
+        "data": {
+          "lights": "Lights",
+          "interval": "Adaptation interval (s)",
+          "transition": "Transition (s)",
+          "initial_transition": "Initial transition (s)",
+          "min_brightness": "Minimum brightness (%)",
+          "max_brightness": "Maximum brightness (%)",
+          "min_color_temp": "Minimum color temperature (K)",
+          "max_color_temp": "Maximum color temperature (K)",
+          "only_once": "Adapt only once",
+          "detect_non_ha_changes": "Detect non-Home Assistant changes",
+          "intercept": "Intercept light.turn_on",
+          "multi_light_intercept": "Multi-light intercept",
+          "separate_turn_on_commands": "Separate turn_on commands",
+          "send_split_delay": "Split delay (ms)",
+          "skip_redundant_commands": "Skip redundant commands",
+          "take_over_control": "Give up control on manual changes",
+          "autoreset_control_seconds": "Auto-reset manual control (s)",
+          "adapt_delay": "Adapt delay after turn-on (s)",
+          "sunrise_time": "Fixed sunrise time",
+          "sunset_time": "Fixed sunset time",
+          "sunrise_offset": "Sunrise offset (s)",
+          "sunset_offset": "Sunset offset (s)",
+          "min_sunrise_time": "Earliest sunrise",
+          "max_sunrise_time": "Latest sunrise",
+          "min_sunset_time": "Earliest sunset",
+          "max_sunset_time": "Latest sunset",
+          "sleep_brightness": "Sleep brightness (%)",
+          "sleep_rgb_or_color_temp": "Sleep mode: define with",
+          "sleep_color_temp": "Sleep mode: color temperature (K)",
+          "sleep_rgb_color": "Sleep mode: RGB color",
+          "sleep_transition": "Sleep transition (s)",
+          "sleep_schedule_start": "Sleep schedule start",
+          "sleep_schedule_end": "Sleep schedule end",
+          "brightness_mode": "Brightness mode",
+          "brightness_mode_time_light": "Brightness transition time (light) (s)",
+          "brightness_mode_time_dark": "Brightness transition time (dark) (s)",
+          "sleep_activation_mode": "Automatic sleep mode activation"
+        },
+        "data_description": {
+          "lights": "List of lights controlled by this instance (may be empty).",
+          "interval": "How often settings are recalculated and applied.",
+          "transition": "Transition time used when adapting lights and when enabling/disabling sleep mode.",
+          "initial_transition": "Transition time for the first change when turning on a light.",
+          "min_brightness": "Minimum allowed brightness.",
+          "max_brightness": "Maximum allowed brightness.",
+          "min_color_temp": "Minimum Kelvin in the cycle (warmer).",
+          "max_color_temp": "Maximum Kelvin in the cycle (cooler).",
+          "sleep_rgb_or_color_temp": "How color is defined in sleep mode.",
+          "sleep_brightness": "Target brightness in sleep mode.",
+          "sleep_color_temp": "Sleep color temperature (if using color temperature).",
+          "sleep_rgb_color": "Sleep RGB color (if using RGB). In this mode the W channel is forced to 0.",
+          "sleep_transition": "Transition time when enabling/disabling sleep mode.",
+          "sleep_schedule_start": "Start time for the fixed sleep schedule (only used when the automatic sleep mode is set to \"By schedule\").",
+          "sleep_schedule_end": "End time for the fixed sleep schedule (only used when the automatic sleep mode is set to \"By schedule\").",
+          "take_over_control": "If enabled, pauses adaptation when manual changes are detected.",
+          "sunrise_offset": "Shifts sunrise by adding or subtracting seconds. Positive values delay sunrise and negative values advance it.",
+          "sunset_offset": "Shifts sunset by adding or subtracting seconds. Positive values delay sunset and negative values advance it.",
+          "sunrise_time": "Forces a fixed sunrise time every day instead of using Home Assistant's calculated sun time. If set to None, the real sunrise time is used based on your location and date.",
+          "min_sunrise_time": "Sets a lower bound so the virtual sunrise will not occur earlier than this time even if the real sunrise is earlier. If None, no limit is applied.",
+          "max_sunrise_time": "Sets an upper bound so the virtual sunrise will not occur later than this time even if the real sunrise is later. If None, no limit is applied.",
+          "sunset_time": "Forces a fixed sunset time every day instead of using Home Assistant's calculated sun time. If set to None, the real sunset time is used based on your location and date.",
+          "min_sunset_time": "Sets a lower bound so the virtual sunset will not occur earlier than this time even if the real sunset is earlier. If None, no limit is applied.",
+          "max_sunset_time": "Sets an upper bound so the virtual sunset will not occur later than this time even if the real sunset is later. If None, no limit is applied.",
+          "brightness_mode_time_dark": "How many seconds the brightness transition towards night lasts around sunset. Higher values make the change smoother and slower. Only applies when brightness_mode is linear or tanh; with default it is ignored or has little effect.",
+          "brightness_mode_time_light": "How many seconds the brightness transition towards day lasts around sunrise. Higher values make the change smoother and slower. Only applies when brightness_mode is linear or tanh; with default it is ignored or has little effect.",
+          "sleep_activation_mode": "Choose how sleep mode is enabled automatically. Disabled: only manual sleep switch. By sunrise/sunset: sleep mode from sunset until sunrise. By schedule: sleep mode only within the schedule below."
+        }
+      },
+      "white_w_kelvin": {
+        "title": "White channel (W)",
+        "description": "Enter the real Kelvin of the dedicated white channel (W) of your RGBW strip (for example, 3000K).",
+        "data": {
+          "white_w_kelvin": "W channel Kelvin (K)"
+        },
+        "data_description": {
+          "white_w_kelvin": "Actual Kelvin of the dedicated W (white) LED in your strip. From 4000K down to this value, the W channel stays at the 4000K level; below it, W is progressively reduced towards the 1000K calibration."
+        }
+      },
+      "cal_neutral": {
+        "title": "Calibration 4000K",
+        "description": "Calibration panel for 4000K. Adjust RGB and W to get a pleasant neutral white.",
+        "data": {
+          "cal_rgb_neutral_r": "Red intensity (0–255)",
+          "cal_rgb_neutral_g": "Green intensity (0–255)",
+          "cal_rgb_neutral_b": "Blue intensity (0–255)",
+          "cal_white_intensity_neutral": "White intensity W (0–100)"
+        }
+      },
+      "cal_warm": {
+        "title": "Calibration 1000K",
+        "description": "Calibration panel for 1000K. Adjust RGB and W to force a warm/orange look. Usually lowering W helps the red dominate.",
+        "data": {
+          "cal_rgb_warm_r": "Red intensity (0–255)",
+          "cal_rgb_warm_g": "Green intensity (0–255)",
+          "cal_rgb_warm_b": "Blue intensity (0–255)",
+          "cal_white_intensity_warm": "White intensity W (0–100)"
+        }
+      }
+    },
+    "error": {
+      "option_error": "One or more options are invalid.",
+      "entity_missing": "A configured light entity no longer exists.",
+      "invalid_brightness_range": "Minimum brightness cannot be greater than maximum brightness.",
+      "invalid_color_temp_range": "Minimum color temperature cannot be greater than maximum color temperature.",
+      "invalid_brightness_window": "For Linear or Sigmoid mode, the combined light and dark transition window must be greater than zero.",
+      "invalid_sunrise_bounds": "Earliest sunrise cannot be later than latest sunrise.",
+      "invalid_sunset_bounds": "Earliest sunset cannot be later than latest sunset."
+    }
+  }
+}

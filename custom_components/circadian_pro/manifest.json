@@ -1,0 +1,11 @@
+{
+  "domain": "circadian_pro",
+  "name": "Circadian Pro",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://www.home-assistant.io/",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "0.20.3",
+  "icon": "mdi:weather-night"
+}
