@@ -157,6 +157,12 @@ Circadian Pro is a custom integration and is not part of the official Home Assis
 
 Compatibility can vary depending on the capabilities and implementation of each light integration.
 
+## Third-party notices
+
+The integration, panel, entities and services use the Circadian Pro name and `circadian_pro` domain. Technical references to Home Assistant, WLED and other supported integrations describe compatibility.
+
+Licensing and provenance for inherited code are recorded in [NOTICE](custom_components/circadian_pro/NOTICE) and the accompanying license files. Keep these files with copies of the integration, including installation ZIPs.
+
 ## Development checks
 
 Use Python 3.12 or newer and Node.js 24. The checks do not require a Home Assistant installation:

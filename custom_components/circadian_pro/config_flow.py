@@ -1,4 +1,5 @@
 """Config flow for Circadian Pro integration."""
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 
 import logging
 from copy import deepcopy

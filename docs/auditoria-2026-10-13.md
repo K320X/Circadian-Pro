@@ -58,6 +58,14 @@ La calibración mantiene sus referencias visuales y no redefine las temperaturas
 
 ## Verificación y límites
 
+### Revisión de identidad y procedencia
+
+Se revisaron todos los archivos versionados, incluidos textos ES/EN, servicios, eventos, rutas WebSocket, entidades y recursos gráficos. El dominio operativo es `circadian_pro`; no se encontraron perfiles preconfigurados ni llamadas al dominio de otra integración de iluminación. Se renombró una variable interna heredada y se corrigió un mensaje de registro. Los enlaces de documentación e incidencias del manifiesto apuntan ahora al repositorio de Circadian Pro. Se conservaron los identificadores persistentes de entidades.
+
+Las menciones técnicas a Home Assistant, WLED, Hue y las bibliotecas utilizadas describen compatibilidad o fuentes. La procedencia y las licencias del código heredado se documentan en `custom_components/circadian_pro/NOTICE` y sus archivos de licencia, incluidos en el paquete instalable. Esta revisión corresponde al repositorio; no modifica los perfiles ni la instalación activa de Home Assistant.
+
+### Comprobaciones
+
 Validación local final: **222 pruebas Python y 73 pruebas JavaScript pasan: 295 en total, sin skips**. Pasan también la comprobación de los once módulos Python y cuatro documentos JSON, todas las claves de traducción requeridas, Ruff `E9,F,B` y `git diff --check`. Entorno local: Python 3.12.14, Node.js 24 y Astral 2.2.
 
 GitHub Actions incorpora esas comprobaciones en Python 3.12 y 3.14. El resultado remoto debe comprobarse sobre el commit publicado; las pruebas locales no equivalen a un resultado CI confirmado.

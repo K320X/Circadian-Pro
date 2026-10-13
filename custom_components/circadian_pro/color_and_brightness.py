@@ -1,4 +1,5 @@
 """Switch for the Circadian Pro integration."""
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 
 from __future__ import annotations
 

@@ -1,3 +1,4 @@
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv

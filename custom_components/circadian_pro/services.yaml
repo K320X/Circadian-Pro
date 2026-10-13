@@ -1,4 +1,5 @@
 # Descriptions for Circadian Pro actions.
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 apply:
   description: Applies the current Circadian Pro settings to lights.
   fields:

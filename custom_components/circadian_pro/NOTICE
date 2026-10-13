@@ -1,0 +1,33 @@
+Circadian Pro - notices for inherited code
+
+Parts of this integration derive from Adaptive Lighting:
+https://github.com/basnijholt/adaptive-lighting
+
+The inherited portions are distributed under the Apache License, Version 2.0.
+A complete copy is included in LICENSE-APACHE-2.0.txt in this directory.
+
+The following files contain modified inherited code:
+  __init__.py
+  _docs_helpers.py
+  adaptation_utils.py
+  color_and_brightness.py
+  config_flow.py
+  const.py
+  hass_utils.py
+  helpers.py
+  switch.py
+  services.yaml
+
+Modifications for Circadian Pro include the integration identity, configuration
+and lifecycle handling, scheduling, color and brightness adaptation, RGBW/RGBWW
+calibration, service interception, permissions, preview coordination and fixes.
+The repository history records the changes made since its initial import.
+
+The exact original fork revision is not recorded in this repository. Provenance
+and the upstream license were checked on 2026-10-13 against upstream revision
+283fec08ae7d34901d13c32e91fb001f92395fe7. That revision is a comparison reference,
+not a claim about the revision originally imported.
+
+This notice concerns inherited code. It does not assign authorship of that code
+to Circadian Pro or extend its license to independently created code or artwork.
+Circadian Pro is maintained separately; no upstream endorsement is implied.

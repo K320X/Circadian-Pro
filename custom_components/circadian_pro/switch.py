@@ -1,4 +1,5 @@
 """Switch for the Circadian Pro integration."""
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 
 from __future__ import annotations
 
@@ -239,8 +240,8 @@ def is_our_context_id(context_id: str | None, which: str | None = None) -> bool:
     if context_id is None:
         return False
 
-    is_al = f":{_DOMAIN_SHORT}:" in context_id
-    if not is_al:
+    is_ours = f":{_DOMAIN_SHORT}:" in context_id
+    if not is_ours:
         return False
     if which is None:
         return True
@@ -3402,8 +3403,8 @@ class CircadianProManager:
         switch.fire_manual_control_event(light, turn_on_event.context)
         _LOGGER.debug(
             "'%s' was already on and 'light.turn_on' was not called by the"
-            " circadian_pro integration (context.id='%s'), the CircadianPro"
-            " Lighting will stop adapting %s of the light until the switch or the"
+            " circadian_pro integration (context.id='%s'), Circadian Pro"
+            " will stop adapting %s of the light until the switch or the"
             " light turns off and then on again.",
             light,
             turn_on_event.context.id,

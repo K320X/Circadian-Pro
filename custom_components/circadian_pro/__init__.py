@@ -1,4 +1,5 @@
 """Circadian Pro integration in Home-Assistant."""
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 
 from typing import Any
 

@@ -1,4 +1,5 @@
 """Helper functions for the Circadian Pro custom components."""
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 
 from __future__ import annotations
 

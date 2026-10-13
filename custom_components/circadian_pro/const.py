@@ -1,4 +1,5 @@
 """Constants for the Circadian Pro integration."""
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 
 from datetime import time, timedelta
 from enum import Enum

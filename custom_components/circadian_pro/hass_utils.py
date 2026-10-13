@@ -1,4 +1,5 @@
 """Utility functions for HA core."""
+# Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 
 import logging
 from collections.abc import Awaitable, Callable, Iterable
