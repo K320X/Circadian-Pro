@@ -1,7 +1,7 @@
 # Auditoría de Circadian Pro — 13 de octubre de 2026
 
 Base revisada: versión estable **0.21.3**, commit `2382f7012ea29943b5ff1a756b39c5f471d4c8c0`.
-Correcciones: rama `codex/full-code-audit`, versión de desarrollo **0.21.4**.
+Correcciones: versión **0.21.4**, desarrollada en la rama `codex/full-code-audit`.
 
 ## Alcance y método
 
@@ -9,7 +9,7 @@ Se revisaron los once módulos Python, el panel JavaScript, los servicios, las t
 
 Los fallos corregidos cuentan con reproducciones o regresiones sobre lógica de producción. Las pruebas usan dobles para las entradas/salidas de Home Assistant; las pruebas solares usan también Astral 2.2 real. Las carreras de tareas se verifican con `asyncio` real. Se contrastaron los contratos utilizados con el código oficial de Home Assistant 2026.10.1.
 
-Esta auditoría no modifica la instalación de Home Assistant ni sus perfiles. La versión de desarrollo necesita la validación final con luces reales antes de convertirse en una nueva versión estable.
+La auditoría inicial se realizó sin modificar Home Assistant. Posteriormente se instaló la versión 0.21.4 en Home Assistant 2026.10.1 con copia de seguridad previa y se verificaron el arranque, los tres perfiles, su configuración, los 12 estados de interruptores y el asistente. La salida física de color no se volvió a probar durante esa instalación.
 
 ## Hallazgos corregidos
 
@@ -62,7 +62,7 @@ La calibración mantiene sus referencias visuales y no redefine las temperaturas
 
 Se revisaron todos los archivos versionados, incluidos textos ES/EN, servicios, eventos, rutas WebSocket, entidades y recursos gráficos. El dominio operativo es `circadian_pro`; no se encontraron perfiles preconfigurados ni llamadas al dominio de otra integración de iluminación. Se renombró una variable interna heredada y se corrigió un mensaje de registro. Los enlaces de documentación e incidencias del manifiesto apuntan ahora al repositorio de Circadian Pro. Se conservaron los identificadores persistentes de entidades.
 
-Las menciones técnicas a Home Assistant, WLED, Hue y las bibliotecas utilizadas describen compatibilidad o fuentes. La procedencia y las licencias del código heredado se documentan en `custom_components/circadian_pro/NOTICE` y sus archivos de licencia, incluidos en el paquete instalable. Esta revisión corresponde al repositorio; no modifica los perfiles ni la instalación activa de Home Assistant.
+Las menciones técnicas a Home Assistant, WLED, Hue y las bibliotecas utilizadas describen compatibilidad o fuentes. La procedencia y las licencias del código heredado se documentan en `custom_components/circadian_pro/NOTICE` y sus archivos de licencia, incluidos en el paquete instalable. Esta revisión del repositorio precedió a la instalación descrita al principio del informe.
 
 ### Comprobaciones
 
@@ -70,6 +70,8 @@ Validación local final: **222 pruebas Python y 73 pruebas JavaScript pasan: 295
 
 GitHub Actions incorpora esas comprobaciones en Python 3.12 y 3.14. El resultado remoto debe comprobarse sobre el commit publicado; las pruebas locales no equivalen a un resultado CI confirmado.
 
-No se puede afirmar ausencia absoluta de fallos. El interceptor sigue usando el registro interno de servicios de Home Assistant; está protegido con recuperación y mantiene el modo reactivo si ese contrato cambia. Las conversiones de canales y los tiempos reales dependen de cada integración/controlador. Un timeout libera recursos y comunica el fallo, pero no garantiza que un controlador desconectado pueda restaurarse ni revoca una orden que el dispositivo ya recibió. Antes de instalar esta versión se debe probar en Home Assistant el encendido con brillo/color separados, el control manual, las previews/restauraciones, permisos personalizados, respuestas tardías y el reinicio con los perfiles existentes.
+No se puede afirmar ausencia absoluta de fallos. El interceptor sigue usando el registro interno de servicios de Home Assistant; está protegido con recuperación y mantiene el modo reactivo si ese contrato cambia. Las conversiones de canales y los tiempos reales dependen de cada integración/controlador. Un timeout libera recursos y comunica el fallo, pero no garantiza que un controlador desconectado pueda restaurarse ni revoca una orden que el dispositivo ya recibió. El reinicio con los perfiles existentes ya se verificó en la instalación posterior. Las pruebas físicas de brillo/color separados, control manual, previews/restauraciones, permisos personalizados y respuestas tardías siguen siendo complementarias a la cobertura automática.
+
+El arranque real también mostró un aviso de compatibilidad futura: Home Assistant prevé retirar `get_astral_location` en 2027.7. La migración a la API de observadores solares queda como trabajo posterior; no se observó un fallo de carga en 2026.10.1.
 
 Fuentes primarias contrastadas: [Core 2026.10.1](https://github.com/home-assistant/core/blob/2026.10.1/homeassistant/core.py), [servicios y permisos](https://github.com/home-assistant/core/blob/2026.10.1/homeassistant/helpers/service.py), [resolución de objetivos](https://github.com/home-assistant/core/blob/2026.10.1/homeassistant/helpers/target.py), [dependencias de HA](https://github.com/home-assistant/core/blob/2026.10.1/pyproject.toml) y [Astral 2.2](https://github.com/sffjunkie/astral/tree/2.2).

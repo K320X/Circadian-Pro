@@ -15,11 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.3`
+**Current stable version:** `0.21.4`
 
-**Development version:** `0.21.4`, with the full-code audit fixes. It is not yet a published stable release.
-
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits. The development branch passes 222 Python and 73 frontend regressions.
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits. Version 0.21.4 passes 222 Python and 73 frontend regressions, plus installation and configuration checks on Home Assistant 2026.10.1.
 
 ## Features
 
@@ -129,6 +127,16 @@ circadian_pro.change_switch_settings
 
 These services can be used from automations, scripts and Developer Tools.
 
+## Release 0.21.4
+
+- Fixed split brightness/color commands, manual-control detection and per-light service targeting, while preserving Home Assistant permissions.
+- Hardened calibration preview ownership, cancellation, timeouts and restoration, including concurrent editors and delayed device responses.
+- Improved configuration validation, lifecycle cleanup, YAML handling, translated selectors and wizard recovery after connection failures.
+- Reduced repeated solar calculations and added polar-day/night handling compatible with Python 3.12 and 3.14.
+- Completed the Circadian Pro branding review and included inherited-code license notices in the installation package.
+
+Validation: 222 Python and 73 frontend tests, GitHub Actions on Python 3.12/3.14, and a live update from 0.21.3 to 0.21.4 on Home Assistant 2026.10.1. All three existing profiles, their configuration and 12 switch states were preserved. The wizard was checked without enabling previews; physical color output was not retested for this release.
+
 ## Release 0.21.3
 
 - Corrected RGB+CCT adaptation using separate cold-white and warm-white channels, while retaining RGB, RGBW and native color-temperature support.
@@ -176,4 +184,6 @@ node --test tests/*.mjs
 ```
 
 GitHub Actions runs the same checks on Python 3.12 and 3.14 for pushes and pull requests. The regression tests execute production logic with Home Assistant I/O doubles; they complement live validation and do not replace testing with real light integrations.
+
+Follow the [release procedure](docs/releasing.md) to keep the installed version, GitHub `main`, version tag and downloadable ZIP aligned after each completed update.
 
