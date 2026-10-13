@@ -223,10 +223,11 @@ export async function waitForLoadedEntry(callWS, entryId, {
 }
 
 export class EntryCatalog {
-  constructor(fetchEntries, onEntries, initial = [], onError = () => {}) {
+  constructor(fetchEntries, onEntries, initial = [], onError = () => {}, onConnectionChange = () => {}) {
     this.fetchEntries = fetchEntries;
     this.onEntries = onEntries;
     this.onError = onError;
+    this.onConnectionChange = onConnectionChange;
     this.entries = initial;
     this.active = true;
     this.subscribed = false;
@@ -237,22 +238,40 @@ export class EntryCatalog {
     this.unsubscribe = null;
     this.connection = null;
     this.readyListener = null;
+    this.disconnectedListener = null;
     this.subscriptionRevision = 0;
+    this.transportRevision = 0;
   }
 
   async connect(connection) {
     if (typeof connection?.subscribeMessage !== "function") return false;
     this.connection = connection;
     this.readyListener = () => {
-      if (this.active && this.connection === connection) this.subscribe(false);
+      if (!this.active || this.connection !== connection) return;
+      // The old socket has gone away. Its unsubscribe ID must never be sent
+      // through the new socket, whose command IDs can start again from zero.
+      this.transportRevision++;
+      this.unsubscribe = null;
+      this.subscribe(false);
+    };
+    this.disconnectedListener = () => {
+      if (!this.active || this.connection !== connection) return;
+      this.transportRevision++;
+      this.subscriptionRevision++;
+      this.unsubscribe = null;
+      this.subscribed = false;
+      this.onConnectionChange();
     };
     connection.addEventListener?.("ready", this.readyListener);
+    connection.addEventListener?.("disconnected", this.disconnectedListener);
+    if (connection.connected === false) return false;
     return this.subscribe(true);
   }
 
   async subscribe(initial) {
     const connection = this.connection;
     const generation = this.generation;
+    const transportRevision = this.transportRevision;
     const revision = ++this.subscriptionRevision;
     const previous = this.unsubscribe;
     this.unsubscribe = null;
@@ -275,11 +294,14 @@ export class EntryCatalog {
         }
       }, { type: "config_entries/subscribe" }, { resubscribe: false });
       if (!current()) {
-        await unsubscribe();
+        // An ACK can arrive late, but cancellation is valid only on the
+        // transport that created that subscription.
+        if (transportRevision === this.transportRevision) await unsubscribe();
         return false;
       }
       this.unsubscribe = unsubscribe;
       this.subscribed = true;
+      this.onConnectionChange();
       if (!initial) this.schedule();
       return true;
     } catch (error) {
@@ -333,7 +355,8 @@ export class EntryCatalog {
     const unsubscribe = this.unsubscribe;
     this.unsubscribe = null;
     this.connection?.removeEventListener?.("ready", this.readyListener);
-    this.connection = this.readyListener = null;
+    this.connection?.removeEventListener?.("disconnected", this.disconnectedListener);
+    this.connection = this.readyListener = this.disconnectedListener = null;
     if (unsubscribe) Promise.resolve().then(unsubscribe).catch(() => {});
   }
 }
@@ -527,11 +550,17 @@ export class CircadianCalibrationPanel extends HTMLElement {
         if (this.catalog === catalog && this.isConnected) this.applyEntries(entries);
       }, this.entries, () => {
         if (this.catalog === catalog && this.isConnected) this.catalogFailure();
+      }, () => {
+        if (this.catalog === catalog && this.isConnected && !this.busy && !this.flow && !this.newProfileOpen) this.render();
       },
     );
     this.catalog = catalog;
     await this.action(async () => {
-      await catalog.connect(this._hass.connection);
+      // Subscription ACKs can be lost during reconnect. Metadata loading must
+      // not wait on one; the ready listener subscribes again on the new socket.
+      catalog.connect(this._hass.connection).catch(() => {
+        if (this.catalog === catalog && this.isConnected) this.catalogFailure();
+      });
       if (this.catalog !== catalog || !this.isConnected) return;
       const [entries, translations] = await Promise.all([
         catalog.read(),

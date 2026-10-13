@@ -749,15 +749,15 @@ test("creating in the panel opens the options wizard only after loaded confirmat
 });
 
 function metadataConnection() {
-  const state = { callback: null, unsubscribes: 0, subscriptions: 0, readyListeners: new Set() };
+  const state = { callback: null, unsubscribes: 0, subscriptions: 0, readyListeners: new Set(), disconnectedListeners: new Set() };
   state.connection = {
     addEventListener(event, callback) {
-      assert.equal(event, "ready");
-      state.readyListeners.add(callback);
+      assert.ok(["ready", "disconnected"].includes(event));
+      (event === "ready" ? state.readyListeners : state.disconnectedListeners).add(callback);
     },
     removeEventListener(event, callback) {
-      assert.equal(event, "ready");
-      state.readyListeners.delete(callback);
+      assert.ok(["ready", "disconnected"].includes(event));
+      (event === "ready" ? state.readyListeners : state.disconnectedListeners).delete(callback);
     },
     async subscribeMessage(callback, request, options) {
       assert.deepEqual(request, { type: "config_entries/subscribe" });
@@ -769,6 +769,7 @@ function metadataConnection() {
     },
   };
   state.ready = () => { for (const callback of state.readyListeners) callback(); };
+  state.disconnect = () => { for (const callback of state.disconnectedListeners) callback(); };
   return state;
 }
 
@@ -954,7 +955,7 @@ test("ready reconnects with a single explicit subscription and refreshes the cat
   metadata.ready();
   await flushMicrotasks();
   assert.equal(metadata.subscriptions, 2);
-  assert.equal(metadata.unsubscribes, 1);
+  assert.equal(metadata.unsubscribes, 0);
   assert.equal(catalog.subscribed, true);
   t.mock.timers.tick(150);
   await catalog.inFlight;
@@ -984,6 +985,7 @@ test("leaving while offline removes ready listeners and cannot reopen a subscrip
   t.mock.timers.tick(1000);
   await flushMicrotasks();
   assert.equal(metadata.readyListeners.size, 0);
+  assert.equal(metadata.disconnectedListeners.size, 0);
   assert.equal(autoResubscriptions.length, 0);
   assert.equal(metadata.subscriptions, 1);
   assert.equal(metadata.unsubscribes, 1);
@@ -1078,4 +1080,119 @@ test("header keeps New profile outside the card and provides an accessible menu 
   assert.match(css, /\.mobile-menu \{ display:none;/);
   assert.match(css, /@media\(max-width:870px\) \{ \.mobile-menu \{ display:block;/);
   assert.match(css, /button\.primary \{[^}]*color:var\(--primary-background-color,#081018\)/);
+});
+
+test("reused subscription IDs on a new socket are never cancelled by the old socket's cleanup", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  const activeCommands = new Map();
+  let cancellations = 0;
+  const baseSubscribe = metadata.connection.subscribeMessage;
+  metadata.connection.subscribeMessage = async (callback, request, options) => {
+    await baseSubscribe(callback, request, options);
+    activeCommands.set(2, callback); // HA's command counter starts again after reconnect.
+    return async () => { cancellations++; activeCommands.delete(2); };
+  };
+  const catalog = new EntryCatalog(async () => [], () => {});
+  await catalog.connect(metadata.connection);
+  const oldCallback = activeCommands.get(2);
+  activeCommands.clear(); // The server discards subscriptions on the closed socket.
+  metadata.disconnect();
+  metadata.ready();
+  await flushMicrotasks();
+  assert.equal(metadata.subscriptions, 2);
+  assert.equal(cancellations, 0);
+  assert.equal(activeCommands.size, 1);
+  assert.notEqual(activeCommands.get(2), oldCallback);
+  assert.equal(catalog.subscribed, true);
+  catalog.stop();
+  await flushMicrotasks();
+  assert.equal(cancellations, 1);
+  assert.equal(activeCommands.size, 0);
+});
+
+test("a late old ACK does not unsubscribe a newer transport", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  const oldAck = deferred();
+  let attempts = 0;
+  let oldCancellations = 0;
+  let newActive = false;
+  metadata.connection.subscribeMessage = async (_callback, _request, options) => {
+    assert.deepEqual(options, { resubscribe: false });
+    if (++attempts === 1) return oldAck.promise;
+    newActive = true;
+    return async () => { newActive = false; };
+  };
+  const catalog = new EntryCatalog(async () => [], () => {});
+  const connecting = catalog.connect(metadata.connection);
+  metadata.disconnect();
+  metadata.ready();
+  await flushMicrotasks();
+  oldAck.resolve(async () => { oldCancellations++; newActive = false; });
+  assert.equal(await connecting, false);
+  assert.equal(oldCancellations, 0);
+  assert.equal(newActive, true);
+  assert.equal(catalog.subscribed, true);
+  catalog.stop();
+  await flushMicrotasks();
+  assert.equal(newActive, false);
+});
+
+test("a lost initial subscription ACK does not block panel loading or reconnect recovery", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  const lostAck = deferred();
+  let attempts = 0;
+  let reads = 0;
+  let renders = 0;
+  const subscribe = metadata.connection.subscribeMessage;
+  metadata.connection.subscribeMessage = (callback, request, options) => {
+    if (++attempts === 1) return lostAck.promise;
+    return subscribe(callback, request, options);
+  };
+  const good = [{ entry_id: "one", title: "Office", settings: { lights: [] } }];
+  const panel = {
+    initialized: false, busy: false, isConnected: true, entries: [],
+    _hass: { user: { is_admin: true }, connection: metadata.connection, callWS: async (message) => {
+      if (message.type === API + "entries") { reads++; return good; }
+      if (message.type === API + "translations") return {};
+      throw new Error("Unexpected message");
+    } },
+    copy: { admin: "Administrator required", error: "Error", catalogError: "Refresh error" },
+    language: "en", render: () => { renders++; }, updateControls: () => {},
+  };
+  for (const name of ["initialize", "action", "applyEntries", "catalogFailure"]) {
+    panel[name] = CircadianCalibrationPanel.prototype[name].bind(panel);
+  }
+  await panel.initialize();
+  assert.equal(panel.busy, false);
+  assert.equal(panel.entries, good);
+  assert.equal(reads, 1);
+  metadata.disconnect();
+  metadata.ready();
+  await flushMicrotasks();
+  assert.equal(panel.catalog.subscribed, true);
+  t.mock.timers.tick(150);
+  await panel.catalog.inFlight;
+  assert.equal(panel.busy, false);
+  assert.equal(reads, 2);
+  assert.equal(attempts, 2);
+  assert.ok(renders >= 2);
+  panel.catalog.stop();
+});
+
+test("initializing on an offline connection waits for ready before sending a subscription", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  metadata.connection.connected = false;
+  const catalog = new EntryCatalog(async () => [], () => {});
+  assert.equal(await catalog.connect(metadata.connection), false);
+  assert.equal(metadata.subscriptions, 0);
+  metadata.connection.connected = true;
+  metadata.ready();
+  await flushMicrotasks();
+  assert.equal(metadata.subscriptions, 1);
+  assert.equal(catalog.subscribed, true);
+  catalog.stop();
 });
