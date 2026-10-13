@@ -517,6 +517,7 @@ export class EntryCatalog {
 const COPY = {
   es: {
     title: "Circadian Pro", profile: "Perfil", profiles: "Perfiles", actions: "Acciones", start: "Configurar y calibrar", menu: "Abrir menú",
+    integration: "Ir a la integración",
     sortProfiles: "Ordenar por", sortRecent: "Modificados recientemente", sortNameAsc: "Nombre: A–Z", sortNameDesc: "Nombre: Z–A",
     newProfile: "Nuevo perfil", profileName: "Nombre del perfil", createProfile: "Crear perfil", cancel: "Cancelar",
     newHint: "Crea un perfil sin luces seleccionadas. Después podrás elegir sus luces, configurarlo y calibrarlo.",
@@ -551,6 +552,7 @@ const COPY = {
   },
   en: {
     title: "Circadian Pro", profile: "Profile", profiles: "Profiles", actions: "Actions", start: "Configure and calibrate", menu: "Open menu",
+    integration: "Go to integration",
     sortProfiles: "Sort by", sortRecent: "Recently modified", sortNameAsc: "Name: A–Z", sortNameDesc: "Name: Z–A",
     newProfile: "New profile", profileName: "Profile name", createProfile: "Create profile", cancel: "Cancel",
     newHint: "Create a profile with no lights selected. Then choose its lights, configure it and calibrate it.",
@@ -1257,10 +1259,12 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .profile-settings:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; }
       .profile-create { display:flex; justify-content:center; margin-top:28px; } .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
       button.primary { background:var(--primary-color,#0077ab); color:var(--primary-background-color,#081018); border-color:transparent; } button:disabled { opacity:.55; cursor:wait; } .close { margin-left:auto; font-size:13px; }
+      .integration-link { display:flex; align-items:center; justify-content:center; margin-left:auto; min-height:44px; padding:10px 14px; border:1px solid var(--divider-color,#ddd); border-radius:8px; color:var(--primary-color,#0077ab); font-size:13px; font-weight:600; line-height:1.3; text-align:center; text-decoration:none; }
+      .integration-link:hover { background:var(--secondary-background-color,#f1f4f7); border-color:var(--primary-color,#0077ab); } .integration-link:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; }
       .mobile-menu { display:none; padding:8px 10px; font-size:22px; line-height:1; } @media(max-width:870px) { .mobile-menu { display:block; } }
       #catalog-warning { margin-bottom:20px; padding:12px; border:1px solid var(--warning-color,#e69500); border-radius:8px; } #catalog-warning p { margin:0 0 10px; }
       #error { background:#b3261e; color:white; padding:12px; border-radius:8px; white-space:pre-line; } .step { margin:0 0 10px; font-size:13px; } .saved { color:var(--success-color,#16814b); } [hidden] { display:none !important; }
-      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; } header strong { font-size:16px; } .close { padding:8px; } }
+      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; gap:8px; } header strong { font-size:16px; flex-shrink:0; } .close,.integration-link { padding:8px; } }
     `;
     const header = element("header");
     const menu = element("button", "☰", "mobile-menu");
@@ -1273,6 +1277,10 @@ export class CircadianCalibrationPanel extends HTMLElement {
       const close = element("button", this.copy.close, "close");
       close.addEventListener("click", () => this.action(() => this.closeWizard()));
       header.append(close);
+    } else if (!this.newProfileOpen) {
+      const integration = element("a", this.copy.integration, "integration-link");
+      integration.href = "/config/integrations/integration/circadian_pro";
+      header.append(integration);
     }
     const main = element("main");
     const article = element("article");

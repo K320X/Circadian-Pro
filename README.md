@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.9`
+**Current stable version:** `0.21.10`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.9 adds intensity and warm-to-cool gradients to the calibration sliders; see the [release notes](docs/release-0.21.9.md).
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.10 adds a direct link from the profile list to the native integration page; see the [release notes](docs/release-0.21.10.md).
 
 ## Features
 
@@ -101,7 +101,7 @@ Open the **Circadian Pro** sidebar panel to create profiles or configure and cal
 
 General settings are grouped into adaptation timing, brightness and temperature, sleep mode, sunrise and sunset, manual changes, and compatibility. Related settings share a row on wide panels and stack on narrow screens, with each description kept beside its own control. All settings remain available.
 
-The sidebar uses a sun-and-moon icon. On narrow screens, the panel header provides a button to open Home Assistant's sidebar; it stays hidden on desktop. Primary buttons use the theme's background color for readable text in both light and dark themes.
+The sidebar uses a sun-and-moon icon. The profile-list header has a **Go to integration** shortcut to Circadian Pro's native Home Assistant page, where profile devices, switches and entity IDs are available. While editing, the header retains **Close without saving**. On narrow screens, the panel header provides a button to open Home Assistant's sidebar; it stays hidden on desktop. Primary buttons use the theme's background color for readable text in both light and dark themes.
 
 The preview checkbox is disabled by default. Checking it applies the draft immediately; adjusting RGB or white controls while it is checked updates the lights without saving. Unchecking it stops the preview and restores the previous state.
 

@@ -1063,7 +1063,7 @@ test("header keeps the mobile menu while New profile appears below the profile t
   const panel = {
     shadowRoot: new Node("shadow"), entries: [{ entry_id: "one", title: "Office" }], selectedEntryId: "one",
     catalog: { subscribed: true }, catalogError: "", translations: {},
-    copy: { title: "Circadian Pro", menu: "Open menu", newProfile: "New profile", start: "Configure and calibrate", retry: "Retry" },
+    copy: { title: "Circadian Pro", menu: "Open menu", integration: "Go to integration", newProfile: "New profile", start: "Configure and calibrate", retry: "Retry" },
     _hass: { user: { is_admin: true } }, error: "",
     dispatchEvent: (event) => events.push(event),
     updateControls() { CircadianCalibrationPanel.prototype.updateControls.call(this); },
@@ -1076,7 +1076,9 @@ test("header keeps the mobile menu while New profile appears below the profile t
   assert.equal(events[0].type, "hass-toggle-menu");
   assert.equal(events[0].bubbles, true);
   assert.equal(events[0].composed, true);
-  assert.equal(header.children.at(-1).textContent, "Circadian Pro");
+  assert.equal(header.querySelector("strong").textContent, "Circadian Pro");
+  assert.equal(header.querySelector(".integration-link").textContent, "Go to integration");
+  assert.equal(header.querySelector(".integration-link").href, "/config/integrations/integration/circadian_pro");
   const article = panel.shadowRoot.querySelector("article");
   const table = article.querySelector(".profile-table");
   const create = article.querySelector(".profile-create");
