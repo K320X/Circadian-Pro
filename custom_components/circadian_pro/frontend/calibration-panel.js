@@ -6,6 +6,20 @@ const CONFIG_FLOW = "config/config_entries/flow";
 const OPTIONAL_TIMES = new Set([
   "sunrise_time", "sunset_time", "min_sunrise_time", "max_sunrise_time", "min_sunset_time", "max_sunset_time",
 ]);
+// Presentation only: the server still supplies the fields, defaults and validation.
+// Each row contains related settings; future unknown fields stay visible below.
+const GENERAL_GROUPS = [
+  { id: "adaptation", rows: [["interval", "adapt_delay"], ["transition", "initial_transition"], ["only_once"]] },
+  { id: "limits", rows: [["min_brightness", "max_brightness"], ["min_color_temp", "max_color_temp"],
+    ["brightness_mode"], ["brightness_mode_time_light", "brightness_mode_time_dark"]] },
+  { id: "night", rows: [["sleep_activation_mode"], ["sleep_schedule_start", "sleep_schedule_end"],
+    ["sleep_brightness", "sleep_transition"], ["sleep_rgb_or_color_temp"], ["sleep_color_temp", "sleep_rgb_color"]] },
+  { id: "solar", rows: [["sunrise_time", "sunrise_offset"], ["min_sunrise_time", "max_sunrise_time"],
+    ["sunset_time", "sunset_offset"], ["min_sunset_time", "max_sunset_time"]] },
+  { id: "manual", rows: [["take_over_control"], ["detect_non_ha_changes"], ["autoreset_control_seconds"]] },
+  { id: "compatibility", rows: [["intercept"], ["multi_light_intercept"], ["separate_turn_on_commands"],
+    ["send_split_delay"], ["skip_redundant_commands"]] },
+];
 let previewSessionCounter = 0;
 
 function previewSessionId() {
@@ -523,6 +537,8 @@ const COPY = {
     checkStep: "Comprobar estado",
     choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
     warmWhite: "Cálido", coldWhite: "Frío",
+    groups: { adaptation: "Ritmo de adaptación", limits: "Brillo y temperatura", night: "Modo noche",
+      solar: "Amanecer y atardecer", manual: "Cambios manuales", compatibility: "Compatibilidad y envío", other: "Otros ajustes" },
     selectEntities: "Seleccionar luces",
     close: "Cerrar sin guardar", preview: "Previsualizar luz", active: "Vista previa activa",
     idle: "Puedes ajustar los valores sin cambiar las luces.",
@@ -555,6 +571,8 @@ const COPY = {
     checkStep: "Check status",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
     warmWhite: "Warm", coldWhite: "Cold",
+    groups: { adaptation: "Adaptation timing", limits: "Brightness and temperature", night: "Sleep mode",
+      solar: "Sunrise and sunset", manual: "Manual changes", compatibility: "Compatibility and commands", other: "Other settings" },
     selectEntities: "Select lights",
     close: "Close without saving", preview: "Preview light", active: "Preview active",
     idle: "You can adjust the values without changing the lights.",
@@ -572,6 +590,31 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+
+function generalSettings(fields, renderField, titles) {
+  const remaining = new Map(fields.map((field) => [field.name, field]));
+  const nodes = [];
+  if (remaining.has("lights")) {
+    nodes.push(renderField(remaining.get("lights")));
+    remaining.delete("lights");
+  }
+  for (const group of [...GENERAL_GROUPS, { id: "other", rows: fields.map((field) => [field.name]) }]) {
+    const section = element("fieldset", undefined, "settings-group");
+    section.append(element("legend", titles[group.id]));
+    for (const names of group.rows) {
+      const available = names.filter((name) => remaining.has(name));
+      if (!available.length) continue;
+      const row = element("div", undefined, available.length > 1 ? "settings-row paired" : "settings-row");
+      for (const name of available) {
+        row.append(renderField(remaining.get(name)));
+        remaining.delete(name);
+      }
+      section.append(row);
+    }
+    if (section.children.length > 1) nodes.push(section);
+  }
+  return nodes;
 }
 
 export function sortedProfileEntries(entries, order = "recent", language = "en") {
@@ -1041,6 +1084,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       }
     }
     input.dataset.field = name;
+    if (input.type === "checkbox") wrapper.className += " checkbox-field";
     input.required = Boolean(field.required) || input.type === "number";
     const changed = () => {
       this.values = this.readValues(false);
@@ -1125,9 +1169,21 @@ export class CircadianCalibrationPanel extends HTMLElement {
       :host { display:block; height:100%; color:var(--primary-text-color,#202124); background:var(--primary-background-color,#fafafa); font:14px system-ui,sans-serif; }
       * { box-sizing:border-box; } header { height:64px; display:flex; align-items:center; gap:16px; padding:0 20px; border-bottom:1px solid var(--divider-color,#ddd); background:var(--card-background-color,#fff); }
       header strong { font-size:19px; } main { height:calc(100% - 64px); overflow:auto; padding:28px 20px; }
-      article { max-width:850px; margin:auto; padding:28px; border:1px solid var(--divider-color,#ddd); border-radius:14px; background:var(--card-background-color,#fff); }
+      article { max-width:850px; margin:auto; padding:28px; border:1px solid var(--divider-color,#ddd); border-radius:14px; background:var(--card-background-color,#fff); container-type:inline-size; }
       h1 { margin:0 0 12px; font-size:24px; } p { line-height:1.55; white-space:pre-line; } .muted,small { color:var(--secondary-text-color,#606770); }
-      form { display:grid; gap:22px; margin-top:24px; } .field { display:grid; gap:8px; } .label { font-weight:600; } small { line-height:1.45; }
+      form { display:grid; gap:22px; margin-top:24px; min-width:0; } .field { display:grid; gap:8px; min-width:0; align-content:start; } .label { font-weight:600; } small { line-height:1.45; }
+      .settings-group { min-width:0; margin:0; padding:20px; border:1px solid var(--divider-color,#ddd); border-radius:12px; }
+      .settings-group legend { max-width:100%; padding:0 8px; font-size:16px; font-weight:650; }
+      .settings-row { display:grid; gap:8px 24px; min-width:0; } .settings-row + .settings-row { margin-top:22px; }
+      .settings-row.paired { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .settings-row.paired > .field { grid-template-rows:subgrid; grid-row:span 3; }
+      .settings-group .label,.settings-group small { overflow-wrap:anywhere; }
+      .settings-group .checkbox-field { grid-template-columns:20px minmax(0,1fr); align-items:center; }
+      .settings-group .checkbox-field .label { grid-column:2; grid-row:1; }
+      .settings-group .checkbox-field input { grid-column:1; grid-row:1; }
+      .settings-group .checkbox-field small { grid-column:2; }
+      .settings-group input[type=number],.settings-group input[type=time] { max-width:220px; min-width:0; }
+      @container(max-width:540px) { .settings-group { padding:16px; } .settings-row.paired { grid-template-columns:minmax(0,1fr); gap:22px; } .settings-row.paired > .field { grid-template-rows:none; grid-row:auto; gap:8px; } }
       input:not([type=checkbox]):not([type=range]),select { color:inherit; background:var(--card-background-color,#fff); font:inherit; width:100%; min-height:42px; padding:9px 12px; border:1px solid var(--divider-color,#aeb4bc); border-radius:8px; }
       .calibration-controls { display:grid; grid-template-columns:minmax(0,1fr) 96px; gap:18px; align-items:start; }
       .calibration-rail { min-width:0; } .calibration-controls input[type=number] { text-align:center; }
@@ -1159,9 +1215,9 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .profile-table thead th:last-child { width:72px; } .profile-table tbody th { padding:16px 12px; overflow-wrap:anywhere; }
       .profile-table td { padding:10px 0 10px 12px; text-align:right; } .profile-table tbody tr { border-top:1px solid var(--divider-color,#ddd); }
       .profile-settings { width:44px; height:44px; display:inline-flex; align-items:center; justify-content:center; padding:9px; }
-      .tune-icon { display:grid; grid-template-columns:repeat(3,2px); justify-content:space-around; width:22px; height:22px; }
-      .tune-icon span { position:relative; width:2px; border-radius:1px; background:currentColor; }
-      .tune-icon span::after { content:""; position:absolute; left:-3px; top:4px; width:8px; height:5px; border:2px solid currentColor; border-radius:2px; background:var(--card-background-color,#fff); }
+      .tune-icon { display:grid; grid-template-columns:repeat(3,1.5px); justify-content:space-between; width:24px; height:24px; padding:2px 3.25px; }
+      .tune-icon span { position:relative; border-radius:1px; background:currentColor; }
+      .tune-icon span::after { content:""; position:absolute; left:50%; transform:translateX(-50%); top:4px; width:6px; height:3px; border:1px solid currentColor; border-radius:1px; background:var(--card-background-color,#fff); }
       .tune-icon span:nth-child(2)::after { top:13px; } .tune-icon span:nth-child(3)::after { top:8px; }
       .profile-settings:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; }
       .profile-create { display:flex; justify-content:center; margin-top:28px; } .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
@@ -1239,7 +1295,9 @@ export class CircadianCalibrationPanel extends HTMLElement {
       if (description) article.append(element("p", description, "muted"));
       const form = element("form");
       form.addEventListener("submit", (event) => { event.preventDefault(); this.navigate(); });
-      for (const field of step.data_schema || []) form.append(this.field(field));
+      const fields = step.data_schema || [];
+      if (step.step_id === "init") form.append(...generalSettings(fields, (field) => this.field(field), this.copy.groups));
+      else for (const field of fields) form.append(this.field(field));
       article.append(form);
       const errors = Object.entries(step.errors || {}).map(([key, value]) => {
         const label = text.data?.[key];
