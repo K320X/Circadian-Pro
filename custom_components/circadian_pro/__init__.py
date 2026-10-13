@@ -34,6 +34,9 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Import integration from config."""
+    from .frontend import async_setup_frontend
+
+    await async_setup_frontend(hass)
     if DOMAIN in config:
         for entry in config[DOMAIN]:
             hass.async_create_task(
@@ -57,6 +60,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    from .calibration import async_stop_calibration_preview
+
+    await async_stop_calibration_preview(hass, config_entry.entry_id)
     unload_ok = await hass.config_entries.async_unload_platforms(
         config_entry,
         PLATFORMS,

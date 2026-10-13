@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prueba local de calibración Circadian Pro</title>
+<style>
+  body { margin:0; height:100vh; background:#f5f7fa; font-family:system-ui; --primary-color:#0077ab; }
+  .notice { height:38px; box-sizing:border-box; padding:9px 20px; background:#e8f0fe; color:#204779; font-size:13px; }
+  circadian-pro-calibration { height:calc(100vh - 38px); display:block; }
+</style>
+<div class="notice">Prueba local · No controla tus luces. <span id="demo-status">Vista simulada detenida.</span></div>
+<circadian-pro-calibration></circadian-pro-calibration>
+<script type="module">
+  import '../../custom_components/circadian_pro/frontend/calibration-panel.js';
+  const translations = (await (await fetch('../../custom_components/circadian_pro/translations/es.json')).json()).options;
+  const original = {
+    lights:['light.example_a'], interval:60, transition:5, initial_transition:0,
+    min_color_temp:1200, max_color_temp:4000, min_brightness:100, max_brightness:100,
+    white_w_kelvin:3000, white_cw_kelvin:6500, cal_white_kelvin_neutral:4000,
+    cal_rgb_neutral_r:255, cal_rgb_neutral_g:255, cal_rgb_neutral_b:255,
+    cal_rgb_warm_r:255, cal_rgb_warm_g:56, cal_rgb_warm_b:0,
+    cal_white_intensity_neutral:100, cal_white_intensity_warm:0,
+    sleep_rgb_color:[255,56,0],sunrise_time:'None',
+  };
+  const steps = ['init','white_channels','cal_neutral','cal_warm'];
+  const names = [
+    ['lights','interval','transition','min_color_temp','max_color_temp','min_brightness','max_brightness','sleep_rgb_color','sunrise_time'],
+    ['white_w_kelvin','white_cw_kelvin'],
+    ['cal_rgb_neutral_r','cal_rgb_neutral_g','cal_rgb_neutral_b','cal_white_intensity_neutral','cal_white_kelvin_neutral'],
+    ['cal_rgb_warm_r','cal_rgb_warm_g','cal_rgb_warm_b','cal_white_intensity_warm'],
+  ];
+  const flows = new Map();
+  let sequence = 0;
+  const commands = [];
+  const form = (id, index, errors = {}) => ({
+    flow_id:id, type:'form', step_id:steps[index], last_step:index === 3, errors,
+    data_schema:names[index].map((name) => ({ name, default:original[name],
+      ...(name === 'lights' ? {selector:{entity:{domain:'light',multiple:true}}}
+        : name === 'sleep_rgb_color' ? {selector:{color_rgb:{}}}
+        : name === 'sunrise_time' ? {type:'string'}
+        : {selector:{number:{min:name.startsWith('cal_rgb') || name.startsWith('cal_white_intensity') ? 0 : 0,
+          max:name.startsWith('cal_rgb') ? 255 : name.startsWith('cal_white_intensity') ? 100 : 10000,step:1}}}),
+    })),
+  });
+  const panel = document.querySelector('circadian-pro-calibration');
+  panel.hass = {
+    language:'es',user:{is_admin:true},
+    states:{'light.example_a':{attributes:{friendly_name:'Light A',supported_color_modes:['color_temp','rgbww']}},'light.example_b':{attributes:{friendly_name:'Light B',supported_color_modes:['rgbw']}}},
+    callWS:async(message) => {
+      commands.push(message);
+      if(message.type.endsWith('/entries')) return [{entry_id:'local-profile-a',title:'Profile A',settings:{...original}}];
+      if(message.type.endsWith('/translations')) return translations;
+      if(message.type.endsWith('/preview')) {
+        if(message.settings.white_w_kelvin >= message.settings.white_cw_kelvin) throw Error('El blanco frío debe superar la temperatura del blanco cálido.');
+        document.querySelector('#demo-status').textContent = `Vista simulada: ${message.kelvin} K · R ${message.settings[message.kelvin === 4000 ? 'cal_rgb_neutral_r' : 'cal_rgb_warm_r']}.`;
+        return {expires_in:60};
+      }
+      if(message.type.endsWith('/stop')) document.querySelector('#demo-status').textContent = 'Vista simulada detenida.';
+      return {};
+    },
+    callApi:async(method,path,data) => {
+      commands.push({method,path,data});
+      const id = path.split('/').at(-1);
+      if(method === 'DELETE') { flows.delete(id); return {}; }
+      if(path.endsWith('/flow')) { const key = String(++sequence);flows.set(key,{index:0,draft:{...original}});return form(key,0); }
+      const flow = flows.get(id);
+      if(flow.index === 0 && (!Array.isArray(data.sleep_rgb_color) || data.sunrise_time === null)) throw Error('RGB debe conservar tres canales y el horario opcional su valor vacío.');
+      Object.assign(flow.draft,data);
+      if(flow.index === 1 && data.white_w_kelvin >= data.white_cw_kelvin) return form(id,1,{base:'invalid_white_channel_range'});
+      if(flow.index === 3) { Object.assign(original,flow.draft);flows.delete(id);return {type:'create_entry'}; }
+      flow.index++;
+      return form(id,flow.index);
+    },
+  };
+  // A read-only inspection hook for automated local UI checks.
+  window.calibrationDemoCommands = commands;
+</script>
+</html>

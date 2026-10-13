@@ -123,10 +123,24 @@ def _remove_redundant_attributes(
     in the target entity's state.
     """
     attributes: dict[str, Any] = dict(state.attributes)
+
+    def is_redundant(attribute: str, value: Any) -> bool:
+        if attribute not in attributes:
+            return False
+        current = attributes[attribute]
+        if attribute in (ATTR_RGBW_COLOR, ATTR_RGBWW_COLOR):
+            requested_mode = "rgbww" if attribute == ATTR_RGBWW_COLOR else "rgbw"
+            current_mode = attributes.get("color_mode")
+            if current_mode is not None and current_mode != requested_mode:
+                return False
+            if isinstance(value, (tuple, list)) and isinstance(current, (tuple, list)):
+                return tuple(value) == tuple(current)
+        return value == current
+
     return {
         k: v
         for k, v in service_data.items()
-        if k not in attributes or v != attributes[k]
+        if not is_redundant(k, v)
     }
 
 

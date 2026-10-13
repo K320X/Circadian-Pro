@@ -1,0 +1,488 @@
+/** Circadian Pro's calibration wizard. Preview changes never submit the form. */
+
+const API = "circadian_pro/calibration/";
+const FLOW = "config/config_entries/options/flow";
+const OPTIONAL_TIMES = new Set([
+  "sunrise_time", "sunset_time", "min_sunrise_time", "max_sunrise_time", "min_sunset_time", "max_sunset_time",
+]);
+
+export function rgbToHex(rgb) {
+  if (typeof rgb === "string" && /^#[0-9a-f]{6}$/i.test(rgb)) return rgb;
+  return "#" + (Array.isArray(rgb) ? rgb : [255, 56, 0])
+    .map((channel) => Math.min(255, Math.max(0, Number(channel))).toString(16).padStart(2, "0")).join("");
+}
+
+export function hexToRgb(hex) {
+  return [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16));
+}
+
+export class PreviewSession {
+  constructor(callWS, entryId, getDraft, onChange = () => {}) {
+    this.callWS = callWS;
+    this.entryId = entryId;
+    this.getDraft = getDraft;
+    this.onChange = onChange;
+    this.enabled = false;
+    this.revision = 0;
+    this.queue = Promise.resolve();
+    this.timer = null;
+    this.debounce = null;
+  }
+
+  enqueue(job) {
+    const result = this.queue.then(job);
+    this.queue = result.catch(() => {});
+    return result;
+  }
+
+  clearTimers() {
+    clearTimeout(this.timer);
+    clearTimeout(this.debounce);
+    this.timer = this.debounce = null;
+  }
+
+  async setEnabled(enabled) {
+    this.clearTimers();
+    this.enabled = enabled;
+    const revision = ++this.revision;
+    this.onChange();
+    if (!enabled) {
+      return this.enqueue(() => this.callWS({ type: API + "stop", entry_id: this.entryId }));
+    }
+    try {
+      return await this.enqueue(async () => {
+        if (!this.enabled || revision !== this.revision) return;
+        const draft = this.getDraft();
+        const result = await this.callWS({
+          type: API + "preview", entry_id: this.entryId,
+          settings: draft.settings, kelvin: draft.kelvin,
+        });
+        if (this.enabled && revision === this.revision) {
+          this.timer = setTimeout(() => {
+            this.setEnabled(false).catch((error) => this.onChange(error));
+          }, (result?.expires_in ?? 60) * 1000);
+        }
+        return result;
+      });
+    } catch (error) {
+      // An invalid draft can leave the preceding preview active. End it too.
+      if (revision === this.revision) {
+        await this.setEnabled(false).catch(() => {});
+      }
+      throw error;
+    }
+  }
+
+  refresh() {
+    if (!this.enabled) return;
+    clearTimeout(this.debounce);
+    this.debounce = setTimeout(() => {
+      this.setEnabled(true).catch((error) => this.onChange(error));
+    }, 180);
+  }
+}
+
+export class CalibrationFlow {
+  constructor(callApi, preview, entryId) {
+    this.callApi = callApi;
+    this.preview = preview;
+    this.entryId = entryId;
+    this.current = null;
+    this.steps = [];
+    this.drafts = {};
+    this.index = 0;
+  }
+
+  async start() {
+    this.current = await this.callApi("POST", FLOW, { handler: this.entryId });
+    this.steps = [this.current.step_id];
+    this.index = 0;
+    return this.current;
+  }
+
+  async next(data) {
+    await this.preview.setEnabled(false);
+    const previous = this.current.step_id;
+    this.drafts[previous] = { ...data };
+    const result = await this.callApi("POST", `${FLOW}/${this.current.flow_id}`, data);
+    this.current = result;
+    if (result.type === "form" && result.step_id !== previous) {
+      this.index++;
+      this.steps[this.index] = result.step_id;
+      this.steps.length = this.index + 1;
+    }
+    return result;
+  }
+
+  async back(data) {
+    if (!this.index) return this.current;
+    await this.preview.setEnabled(false);
+    this.drafts[this.current.step_id] = { ...data };
+    const destination = this.index - 1;
+    // Replay only completed steps in a fresh, unsaved options flow. No final
+    // step is submitted, so going back cannot save or reload an integration.
+    await this.callApi("DELETE", `${FLOW}/${this.current.flow_id}`);
+    let result = await this.callApi("POST", FLOW, { handler: this.entryId });
+    for (let index = 0; index < destination; index++) {
+      result = await this.callApi("POST", `${FLOW}/${result.flow_id}`, this.drafts[result.step_id]);
+      if (result.type !== "form" || Object.keys(result.errors || {}).length) break;
+    }
+    this.current = result;
+    this.index = this.steps.indexOf(result.step_id);
+    if (this.index < 0) this.index = 0;
+    return result;
+  }
+
+  async close() {
+    await this.preview.setEnabled(false);
+    if (this.current?.type === "form") {
+      await this.callApi("DELETE", `${FLOW}/${this.current.flow_id}`);
+    }
+    this.current = null;
+  }
+}
+
+const COPY = {
+  es: {
+    title: "Calibración Circadian Pro", profile: "Perfil", start: "Configurar y calibrar",
+    choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
+    close: "Cerrar sin guardar", preview: "Previsualizar luz", active: "Vista previa activa",
+    idle: "Puedes ajustar los valores sin cambiar las luces.",
+    hint: "Al marcar la casilla, la luz muestra este punto. Los ajustes se ven mientras está marcada. Se desactiva al cambiar de pantalla o después de 60 segundos sin ajustes.",
+    restore: "Al terminar se recupera el estado anterior; un cambio manual de la luz se conserva.",
+    loading: "Cargando…", saved: "Configuración guardada.", empty: "No hay perfiles activos de Circadian Pro.",
+    admin: "Abre este panel con un usuario administrador.", error: "No se pudo completar la acción.",
+    invalid: "Revisa los valores indicados antes de continuar.", missing: "Esta luz no está disponible en Home Assistant.",
+    fallback: "Este formulario contiene un campo que todavía no admite este panel. Usa Configurar en la integración.",
+  },
+  en: {
+    title: "Circadian Pro calibration", profile: "Profile", start: "Configure and calibrate",
+    choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
+    close: "Close without saving", preview: "Preview light", active: "Preview active",
+    idle: "You can adjust the values without changing the lights.",
+    hint: "Check the box to show this calibration point. Edits are shown while checked. Changing steps or 60 seconds without edits ends the preview.",
+    restore: "The previous state is restored when preview ends; manual light changes are preserved.",
+    loading: "Loading…", saved: "Settings saved.", empty: "There are no active Circadian Pro profiles.",
+    admin: "Open this panel as an administrator.", error: "The action could not be completed.",
+    invalid: "Check the indicated values before continuing.", missing: "This light is unavailable in Home Assistant.",
+    fallback: "This form contains a field this panel does not yet support. Use Configure on the integration.",
+  },
+};
+
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+
+export class CircadianCalibrationPanel extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this.entries = [];
+    this.translations = {};
+    this.busy = false;
+    this.initialized = false;
+    this.message = "";
+    this.error = "";
+    this.onLeave = () => {
+      this.session?.setEnabled(false).catch(() => {});
+    };
+  }
+
+  set hass(value) {
+    this._hass = value;
+    if (!this.initialized && this.isConnected) this.initialize();
+  }
+  get hass() { return this._hass; }
+  get language() { return this._hass?.language?.startsWith("es") ? "es" : "en"; }
+  get copy() { return COPY[this.language]; }
+  get totalSteps() {
+    const hasWhite = (this.settings?.lights || []).some((light) =>
+      (this._hass?.states[light]?.attributes.supported_color_modes || []).some((mode) => ["rgbw", "rgbww"].includes(mode))
+    );
+    return hasWhite || this.flow?.steps.some((step) => ["white_channels", "white_w_kelvin"].includes(step)) ? 4 : 3;
+  }
+
+  connectedCallback() {
+    window.addEventListener("pagehide", this.onLeave);
+    if (this._hass && !this.initialized) this.initialize();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("pagehide", this.onLeave);
+    this.flow?.close().catch(() => {});
+    this.initialized = false;
+  }
+
+  async initialize() {
+    this.initialized = true;
+    if (!this._hass.user?.is_admin) { this.error = this.copy.admin; this.render(); return; }
+    await this.action(async () => {
+      [this.entries, this.translations] = await Promise.all([
+        this._hass.callWS({ type: API + "entries" }),
+        this._hass.callWS({ type: API + "translations", language: this.language }),
+      ]);
+    });
+  }
+
+  async action(job) {
+    if (this.busy) return;
+    this.busy = true;
+    this.error = "";
+    this.updateControls();
+    try { await job(); }
+    catch (error) { this.error = error?.message || this.copy.error; }
+    finally { this.busy = false; this.render(); }
+  }
+
+  async start(entryId) {
+    const entry = this.entries.find((item) => item.entry_id === entryId);
+    if (!entry) return;
+    await this.action(async () => {
+      this.entry = entry;
+      this.settings = { ...entry.settings };
+      this.values = {};
+      this.message = "";
+      this.session = new PreviewSession(
+        (message) => this._hass.callWS(message), entryId,
+        () => ({ settings: { ...this.settings, ...this.readValues() }, kelvin: this.flow.current.step_id === "cal_warm" ? 1000 : 4000 }),
+        (error) => {
+          if (error) this.error = error?.message || this.copy.error;
+          this.updateControls();
+        },
+      );
+      this.flow = new CalibrationFlow((...args) => this._hass.callApi(...args), this.session, entryId);
+      this.showStep(await this.flow.start());
+    });
+  }
+
+  showStep(result) {
+    if (result.type === "create_entry") {
+      this.flow = null;
+      this.session = null;
+      this.message = this.copy.saved;
+      // Saving reloads the profile. Retain the last displayed values until a
+      // fresh entries request, rather than starting another flow from old data.
+      this.entries = [];
+      this.initialized = false;
+      return;
+    }
+    if (result.type !== "form") throw new Error(result.reason || this.copy.error);
+    this.values = {};
+    for (const field of result.data_schema || []) {
+      const saved = this.flow.drafts[result.step_id] || {};
+      this.values[field.name] = Object.hasOwn(saved, field.name) ? saved[field.name]
+        : (field.default ?? field.description?.suggested_value ?? this.settings[field.name] ?? null);
+    }
+    Object.assign(this.settings, this.values);
+  }
+
+  readValues(validate = true) {
+    const form = this.shadowRoot.querySelector("form");
+    if (validate && form && !form.reportValidity()) throw new Error(this.copy.invalid);
+    const result = { ...this.values };
+    for (const input of form?.querySelectorAll("[data-field]") || []) {
+      if (input.dataset.kind === "entity") result[input.dataset.field] = [...input.selectedOptions].map((option) => option.value);
+      else if (input.type === "color") result[input.dataset.field] = hexToRgb(input.value);
+      else if (input.type === "checkbox") result[input.dataset.field] = input.checked;
+      else if (input.type === "number") result[input.dataset.field] = input.value === "" ? null : Number(input.value);
+      else result[input.dataset.field] = input.value === ""
+        ? (OPTIONAL_TIMES.has(input.dataset.field) ? "None" : null) : input.value;
+    }
+    return result;
+  }
+
+  async navigate(back = false) {
+    await this.action(async () => {
+      const data = this.readValues(!back);
+      Object.assign(this.settings, data);
+      const result = back ? await this.flow.back(data) : await this.flow.next(data);
+      this.showStep(result);
+      this.shadowRoot.querySelector("main")?.scrollTo(0, 0);
+    });
+    if (!this.initialized && !this.flow) this.initialize();
+  }
+
+  field(field) {
+    const name = field.name;
+    const step = this.flow.current.step_id;
+    const text = this.translations.step?.[step] || {};
+    const wrapper = element("label", undefined, "field");
+    wrapper.append(element("span", text.data?.[name] || name.replaceAll("_", " "), "label"));
+    const selector = field.selector || {};
+    const value = this.values[name];
+    let input;
+    if (selector.color_rgb) {
+      input = element("input");
+      input.type = "color";
+      input.value = rgbToHex(value);
+    } else if (selector.entity || field.type === "multi_select") {
+      input = element("select");
+      input.multiple = true;
+      input.size = 5;
+      input.dataset.kind = "entity";
+      const options = selector.entity ? Object.entries(this._hass.states).filter(([id]) => id.startsWith("light.")).map(([id, state]) => [id, state.attributes.friendly_name || id])
+        : Object.entries(field.options || {});
+      for (const [id, label] of options) {
+        const option = element("option", `${label} (${id})`);
+        option.value = id;
+        option.selected = (value || []).includes(id);
+        input.append(option);
+      }
+    } else if (selector.select || field.type === "select") {
+      input = element("select");
+      const options = selector.select?.options || field.options || [];
+      for (const choice of options) {
+        const [id, label] = Array.isArray(choice) ? choice : typeof choice === "string" ? [choice, choice] : [choice.value, choice.label];
+        const option = element("option", label);
+        option.value = id;
+        input.append(option);
+      }
+      input.value = value ?? "";
+    } else {
+      input = element("input");
+      if (selector.boolean || field.type === "boolean" || typeof value === "boolean") {
+        input.type = "checkbox";
+        input.checked = Boolean(value);
+      } else if (selector.number || ["integer", "float"].includes(field.type) || typeof value === "number") {
+        input.type = "number";
+        const number = selector.number || {};
+        input.step = number.step ?? (field.type === "integer" ? 1 : "any");
+        if ((number.min ?? field.valueMin) !== undefined) input.min = number.min ?? field.valueMin;
+        if ((number.max ?? field.valueMax) !== undefined) input.max = number.max ?? field.valueMax;
+        input.value = value ?? "";
+      } else {
+        input.type = selector.time || OPTIONAL_TIMES.has(name) ? "time" : "text";
+        if (input.type === "time") input.step = 1;
+        input.value = value === "None" ? "" : value ?? "";
+      }
+    }
+    input.dataset.field = name;
+    input.required = Boolean(field.required) || input.type === "number";
+    input.addEventListener("input", () => {
+      this.values = this.readValues(false);
+      Object.assign(this.settings, this.values);
+      this.session.refresh();
+    });
+    wrapper.append(input);
+    if (text.data_description?.[name]) wrapper.append(element("small", text.data_description[name]));
+    return wrapper;
+  }
+
+  updateControls() {
+    if (!this.shadowRoot) return;
+    const checkbox = this.shadowRoot.querySelector("#preview");
+    if (checkbox) { checkbox.checked = Boolean(this.session?.enabled); checkbox.disabled = this.busy; }
+    const status = this.shadowRoot.querySelector("#preview-status");
+    if (status) status.textContent = this.session?.enabled ? this.copy.active : this.copy.idle;
+    const error = this.shadowRoot.querySelector("#error");
+    if (error) { error.textContent = this.error; error.hidden = !this.error; }
+    for (const button of this.shadowRoot.querySelectorAll("button")) button.disabled = this.busy;
+  }
+
+  render() {
+    this.shadowRoot.replaceChildren();
+    const style = element("style");
+    style.textContent = `
+      :host { display:block; height:100%; color:var(--primary-text-color,#202124); background:var(--primary-background-color,#fafafa); font:14px system-ui,sans-serif; }
+      * { box-sizing:border-box; } header { height:64px; display:flex; align-items:center; gap:16px; padding:0 20px; border-bottom:1px solid var(--divider-color,#ddd); background:var(--card-background-color,#fff); }
+      header strong { font-size:19px; } main { height:calc(100% - 64px); overflow:auto; padding:28px 20px; }
+      article { max-width:850px; margin:auto; padding:28px; border:1px solid var(--divider-color,#ddd); border-radius:14px; background:var(--card-background-color,#fff); }
+      h1 { margin:0 0 12px; font-size:24px; } p { line-height:1.55; white-space:pre-line; } .muted,small { color:var(--secondary-text-color,#606770); }
+      form { display:grid; gap:22px; margin-top:24px; } label.field { display:grid; gap:8px; } .label { font-weight:600; } small { line-height:1.45; }
+      input:not([type=checkbox]),select { color:inherit; background:var(--card-background-color,#fff); font:inherit; width:100%; min-height:42px; padding:9px 12px; border:1px solid var(--divider-color,#aeb4bc); border-radius:8px; }
+      input[type=checkbox] { width:20px; height:20px; accent-color:var(--primary-color,#03a9f4); margin:0; } label.preview { display:flex; align-items:center; gap:10px; font-weight:600; }
+      .preview-box { padding:18px; margin:24px 0; border-radius:10px; background:var(--secondary-background-color,#f1f4f7); } .preview-box p { margin:8px 0 0; }
+      .actions { display:flex; justify-content:flex-end; gap:12px; margin-top:28px; } button { font:inherit; font-weight:600; border-radius:8px; padding:10px 18px; border:1px solid var(--divider-color,#ddd); cursor:pointer; background:var(--card-background-color,#fff); color:var(--primary-color,#0077ab); }
+      button.primary { background:var(--primary-color,#0077ab); color:var(--text-primary-color,#fff); border-color:transparent; } button:disabled { opacity:.55; cursor:wait; } .close { margin-left:auto; font-size:13px; }
+      #error { background:#b3261e; color:white; padding:12px; border-radius:8px; white-space:pre-line; } .step { margin:0 0 10px; font-size:13px; } .saved { color:var(--success-color,#16814b); } [hidden] { display:none !important; }
+      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; } header strong { font-size:16px; } .close { padding:8px; } }
+    `;
+    const header = element("header");
+    const menu = element("button", "☰");
+    menu.setAttribute("aria-label", this.language === "es" ? "Abrir menú" : "Open menu");
+    menu.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true })));
+    header.append(menu, element("strong", this.copy.title));
+    if (this.flow) {
+      const close = element("button", this.copy.close, "close");
+      close.addEventListener("click", () => this.action(async () => { await this.flow.close(); this.flow = this.session = null; }));
+      header.append(close);
+    }
+    const main = element("main");
+    const article = element("article");
+    const error = element("p", this.error);
+    error.id = "error";
+    error.setAttribute("role", "alert");
+    error.hidden = !this.error;
+    if (this.flow) {
+      const step = this.flow.current;
+      const text = this.translations.step?.[step.step_id] || {};
+      article.append(element("p", `${this.flow.index + 1} / ${this.totalSteps} · ${this.entry.title}`, "muted step"), element("h1", text.title || step.step_id));
+      const description = text.description?.replace(/ Para previsualizar las luces al instante.*$| El panel Calibración Circadian Pro permite.*$| To preview.*$| The Circadian Pro calibration panel.*$/s, "");
+      if (description) article.append(element("p", description, "muted"));
+      const form = element("form");
+      form.addEventListener("submit", (event) => { event.preventDefault(); this.navigate(); });
+      for (const field of step.data_schema || []) form.append(this.field(field));
+      article.append(form);
+      const errors = Object.entries(step.errors || {}).map(([key, value]) => {
+        const label = text.data?.[key];
+        return `${label ? label + ": " : ""}${this.translations.error?.[value] || value}`;
+      });
+      if (errors.length) { this.error = errors.join("\n"); error.textContent = this.error; error.hidden = false; }
+      if (["cal_neutral", "cal_warm"].includes(step.step_id)) {
+        const box = element("section", undefined, "preview-box");
+        const label = element("label", undefined, "preview");
+        const checkbox = element("input");
+        checkbox.type = "checkbox";
+        checkbox.id = "preview";
+        checkbox.checked = this.session.enabled;
+        checkbox.addEventListener("change", () => {
+          this.error = "";
+          this.session.setEnabled(checkbox.checked).catch((failure) => { this.error = failure?.message || this.copy.error; this.updateControls(); });
+        });
+        label.append(checkbox, element("span", this.copy.preview));
+        const status = element("p", this.session.enabled ? this.copy.active : this.copy.idle);
+        status.id = "preview-status";
+        status.setAttribute("aria-live", "polite");
+        box.append(label, status, element("p", this.copy.hint, "muted"), element("p", this.copy.restore, "muted"));
+        article.append(box);
+      }
+      const actions = element("div", undefined, "actions");
+      const last = step.step_id === "cal_warm";
+      if (this.flow.index > 0 && !last) {
+        const back = element("button", this.copy.back);
+        back.addEventListener("click", () => this.navigate(true));
+        actions.append(back);
+      }
+      const next = element("button", last ? this.copy.finish : this.copy.next, "primary");
+      next.addEventListener("click", () => this.navigate());
+      actions.append(next);
+      article.append(error, actions);
+    } else {
+      article.append(element("h1", this.copy.title));
+      if (this.message) article.append(element("p", this.message, "saved"));
+      if (this.entries.length) {
+        const label = element("label", undefined, "field");
+        label.append(element("span", this.copy.profile, "label"));
+        const select = element("select");
+        for (const entry of this.entries) { const option = element("option", entry.title); option.value = entry.entry_id; select.append(option); }
+        label.append(select);
+        const actions = element("div", undefined, "actions");
+        const start = element("button", this.copy.start, "primary");
+        start.addEventListener("click", () => this.start(select.value));
+        actions.append(start);
+        article.append(label, actions);
+      } else if (!this.error) article.append(element("p", this.busy ? this.copy.loading : this.copy.empty, "muted"));
+      article.append(error);
+    }
+    main.append(article);
+    this.shadowRoot.append(style, header, main);
+    this.updateControls();
+  }
+}
+
+if (!customElements.get("circadian-pro-calibration")) {
+  customElements.define("circadian-pro-calibration", CircadianCalibrationPanel);
+}

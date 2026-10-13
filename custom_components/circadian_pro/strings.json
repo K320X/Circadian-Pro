@@ -22,7 +22,8 @@
     "step": {
       "init": {
         "title": "Ajustes generales",
-        "description": "Configura el comportamiento general. Después indicarás el Kelvin real del canal W y calibrarás 4000K y 1000K.",
+        "submit": "Next",
+        "description": "Configure the general behavior, then the 4000K and 1000K visual references. White channel settings appear automatically for selected RGBW or RGB+CCT lights. For immediate light previews while editing, open the Circadian Pro calibration panel.",
         "data": {
           "lights": "Lights",
           "interval": "Adaptation interval (s)",
@@ -90,6 +91,7 @@
       },
       "white_w_kelvin": {
         "title": "Canal blanco (W)",
+        "submit": "Next",
         "description": "Indica el Kelvin real del canal blanco dedicado (W) de tu tira RGBW (por ejemplo, 3000K).",
         "data": {
           "white_w_kelvin": "Kelvin del canal W (K)"
@@ -98,24 +100,47 @@
           "white_w_kelvin": "Kelvin real del LED blanco dedicado (W) de tu tira. Desde 4000K hasta este valor, el canal W se mantiene al nivel de 4000K; por debajo, se reduce progresivamente hacia la calibración de 1000K."
         }
       },
+      "white_channels": {
+        "title": "Warm and cold white channels",
+        "submit": "Next",
+        "description": "Enter the physical temperatures of the warm white (WW) and cold white (CW) LEDs in your RGB+CCT strip. These are hardware values, separate from the 4000K and 1000K visual references.",
+        "data": {
+          "white_w_kelvin": "Warm white WW temperature (K)",
+          "white_cw_kelvin": "Cold white CW temperature (K)"
+        },
+        "data_description": {
+          "white_w_kelvin": "Actual temperature of the warm white LED. The existing W value is preserved, normally 3000K. It must be lower than CW.",
+          "white_cw_kelvin": "Actual temperature of the cold white LED, for example 6500K. If omitted in YAML or service settings, the light's maximum temperature is used, with 6500K as fallback."
+        }
+      },
       "cal_neutral": {
         "title": "Calibración 4000K",
-        "description": "Este es el panel de calibración de 4000K. Ajusta los colores y el blanco para obtener un blanco neutro agradable.",
+        "submit": "Next",
+        "description": "Adjust RGB for your 4000K visual reference. RGBW lights add one white intensity control; RGB+CCT lights also add the warm/cold white mixture temperature. The Circadian Pro calibration panel provides an immediate preview while editing.",
         "data": {
           "cal_rgb_neutral_r": "Intensidad rojo (0–255)",
           "cal_rgb_neutral_g": "Intensidad verde (0–255)",
           "cal_rgb_neutral_b": "Intensidad azul (0–255)",
-          "cal_white_intensity_neutral": "Intensidad blanco W (0–100)"
+          "cal_white_intensity_neutral": "White intensity (0–100%)",
+          "cal_white_kelvin_neutral": "White mixture temperature (K)"
+        },
+        "data_description": {
+          "cal_white_intensity_neutral": "RGBW: W intensity. RGB+CCT: total warm/cold white intensity, with the mixture set separately.",
+          "cal_white_kelvin_neutral": "Temperature of the white mixture at the 4000K visual reference, between the physical WW and CW temperatures. RGB remains independently adjustable."
         }
       },
       "cal_warm": {
         "title": "Calibración 1000K",
-        "description": "Este es el panel de calibración de 1000K. Ajusta los colores y el blanco para “forzar” un naranja cálido. Normalmente conviene bajar el blanco para que actúe más el rojo.",
+        "submit": "Finish",
+        "description": "Adjust RGB for your 1000K visual reference. White intensity appears only when a selected light supports RGBW or RGB+CCT; keeping it low lets RGB create a warm/orange appearance. The Circadian Pro calibration panel provides an immediate preview while editing.",
         "data": {
           "cal_rgb_warm_r": "Intensidad rojo (0–255)",
           "cal_rgb_warm_g": "Intensidad verde (0–255)",
           "cal_rgb_warm_b": "Intensidad azul (0–255)",
-          "cal_white_intensity_warm": "Intensidad blanco W (0–100)"
+          "cal_white_intensity_warm": "White intensity (0–100%)"
+        },
+        "data_description": {
+          "cal_white_intensity_warm": "White intensity at the 1000K visual reference. In RGB+CCT, only warm white is used here; normally keep white low so RGB can produce the warm/orange appearance."
         }
       }
     },
@@ -126,7 +151,9 @@
       "invalid_color_temp_range": "Minimum color temperature cannot be greater than maximum color temperature.",
       "invalid_brightness_window": "For Linear or Sigmoid mode, the combined light and dark transition window must be greater than zero.",
       "invalid_sunrise_bounds": "Earliest sunrise cannot be later than latest sunrise.",
-      "invalid_sunset_bounds": "Earliest sunset cannot be later than latest sunset."
+      "invalid_sunset_bounds": "Earliest sunset cannot be later than latest sunset.",
+      "invalid_white_channel_range": "The warm white WW temperature must be lower than the cold white CW temperature.",
+      "invalid_white_neutral_range": "The white mixture temperature must be between the physical warm white WW and cold white CW temperatures."
     }
   }
 }

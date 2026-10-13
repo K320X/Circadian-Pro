@@ -19,6 +19,10 @@ from .const import (  # pylint: disable=unused-import
     CONF_CAL_RGB_WARM_B,
     CONF_CAL_WHITE_INTENSITY_NEUTRAL,
     CONF_CAL_WHITE_INTENSITY_WARM,
+    CONF_CAL_WHITE_KELVIN_NEUTRAL,
+    DEFAULT_CAL_WHITE_KELVIN_NEUTRAL,
+    CONF_WHITE_CW_KELVIN,
+    DEFAULT_WHITE_CW_KELVIN,
     CONF_WHITE_W_KELVIN,
     DEFAULT_WHITE_W_KELVIN,
     CONF_LIGHTS,
@@ -28,6 +32,7 @@ from .const import (  # pylint: disable=unused-import
     EXTRA_VALIDATION,
     NONE_STR,
     VALIDATION_TUPLES,
+    box_int,
     replace_none_str,
     validate_cross_options,
 )
@@ -179,6 +184,8 @@ def validate_options(user_input: dict[str, Any], errors: dict[str, str]) -> None
                 "invalid_brightness_window",
                 "invalid_sunrise_bounds",
                 "invalid_sunset_bounds",
+                "invalid_white_channel_range",
+                "invalid_white_neutral_range",
             }:
                 error_key = "option_error"
             errors["base"] = error_key
@@ -199,6 +206,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
     _base_options: dict[str, Any] | None = None
     _cal_neutral: dict[str, Any] | None = None
+    _cal_warm: dict[str, Any] | None = None
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Step 1: general settings."""
@@ -211,8 +219,13 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
         if user_input is not None:
             validate_options(user_input, errors)
             if not errors:
-                self._base_options = dict(user_input)
-                return await self.async_step_white_w_kelvin()
+                self._base_options = dict(conf.options)
+                self._base_options.update(user_input)
+                if self._uses_rgbww():
+                    return await self.async_step_white_channels()
+                if self._uses_white():
+                    return await self.async_step_white_w_kelvin()
+                return await self.async_step_cal_neutral()
 
         # Validate that all configured lights still exist
         all_lights = set(self.hass.states.async_entity_ids("light"))
@@ -262,6 +275,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             CONF_CAL_RGB_WARM_R, CONF_CAL_RGB_WARM_G, CONF_CAL_RGB_WARM_B,
             CONF_CAL_WHITE_INTENSITY_NEUTRAL, CONF_CAL_WHITE_INTENSITY_WARM,
             CONF_WHITE_W_KELVIN,
+            CONF_WHITE_CW_KELVIN, CONF_CAL_WHITE_KELVIN_NEUTRAL,
             # Legacy calibration options from Circadian Pro (not used in Circadian Pro)
             "rgb_calibration_r", "rgb_calibration_g", "rgb_calibration_b",
             "combine_rgb_scale", "combine_white_scale", "rgbw_fixed_white_kelvin",
@@ -319,16 +333,59 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             step_id="init",
             data_schema=vol.Schema(options_schema),
             errors=errors,
+            last_step=False,
         )
 
 
+    def _uses_rgbww(self) -> bool:
+        """Show dual-white controls only for selected RGBWW lights."""
+        options = self._base_options
+        if options is None:
+            options = validate_entry(self.config_entry)
+        return any(
+            "rgbww" in (state.attributes.get("supported_color_modes") or [])
+            for light in options.get(CONF_LIGHTS, [])
+            if (state := self.hass.states.get(light)) is not None
+        )
+
+    def _uses_white(self) -> bool:
+        """Show white controls only when selected lights expose white channels."""
+        options = self._base_options
+        if options is None:
+            options = validate_entry(self.config_entry)
+        return any(
+            {"rgbw", "rgbww"}.intersection(
+                state.attributes.get("supported_color_modes") or []
+            )
+            for light in options.get(CONF_LIGHTS, [])
+            if (state := self.hass.states.get(light)) is not None
+        )
+
+    async def async_step_white_channels(self, user_input: dict[str, Any] | None = None):
+        """Handle the physical warm/cold white temperatures."""
+        return await self.async_step_white_w_kelvin(user_input)
+
+    def _draft_options(self) -> dict[str, Any]:
+        """Merge the current configuration with unsaved calibration values."""
+        options = validate_entry(self.config_entry)
+        options.update(self._base_options or {})
+        options.update(self._cal_neutral or {})
+        options.update(self._cal_warm or {})
+        return options
+
     async def async_step_white_w_kelvin(self, user_input: dict[str, Any] | None = None):
-        """Step 2: Kelvin real del canal blanco (W) para RGBW."""
+        """Step 2: physical W, or warm/cold white, temperatures."""
         conf = self.config_entry
+        options = self._base_options if self._base_options is not None else conf.options
+        uses_rgbww = self._uses_rgbww()
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            validate_options(user_input, errors)
+            candidate = dict(options)
+            candidate.update(user_input)
+            # Validate the mixture at its own step, after editing the endpoints.
+            candidate.pop(CONF_CAL_WHITE_KELVIN_NEUTRAL, None)
+            validate_options(candidate, errors)
             if not errors:
                 # guardamos este paso como parte de la configuración base
                 self._base_options = dict(self._base_options or {})
@@ -339,70 +396,99 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
         schema: dict[Any, Any] = {
             vol.Optional(
                 CONF_WHITE_W_KELVIN,
-                default=conf.options.get(CONF_WHITE_W_KELVIN, DEFAULT_WHITE_W_KELVIN),
+                default=options.get(CONF_WHITE_W_KELVIN, DEFAULT_WHITE_W_KELVIN),
             ): validations[CONF_WHITE_W_KELVIN],
         }
+        if uses_rgbww:
+            schema[
+                vol.Optional(
+                    CONF_WHITE_CW_KELVIN,
+                    default=options.get(CONF_WHITE_CW_KELVIN, DEFAULT_WHITE_CW_KELVIN) or 6500,
+                )
+            ] = box_int(1000, 10000, step=50)
 
         return self.async_show_form(
-            step_id="white_w_kelvin",
+            step_id="white_channels" if uses_rgbww else "white_w_kelvin",
             data_schema=vol.Schema(schema),
             errors=errors,
+            last_step=False,
         )
 
     async def async_step_cal_neutral(self, user_input: dict[str, Any] | None = None):
         """Step 2: calibration at 4000K (neutral white)."""
-        conf = self.config_entry
+        options = self._draft_options()
         errors: dict[str, str] = {}
         if user_input is not None:
-            validate_options(user_input, errors)
+            submitted = dict(user_input)
+            candidate = dict(options)
+            candidate.update(submitted)
+            validate_options(candidate, errors)
+            self._cal_neutral = submitted
+            options = candidate
             if not errors:
-                self._cal_neutral = dict(user_input)
                 return await self.async_step_cal_warm()
 
         validations = {name: validation for name, _default, validation in VALIDATION_TUPLES}
         schema: dict[Any, Any] = {}
 
         def add_opt(name: str, default_fallback: Any) -> None:
-            schema[vol.Optional(name, default=conf.options.get(name, default_fallback))] = validations[name]
+            schema[vol.Optional(name, default=options.get(name, default_fallback))] = validations[name]
 
         # Calibración 4000K
         add_opt(CONF_CAL_RGB_NEUTRAL_R, 255)
         add_opt(CONF_CAL_RGB_NEUTRAL_G, 255)
         add_opt(CONF_CAL_RGB_NEUTRAL_B, 255)
-        add_opt(CONF_CAL_WHITE_INTENSITY_NEUTRAL, 100)
-
+        if self._uses_white():
+            add_opt(CONF_CAL_WHITE_INTENSITY_NEUTRAL, 100)
+        if self._uses_rgbww():
+            warm_white = int(options.get(CONF_WHITE_W_KELVIN, DEFAULT_WHITE_W_KELVIN))
+            cold_white = int(options.get(CONF_WHITE_CW_KELVIN, DEFAULT_WHITE_CW_KELVIN) or 6500)
+            neutral_white = options.get(
+                CONF_CAL_WHITE_KELVIN_NEUTRAL, DEFAULT_CAL_WHITE_KELVIN_NEUTRAL
+            )
+            neutral_default = min(cold_white, max(warm_white, neutral_white or 4000))
+            schema[
+                vol.Optional(CONF_CAL_WHITE_KELVIN_NEUTRAL, default=neutral_default)
+            ] = box_int(warm_white, cold_white, step=50)
         return self.async_show_form(
             step_id="cal_neutral",
             data_schema=vol.Schema(schema),
             errors=errors,
+            last_step=False,
         )
 
     async def async_step_cal_warm(self, user_input: dict[str, Any] | None = None):
         """Step 3: calibration at 1000K (or 'warm' for CCT-only profiles)."""
-        conf = self.config_entry
+        options = self._draft_options()
         errors: dict[str, str] = {}
         if user_input is not None:
-            validate_options(user_input, errors)
+            submitted = dict(user_input)
+            candidate = dict(options)
+            candidate.update(submitted)
+            validate_options(candidate, errors)
+            self._cal_warm = submitted
+            options = candidate
             if not errors:
                 data_out = dict(self._base_options or {})
                 data_out.update(self._cal_neutral or {})
-                data_out.update(user_input)
+                data_out.update(self._cal_warm or {})
                 return self.async_create_entry(title="", data=data_out)
 
         validations = {name: validation for name, _default, validation in VALIDATION_TUPLES}
         schema: dict[Any, Any] = {}
 
         def add_opt(name: str, default_fallback: Any) -> None:
-            schema[vol.Optional(name, default=conf.options.get(name, default_fallback))] = validations[name]
+            schema[vol.Optional(name, default=options.get(name, default_fallback))] = validations[name]
 
         # Calibración 1000K (cálido)
         add_opt(CONF_CAL_RGB_WARM_R, 255)
         add_opt(CONF_CAL_RGB_WARM_G, 56)
         add_opt(CONF_CAL_RGB_WARM_B, 0)
-        add_opt(CONF_CAL_WHITE_INTENSITY_WARM, 0)
-
+        if self._uses_white():
+            add_opt(CONF_CAL_WHITE_INTENSITY_WARM, 0)
         return self.async_show_form(
             step_id="cal_warm",
             data_schema=vol.Schema(schema),
             errors=errors,
+            last_step=True,
         )

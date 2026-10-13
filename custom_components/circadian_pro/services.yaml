@@ -87,6 +87,36 @@ change_switch_settings:
       required: false
       selector:
         boolean: null
+    white_w_kelvin:
+      description: Actual Kelvin of the W channel for RGBW, or warm white (WW) for RGB+CCT. Must be lower than the cold white CW temperature.
+      required: false
+      example: 3000
+      selector:
+        number:
+          min: 1000
+          max: 10000
+          step: 50
+          mode: box
+    white_cw_kelvin:
+      description: Actual Kelvin of the cold white (CW) channel for RGB+CCT. If omitted, use the light's maximum color temperature, or 6500K when unavailable.
+      required: false
+      example: 6500
+      selector:
+        number:
+          min: 1000
+          max: 10000
+          step: 50
+          mode: box
+    cal_white_kelvin_neutral:
+      description: White mixture temperature at the 4000K visual reference for RGB+CCT, between the physical WW and CW temperatures. RGB and total white intensity remain independent. If omitted, use 4000K within that range.
+      required: false
+      example: 4000
+      selector:
+        number:
+          min: 1000
+          max: 10000
+          step: 50
+          mode: box
     turn_on_lights:
       description: Whether to turn on lights that are currently off. 
       example: false

@@ -13,9 +13,11 @@
 
 Circadian Pro automatically adjusts the brightness and color temperature of your lights throughout the day according to sunrise, sunset and your configured preferences.
 
-It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW lighting and several brightness-transition profiles.
+It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
 **Current stable version:** `0.20.3`
+
+**Local development version:** `0.21.0` (RGB+CCT correction and live calibration wizard; not yet released).
 
 ## Features
 
@@ -26,8 +28,8 @@ It supports multiple independent instances, manual-control detection, automatic 
 - Sunrise and sunset offsets.
 - Fixed or limited sunrise and sunset times.
 - Manual-control detection with optional automatic reset.
-- RGB, RGBW and color-temperature light support.
-- Custom RGBW calibration at 4000 K and 1000 K.
+- RGB, RGBW, RGB+CCT (`rgbww`) and color-temperature light support.
+- Custom RGBW and RGB+CCT calibration at 4000 K and 1000 K.
 - Configurable adaptation intervals and transitions.
 - Interception of `light.turn_on` and `light.toggle`.
 - Home Assistant services for applying settings and managing manual control.
@@ -42,7 +44,7 @@ It supports multiple independent instances, manual-control detection, automatic 
 
 ```text
 /config/custom_components/
-````
+```
 
 The final structure must be:
 
@@ -76,6 +78,20 @@ Settings → Devices & services → Add integration
 3. Restart Home Assistant.
 
 Creating a backup before updating is recommended.
+
+## RGBW and RGB+CCT calibration
+
+The 4000 K and 1000 K calibration points are visual references. Adjust RGB and white intensity at each point to get the appearance you want. They are separate from the physical temperatures of the white LEDs.
+
+For RGBW, `white_w_kelvin` remains the temperature of the single white channel, with a default of 3000 K. For RGB+CCT lights that announce `rgbww`, the same value describes the warm white (WW) LED. The extra `white_cw_kelvin` setting describes the cold white (CW) LED. If omitted, Circadian Pro uses the light's maximum color temperature, or 6500 K when unavailable.
+
+At the 4000 K reference, RGB+CCT has three independent adjustments: RGB channels, total white intensity, and white mixture temperature (`cal_white_kelvin_neutral`). The mixture splits the white intensity between WW and CW and must stay between their physical temperatures. If omitted, it uses 4000 K clamped to that range. The 1000 K reference keeps its RGB and white-intensity controls; warm white fades so RGB can produce the warm/orange appearance below the physical WW temperature.
+
+The extra cold-white and mixture controls appear only when a selected light supports `rgbww`. RGBW keeps one white channel; profiles containing only RGB lights skip physical-white settings and show only RGB calibration. Existing hidden white values are preserved. Pixel-addressable (IC) control is independent of whether an entity exposes RGB, RGBW, or RGBWW.
+
+Open the **Calibración Circadian Pro** sidebar panel for immediate previews. The preview checkbox is disabled by default. Checking it applies the draft immediately; adjusting RGB or white controls while it is checked updates the lights without saving. Unchecking it stops the preview and restores the previous state.
+
+The panel includes general settings, physical white channels, and both calibration points. The first step has **Next**; intermediate steps have **Back** and **Next**; the final step has only **Finish**, which saves the settings. Going back preserves your draft. Navigation stops the preview, so each calibration step starts with it disabled. Canceling or closing the panel also stops the preview; the 60-second expiry stops it and clears the checkbox automatically. A light changed manually during the preview keeps the external change. The standard integration options form remains available for editing settings without immediate previews.
 
 ## Brightness modes
 

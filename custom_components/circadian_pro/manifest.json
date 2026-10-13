@@ -3,9 +3,10 @@
   "name": "Circadian Pro",
   "codeowners": [],
   "config_flow": true,
+  "dependencies": ["frontend", "http", "panel_custom", "websocket_api"],
   "documentation": "https://www.home-assistant.io/",
   "iot_class": "calculated",
   "requirements": [],
-  "version": "0.20.3",
+  "version": "0.21.0",
   "icon": "mdi:weather-night"
 }

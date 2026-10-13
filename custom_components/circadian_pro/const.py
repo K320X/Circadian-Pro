@@ -60,16 +60,32 @@ DEFAULT_CAL_WHITE_INTENSITY_NEUTRAL = 100
 DOCS[CONF_CAL_WHITE_INTENSITY_WARM] = (
     "White intensity at 1000K (0-100%). Lower values allow RGB to dominate for warm/orange."
 )
-DOCS[CONF_CAL_WHITE_INTENSITY_NEUTRAL] = "White intensity at 4000K (0-100%)."
+DOCS[CONF_CAL_WHITE_INTENSITY_NEUTRAL] = (
+    "White intensity at 4000K (0-100%). For RGB+CCT, this is the total warm/cold white intensity."
+)
 
-# Fixed white-channel Kelvin (for RGBW strips with a single W LED temperature)
+# Physical white-channel Kelvin: the single W in RGBW, or warm white (WW) in RGBWW.
 # Example: if the W channel is 2700K, we keep the W intensity at the neutral level
 # until 2700K, and only start reducing it below that point (towards the 1000K calibration).
 CONF_WHITE_W_KELVIN = "white_w_kelvin"
 DEFAULT_WHITE_W_KELVIN = 3000
 DOCS[CONF_WHITE_W_KELVIN] = (
-    "Actual Kelvin of the W (white) channel for RGBW strips (e.g., 2700). "
-    "Used to keep W at the neutral intensity until this Kelvin, then fade it down towards the warm point."
+    "Actual Kelvin of the W channel for RGBW, or warm white (WW) for RGB+CCT (e.g., 3000). "
+    "Below this temperature, white intensity fades towards the 1000K calibration."
+)
+
+CONF_WHITE_CW_KELVIN = "white_cw_kelvin"
+DEFAULT_WHITE_CW_KELVIN = None
+DOCS[CONF_WHITE_CW_KELVIN] = (
+    "Actual Kelvin of the cold white (CW) channel for RGB+CCT. "
+    "If omitted, use the light's maximum color temperature, or 6500K when unavailable."
+)
+
+CONF_CAL_WHITE_KELVIN_NEUTRAL = "cal_white_kelvin_neutral"
+DEFAULT_CAL_WHITE_KELVIN_NEUTRAL = None
+DOCS[CONF_CAL_WHITE_KELVIN_NEUTRAL] = (
+    "White mixture temperature at the 4000K calibration point for RGB+CCT. "
+    "Must be between the physical WW and CW temperatures. If omitted, use 4000K within that range."
 )
 
 
@@ -484,6 +500,16 @@ VALIDATION_TUPLES: list[tuple[str, Any, Any]] = [
         box_int(1000, 10000, step=50),
     ),
     (
+        CONF_WHITE_CW_KELVIN,
+        DEFAULT_WHITE_CW_KELVIN,
+        vol.Any(None, int_between(1000, 10000)),
+    ),
+    (
+        CONF_CAL_WHITE_KELVIN_NEUTRAL,
+        DEFAULT_CAL_WHITE_KELVIN_NEUTRAL,
+        vol.Any(None, int_between(1000, 10000)),
+    ),
+    (
         CONF_CAL_RGB_NEUTRAL_R,
         DEFAULT_CAL_RGB_NEUTRAL_R,
         slider_int(0, 255),
@@ -701,6 +727,17 @@ def validate_cross_options(data: dict[str, Any]) -> dict[str, Any]:
         and float(min_color_temp) > float(max_color_temp)
     ):
         raise vol.Invalid("invalid_color_temp_range")
+
+    warm_white = data.get(CONF_WHITE_W_KELVIN, DEFAULT_WHITE_W_KELVIN)
+    cold_white = data.get(CONF_WHITE_CW_KELVIN)
+    if warm_white is not None and cold_white is not None:
+        if float(warm_white) >= float(cold_white):
+            raise vol.Invalid("invalid_white_channel_range")
+        neutral_white = data.get(CONF_CAL_WHITE_KELVIN_NEUTRAL)
+        if neutral_white is not None and not (
+            float(warm_white) <= float(neutral_white) <= float(cold_white)
+        ):
+            raise vol.Invalid("invalid_white_neutral_range")
 
     brightness_mode = data.get(CONF_BRIGHTNESS_MODE, DEFAULT_BRIGHTNESS_MODE)
     if brightness_mode in ("linear", "tanh"):

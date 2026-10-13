@@ -17,6 +17,8 @@ import voluptuous as vol
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
+    ATTR_MAX_COLOR_TEMP_KELVIN,
+    ATTR_MIN_COLOR_TEMP_KELVIN,
     ATTR_RGB_COLOR,
     ATTR_RGBW_COLOR,
     ATTR_RGBWW_COLOR,
@@ -84,6 +86,7 @@ from .adaptation_utils import (
     manual_control_event_attribute_to_flags,
     prepare_adaptation_data,
 )
+from .calibration import is_calibration_preview_active
 from .color_and_brightness import SunLightSettings
 from .const import (
     ADAPT_BRIGHTNESS_SWITCH,
@@ -105,6 +108,8 @@ from .const import (
     CONF_CAL_RGB_WARM_B,
     CONF_CAL_WHITE_INTENSITY_NEUTRAL,
     CONF_CAL_WHITE_INTENSITY_WARM,
+    CONF_CAL_WHITE_KELVIN_NEUTRAL,
+    CONF_WHITE_CW_KELVIN,
     CONF_WHITE_W_KELVIN,
     CONF_DETECT_NON_HA_CHANGES,
     CONF_INCLUDE_CONFIG_IN_ATTRIBUTES,
@@ -854,6 +859,35 @@ def _interp_white_intensity_rgbw(
     return int(_clamp_int(round(val), 0, 100))
 
 
+def _calibrated_white_channels(
+    kelvin: int,
+    white_intensity_pct: int,
+    warm_kelvin: int,
+    cold_kelvin: int,
+    neutral_white_kelvin: int | None = None,
+) -> tuple[int, int]:
+    """Mix CW/WW in mired, keeping RGB warmth independent of physical whites."""
+    warm = max(1, int(warm_kelvin))
+    cold = max(warm + 1, int(cold_kelvin))
+    white_kelvin = float(clamp(kelvin, warm, cold))
+    if neutral_white_kelvin is not None:
+        neutral = clamp(neutral_white_kelvin, warm, cold)
+        # The calibration reference can lie outside the LEDs' physical range.
+        # It must still reproduce the chosen mixture exactly at 4000 K.
+        warm_anchor = warm if warm < 4000 else 1000
+        cold_anchor = cold if cold > 4000 else 10000
+        if kelvin <= 4000:
+            fraction = clamp((kelvin - warm_anchor) / (4000 - warm_anchor), 0, 1)
+            white_kelvin = warm + fraction * (neutral - warm)
+        else:
+            fraction = clamp((kelvin - 4000) / (cold_anchor - 4000), 0, 1)
+            white_kelvin = neutral + fraction * (cold - neutral)
+    cold_fraction = (1 / warm - 1 / white_kelvin) / (1 / warm - 1 / cold)
+    white_level = _clamp_int(255 * white_intensity_pct / 100, 0, 255)
+    cold_level = _clamp_int(white_level * cold_fraction, 0, white_level)
+    return cold_level, white_level - cold_level
+
+
 def _calibrated_rgb_from_kelvin(
     kelvin: int,
     cal_warm: tuple[int, int, int],
@@ -879,20 +913,25 @@ def _calibrated_rgb_from_kelvin(
     ):
         # Avoid division by zero if the base points are identical for a channel.
         if bn == bw:
-            a = 0.0
-            b0 = float(cn)
+            fraction = (
+                clamp((k - warm_kelvin) / (neutral_kelvin - warm_kelvin), 0, 1)
+                if neutral_kelvin != warm_kelvin else 1
+            )
+            corrected = cw + fraction * (cn - cw)
         else:
             a = (cn - cw) / (bn - bw)
             b0 = cw - a * bw
-        corrected = a * b + b0
+            corrected = a * b + b0
         out[i] = int(_clamp_int(round(corrected), 0, 255))
     return (out[0], out[1], out[2])
 
 
-    # All comparisons should be done with RGB since
-# converting anything to color temp is inaccurate.
+# Legacy color representations are compared through RGB; native channel vectors
+# are compared directly so their independent white channels remain observable.
 def _convert_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
-    if ATTR_RGB_COLOR in attributes:
+    # Keep the last command intact; derived RGB must not overwrite native channels.
+    attributes = dict(attributes)
+    if attributes.get(ATTR_RGB_COLOR) is not None:
         return attributes
 
     rgb = None
@@ -935,33 +974,25 @@ def _has_color_mode_changed(
     This must be called BEFORE _add_missing_attributes() to detect mode changes
     using the original attributes. See issue #1275.
     """
-    old_has_color_temp = old_attributes.get(ATTR_COLOR_TEMP_KELVIN) is not None
-    old_has_rgb = old_attributes.get(ATTR_RGB_COLOR) is not None
-    old_has_xy = old_attributes.get(ATTR_XY_COLOR) is not None
 
-    new_has_color_temp = new_attributes.get(ATTR_COLOR_TEMP_KELVIN) is not None
-    new_has_rgb = new_attributes.get(ATTR_RGB_COLOR) is not None
-    new_has_xy = new_attributes.get(ATTR_XY_COLOR) is not None
+    def color_mode(attributes: dict[str, Any]) -> str | None:
+        # States may expose RGB/temperature derived from their native vector.
+        # Service data has no color_mode, so infer it from the requested attribute.
+        if (mode := attributes.get("color_mode")) is not None:
+            return mode
+        for attribute, mode in (
+            (ATTR_RGBWW_COLOR, ColorMode.RGBWW),
+            (ATTR_RGBW_COLOR, ColorMode.RGBW),
+            (ATTR_COLOR_TEMP_KELVIN, ColorMode.COLOR_TEMP),
+            (ATTR_RGB_COLOR, ColorMode.RGB),
+            (ATTR_XY_COLOR, ColorMode.XY),
+        ):
+            if attributes.get(attribute) is not None:
+                return mode
+        return None
 
-    # Determine old and new color modes
-    # Priority: color_temp > rgb > xy (matching typical light behavior)
-    if old_has_color_temp:
-        old_mode = "color_temp"
-    elif old_has_rgb:
-        old_mode = "rgb"
-    elif old_has_xy:
-        old_mode = "xy"
-    else:
-        old_mode = None
-
-    if new_has_color_temp:
-        new_mode = "color_temp"
-    elif new_has_rgb:
-        new_mode = "rgb"
-    elif new_has_xy:
-        new_mode = "xy"
-    else:
-        new_mode = None
+    old_mode = color_mode(old_attributes)
+    new_mode = color_mode(new_attributes)
 
     # Check if mode changed
     if old_mode is not None and new_mode is not None and old_mode != new_mode:
@@ -987,6 +1018,7 @@ def _attributes_have_changed(
     # see https://github.com/home-assistant/core/pull/101946
 
     changed_attributes = LightControlAttributes.NONE
+    native_compared = False
 
     # Check for color mode changes BEFORE attribute conversion
     # This detects external changes like Hue scenes switching from color_temp to RGB
@@ -1000,6 +1032,21 @@ def _attributes_have_changed(
         changed_attributes |= LightControlAttributes.COLOR
 
     if LightControlAttributes.COLOR not in changed_attributes:
+        for attribute, channel_count in ((ATTR_RGBWW_COLOR, 5), (ATTR_RGBW_COLOR, 4)):
+            old_color = old_attributes.get(attribute)
+            new_color = new_attributes.get(attribute)
+            if (
+                isinstance(old_color, (tuple, list))
+                and isinstance(new_color, (tuple, list))
+                and len(old_color) == len(new_color) == channel_count
+            ):
+                native_compared = True
+                # WLED quantizes the white split during its transport round trip.
+                if any(abs(new - old) > 2 for old, new in zip(old_color, new_color)):
+                    changed_attributes |= LightControlAttributes.COLOR
+                break
+
+    if LightControlAttributes.COLOR not in changed_attributes and not native_compared:
         old_attributes, new_attributes = _add_missing_attributes(
             old_attributes,
             new_attributes,
@@ -1021,6 +1068,7 @@ def _attributes_have_changed(
 
     if (
         LightControlAttributes.COLOR not in changed_attributes
+        and not native_compared
         and old_attributes.get(ATTR_COLOR_TEMP_KELVIN)
         and new_attributes.get(ATTR_COLOR_TEMP_KELVIN)
     ):
@@ -1039,6 +1087,7 @@ def _attributes_have_changed(
 
     if (
         LightControlAttributes.COLOR not in changed_attributes
+        and not native_compared
         and old_attributes.get(ATTR_RGB_COLOR)
         and new_attributes.get(ATTR_RGB_COLOR)
     ):
@@ -1165,6 +1214,8 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
         self._cal_white_intensity_neutral: int = data[CONF_CAL_WHITE_INTENSITY_NEUTRAL]
         self._cal_white_intensity_warm: int = data[CONF_CAL_WHITE_INTENSITY_WARM]
         self._white_w_kelvin: int = data[CONF_WHITE_W_KELVIN]
+        self._white_cw_kelvin: int | None = data.get(CONF_WHITE_CW_KELVIN)
+        self._cal_white_kelvin_neutral: int | None = data.get(CONF_CAL_WHITE_KELVIN_NEUTRAL)
         self._separate_turn_on_commands = data[CONF_SEPARATE_TURN_ON_COMMANDS]
         self._transition: float = data[CONF_TRANSITION]
         self._adapt_delay = data[CONF_ADAPT_DELAY]
@@ -1556,7 +1607,9 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
             if sleep_rgb or force_rgb:
                 # RGB puro en modo noche (o transición hacia él): W siempre a 0
                 rgb = tuple(int(x) for x in self._settings.get("rgb_color", [255, 56, 0]))  # type: ignore[arg-type]
-                if ColorMode.RGBW in supported_color_modes:
+                if ColorMode.RGBWW in supported_color_modes:
+                    service_data[ATTR_RGBWW_COLOR] = (rgb[0], rgb[1], rgb[2], 0, 0)
+                elif ColorMode.RGBW in supported_color_modes:
                     service_data[ATTR_RGBW_COLOR] = (rgb[0], rgb[1], rgb[2], 0)
                 elif ColorMode.RGB in supported_color_modes or "color" in features:
                     service_data[ATTR_RGB_COLOR] = rgb
@@ -1583,13 +1636,33 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                     white_w_kelvin=self._white_w_kelvin,
                 )
 
-                if ColorMode.RGBW in supported_color_modes:
+                if ColorMode.RGBWW in supported_color_modes:
+                    cold_kelvin = (
+                        self._white_cw_kelvin
+                        or state.attributes.get(ATTR_MAX_COLOR_TEMP_KELVIN)
+                        or 6500
+                    )
+                    cw, ww = _calibrated_white_channels(
+                        target_kelvin,
+                        white_intensity_pct,
+                        self._white_w_kelvin,
+                        cold_kelvin,
+                        self._cal_white_kelvin_neutral,
+                    )
+                    service_data[ATTR_RGBWW_COLOR] = (*cal_rgb, cw, ww)
+                elif ColorMode.RGBW in supported_color_modes:
                     w = round(255 * (white_intensity_pct / 100.0))
                     service_data[ATTR_RGBW_COLOR] = (cal_rgb[0], cal_rgb[1], cal_rgb[2], w)
                 elif ColorMode.RGB in supported_color_modes and "color" in features:
                     service_data[ATTR_RGB_COLOR] = cal_rgb
                 elif ColorMode.COLOR_TEMP in supported_color_modes or "color_temp" in features:
-                    service_data[ATTR_COLOR_TEMP_KELVIN] = target_kelvin
+                    # Keep the sent target within the light's native range so
+                    # rejected commands cannot look like external manual changes.
+                    min_kelvin = state.attributes.get(ATTR_MIN_COLOR_TEMP_KELVIN) or 1000
+                    max_kelvin = state.attributes.get(ATTR_MAX_COLOR_TEMP_KELVIN) or 10000
+                    service_data[ATTR_COLOR_TEMP_KELVIN] = _clamp_int(
+                        target_kelvin, min_kelvin, max_kelvin,
+                    )
                 elif "color" in features:
                     service_data[ATTR_RGB_COLOR] = cal_rgb
 
@@ -1692,7 +1765,48 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 data.context.id,
             )
             light = service_data[ATTR_ENTITY_ID]
+            previous_data = self.manager.last_service_data.get(light)
+            previous_context = self.manager.last_service_context.get(light)
+            acknowledgement = self.manager.last_service_acknowledgements.get(light)
+            previous_rgbww = (previous_data or {}).get(ATTR_RGBWW_COLOR)
+            if (
+                isinstance(previous_rgbww, (tuple, list))
+                and len(previous_rgbww) == 5
+                and not any(previous_rgbww[:3])
+                and any(previous_rgbww[3:])
+            ):
+                own_reports = [
+                    state
+                    for state in self.manager.our_last_state_on_change.get(light, [])
+                    if state.context.id == previous_context
+                    and state.attributes.get("color_mode") == ColorMode.COLOR_TEMP
+                    and state.attributes.get(ATTR_COLOR_TEMP_KELVIN) is not None
+                ]
+                if own_reports:
+                    previous_values = {
+                        key: tuple(value)
+                        if key in (ATTR_RGBW_COLOR, ATTR_RGBWW_COLOR)
+                        else value
+                        for key, value in previous_data.items()
+                        if key not in (ATTR_ENTITY_ID, ATTR_TRANSITION)
+                    }
+                    acknowledgement = (previous_values, own_reports[-1])
+            requested_values = {
+                key: tuple(value)
+                if key in (ATTR_RGBW_COLOR, ATTR_RGBWW_COLOR)
+                else value
+                for key, value in service_data.items()
+                if key not in (ATTR_ENTITY_ID, ATTR_TRANSITION)
+            }
+            if acknowledgement is not None and acknowledgement[0] == requested_values:
+                # Identical commands may produce no state_changed event. Keep
+                # their confirmed native-white normalization, even with a new
+                # context or transition, until the requested light values change.
+                self.manager.last_service_acknowledgements[light] = acknowledgement
+            else:
+                self.manager.last_service_acknowledgements.pop(light, None)
             self.manager.last_service_data[light] = service_data
+            self.manager.last_service_context[light] = data.context.id
             await self.hass.services.async_call(
                 LIGHT_DOMAIN,
                 SERVICE_TURN_ON,
@@ -2064,6 +2178,8 @@ class CircadianProManager:
         self.our_last_state_on_change: dict[str, list[State]] = {}
         # Track last 'service_data' to 'light.turn_on' resulting from this integration
         self.last_service_data: dict[str, dict[str, Any]] = {}
+        self.last_service_context: dict[str, str] = {}
+        self.last_service_acknowledgements: dict[str, tuple[dict[str, Any], State]] = {}
         # Track ongoing split adaptations to be able to cancel them
         self.adaptation_tasks_brightness: dict[str, asyncio.Task[None]] = {}
         self.adaptation_tasks_color: dict[str, asyncio.Task[None]] = {}
@@ -2164,6 +2280,8 @@ class CircadianProManager:
         self.manual_control.clear()
         self.our_last_state_on_change.clear()
         self.last_service_data.clear()
+        self.last_service_context.clear()
+        self.last_service_acknowledgements.clear()
         self._proactively_adapting_contexts.clear()
 
     def register_switch(self, switch: CircadianProSwitch) -> None:
@@ -2205,6 +2323,8 @@ class CircadianProManager:
         self.manual_control.pop(light, None)
         self.our_last_state_on_change.pop(light, None)
         self.last_service_data.pop(light, None)
+        self.last_service_context.pop(light, None)
+        self.last_service_acknowledgements.pop(light, None)
         self.clear_proactively_adapting(light)
 
     def rebuild_lights(self) -> None:
@@ -2765,6 +2885,9 @@ class CircadianProManager:
         specifies to pause all adaptations on manual change, no attributes are returned so that
         color is also not adapted.
         """
+        if is_calibration_preview_active(self.hass, light):
+            return LightControlAttributes.NONE
+
         denied_adaptation_attributes = self.get_manual_control_attributes(light)
 
         if (
@@ -2826,6 +2949,8 @@ class CircadianProManager:
                     timer.cancel()
             self.our_last_state_on_change.pop(light, None)
             self.last_service_data.pop(light, None)
+            self.last_service_context.pop(light, None)
+            self.last_service_acknowledgements.pop(light, None)
             self.cancel_ongoing_adaptation_calls(light)
 
     def _get_entity_list(self, service_data: ServiceData) -> list[str]:
@@ -3112,7 +3237,12 @@ class CircadianProManager:
         An untracked change is a change that has been made outsideof HA and is
         therefore not visible through events.
         """
-        if not switch._take_over_control or not switch._detect_non_ha_changes or force:
+        if (
+            not switch._take_over_control
+            or not switch._detect_non_ha_changes
+            or force
+            or is_calibration_preview_active(self.hass, light)
+        ):
             return
 
         # Note: This call updates the state of the light
@@ -3155,6 +3285,53 @@ class CircadianProManager:
         await async_update_entity(self.hass, light)
         refreshed_state = self.hass.states.get(light)
         assert refreshed_state is not None
+
+        rgbww = last_service_data.get(ATTR_RGBWW_COLOR)
+        if (
+            isinstance(rgbww, (tuple, list))
+            and len(rgbww) == 5
+            and not any(rgbww[:3])
+            and any(rgbww[3:])
+            and refreshed_state.attributes.get("color_mode") == ColorMode.COLOR_TEMP
+        ):
+            # Full native white can be reported as COLOR_TEMP instead of RGBWW.
+            # Compare with this command's acknowledged state, rather than guessing
+            # the integration's white-channel conversion or reusing an old report.
+            context_id = self.last_service_context.get(light)
+            own_reports = [
+                state
+                for state in self.our_last_state_on_change.get(light, [])
+                if state.context.id == context_id
+                and state.attributes.get("color_mode") == ColorMode.COLOR_TEMP
+                and state.attributes.get(ATTR_COLOR_TEMP_KELVIN) is not None
+            ]
+            requested_values = {
+                key: tuple(value)
+                if key in (ATTR_RGBW_COLOR, ATTR_RGBWW_COLOR)
+                else value
+                for key, value in last_service_data.items()
+                if key not in (ATTR_ENTITY_ID, ATTR_TRANSITION)
+            }
+            if own_reports:
+                acknowledgement = (requested_values, own_reports[-1])
+                self.last_service_acknowledgements[light] = acknowledgement
+            else:
+                acknowledgement = self.last_service_acknowledgements.get(light)
+            if acknowledgement is not None and acknowledgement[0] == requested_values:
+                last_service_data = acknowledgement[1].attributes
+            else:
+                # Color is inconclusive until the changed command is confirmed.
+                # Brightness remains observable and must not be hidden with it.
+                return _attributes_have_changed(
+                    light=light,
+                    old_attributes={
+                        ATTR_BRIGHTNESS: last_service_data.get(ATTR_BRIGHTNESS),
+                    },
+                    new_attributes={
+                        ATTR_BRIGHTNESS: refreshed_state.attributes.get(ATTR_BRIGHTNESS),
+                    },
+                    context=context,
+                )
 
         changed_attributes = _attributes_have_changed(
             old_attributes=last_service_data,
