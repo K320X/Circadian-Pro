@@ -1042,6 +1042,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
   }
 }
 
-if (!customElements.get("circadian-pro-calibration")) {
-  customElements.define("circadian-pro-calibration", CircadianCalibrationPanel);
+const panelAssetHash = new URL(import.meta.url).pathname.match(/\/calibration-panel-([0-9a-f]{16})\.js$/)?.[1];
+const panelElementName = "circadian-pro-calibration" + (panelAssetHash ? "-" + panelAssetHash : "");
+if (!customElements.get(panelElementName)) {
+  customElements.define(panelElementName, CircadianCalibrationPanel);
 }

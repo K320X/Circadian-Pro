@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from hashlib import sha256
 import json
 import logging
 from pathlib import Path
@@ -27,6 +28,15 @@ FRONTEND_DATA = "circadian_pro_frontend"
 PANEL_PATH = "circadian-pro-calibration"
 PANEL_URL = "/circadian_pro_static/calibration-panel.js"
 _LOGGER = logging.getLogger(__name__)
+
+
+def _panel_asset_registration(path: Path) -> tuple[str, str]:
+    """Identify both the module and its element by the served JavaScript bytes."""
+    fingerprint = sha256(path.read_bytes()).hexdigest()[:16]
+    return (
+        f"/circadian_pro_static/calibration-panel-{fingerprint}.js",
+        f"{PANEL_PATH}-{fingerprint}",
+    )
 
 
 def _loaded_entry(hass: Any, entry_id: str) -> Any:
@@ -155,17 +165,24 @@ async def async_setup_frontend(hass: Any) -> None:
                 websocket_api.async_register_command(hass, handler)
             data["api_registered"] = True
         if not data.get("static_registered"):
+            asset_path = Path(__file__).parent / "frontend" / "calibration-panel.js"
+            module_url, element_name = await hass.async_add_executor_job(
+                _panel_asset_registration, asset_path,
+            )
             await hass.http.async_register_static_paths([
-                StaticPathConfig(PANEL_URL, str(Path(__file__).parent / "frontend" / "calibration-panel.js"), False),
+                StaticPathConfig(PANEL_URL, str(asset_path), False),
+                StaticPathConfig(module_url, str(asset_path), False),
             ])
+            data["module_url"] = module_url
+            data["element_name"] = element_name
             data["static_registered"] = True
         if not data.get("panel_registered"):
             if PANEL_PATH in hass.data.get(frontend.DATA_PANELS, {}):
                 _LOGGER.warning("Keeping the existing %s panel; calibration API remains available", PANEL_PATH)
             else:
                 await panel_custom.async_register_panel(
-                    hass, frontend_url_path=PANEL_PATH, webcomponent_name=PANEL_PATH,
+                    hass, frontend_url_path=PANEL_PATH, webcomponent_name=data["element_name"],
                     sidebar_title="Circadian Pro", sidebar_icon="mdi:theme-light-dark",
-                    module_url=PANEL_URL, require_admin=True,
+                    module_url=data["module_url"], require_admin=True,
                 )
             data["panel_registered"] = True

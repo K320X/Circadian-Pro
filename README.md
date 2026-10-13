@@ -17,7 +17,7 @@ It supports multiple independent instances, manual-control detection, automatic 
 
 **Current stable version:** `0.20.3`
 
-**Local development version:** `0.21.2` (RGB+CCT correction and a unified profile creation and calibration panel with live profile updates; not yet released).
+**Local development version:** `0.21.3` (RGB+CCT correction, unified profile creation and calibration, live profile updates and content-versioned panel assets; not yet released).
 
 ## Features
 
@@ -78,6 +78,8 @@ Settings → Devices & services → Add integration
 3. Restart Home Assistant.
 
 Creating a backup before updating is recommended.
+
+Reload the Home Assistant frontend after updating. Each panel script now has a URL based on its contents, so a new frontend session requests the changed script instead of reusing the previous URL. An already open panel still needs a full page reload. In the iOS Companion app, a persistent old view can be refreshed from **Settings → Companion App → Debugging → Clear web view cache** (called **Reset frontend cache** in older versions), followed by closing and reopening the app.
 
 ## RGBW and RGB+CCT calibration
 

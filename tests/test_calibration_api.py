@@ -10,8 +10,10 @@ from functools import wraps
 import importlib.util
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 from types import ModuleType, SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components" / "circadian_pro"
 
@@ -345,15 +347,62 @@ class ApiTests(unittest.TestCase):
         immediate(self.api.async_setup_frontend(self.hass))
         immediate(self.api.async_setup_frontend(self.hass))
         self.assertEqual(len(self.ws.handlers), 4)
-        self.assertEqual(len(self.static_paths), 1)
+        self.assertEqual(len(self.static_paths), 2)
         self.assertEqual(self.static_paths[0].url_path, "/circadian_pro_static/calibration-panel.js")
-        self.assertFalse(self.static_paths[0].cache_headers)
+        self.assertTrue(all(not route.cache_headers for route in self.static_paths))
         self.assertEqual(len(self.panel_custom.calls), 1)
-        self.assertEqual(self.panel_custom.calls[0]["frontend_url_path"], "circadian-pro-calibration")
-        self.assertEqual(self.panel_custom.calls[0]["sidebar_title"], "Circadian Pro")
-        self.assertTrue(self.panel_custom.calls[0]["require_admin"])
+        panel = self.panel_custom.calls[0]
+        self.assertEqual(panel["frontend_url_path"], "circadian-pro-calibration")
+        self.assertEqual(panel["sidebar_title"], "Circadian Pro")
+        self.assertTrue(panel["require_admin"])
+        self.assertRegex(panel["module_url"], r"^/circadian_pro_static/calibration-panel-[0-9a-f]{16}\.js$")
+        fingerprint = panel["module_url"].removeprefix("/circadian_pro_static/calibration-panel-").removesuffix(".js")
+        self.assertEqual(panel["webcomponent_name"], f"circadian-pro-calibration-{fingerprint}")
+        route = next(route for route in self.static_paths if route.url_path == panel["module_url"])
+        self.assertEqual(route.path, self.static_paths[0].path)
+        self.assertEqual(Path(route.path), COMPONENT / "frontend" / "calibration-panel.js")
+        self.assertEqual(self.executor_calls, [(Path(route.path),)])
         self.assertIs(self.hass.data["frontend_panels"]["circadian-pro"], dashboard)
         self.assertEqual(set(self.hass.data["circadian_pro"]), {"loaded"})
+
+    def test_changed_javascript_gets_a_new_url_and_element_without_a_manifest_change(self):
+        with TemporaryDirectory(dir=Path(__file__).resolve().parent, prefix="panel-asset-") as directory:
+            path = Path(directory) / "calibration-panel.js"
+            path.write_bytes(b"export const build = 1;")
+            first = self.api._panel_asset_registration(path)
+            self.assertEqual(self.api._panel_asset_registration(path), first)
+            copy = Path(directory) / "same-content.js"
+            copy.write_bytes(path.read_bytes())
+            self.assertEqual(self.api._panel_asset_registration(copy), first)
+            path.write_bytes(b"export const build = 2;")
+            second = self.api._panel_asset_registration(path)
+            self.assertNotEqual(first[0], second[0])
+            self.assertNotEqual(first[1], second[1])
+
+    def test_setup_reads_asset_bytes_only_inside_the_executor(self):
+        asset = COMPONENT / "frontend" / "calibration-panel.js"
+        read_bytes = Path.read_bytes
+        executor = self.hass.async_add_executor_job
+        inside_executor = False
+
+        async def guarded_executor(function, *args):
+            nonlocal inside_executor
+            inside_executor = True
+            try:
+                return await executor(function, *args)
+            finally:
+                inside_executor = False
+
+        def guarded_read(path):
+            if path == asset:
+                self.assertTrue(inside_executor, "Asset I/O must not block HA's event loop")
+            return read_bytes(path)
+
+        self.hass.async_add_executor_job = guarded_executor
+        with patch.object(Path, "read_bytes", new=guarded_read):
+            immediate(self.api.async_setup_frontend(self.hass))
+        self.assertEqual(self.executor_calls, [(asset,)])
+        self.assertEqual(len(self.panel_custom.calls), 1)
 
     def test_even_a_collision_at_the_calibration_path_is_not_overwritten(self):
         existing = object()

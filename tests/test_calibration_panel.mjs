@@ -1,8 +1,11 @@
 /** Real panel-controller regressions without a DOM, HA server or live lights. */
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 const source = await readFile(
   new URL("../custom_components/circadian_pro/frontend/calibration-panel.js", import.meta.url),
@@ -1195,4 +1198,67 @@ test("initializing on an offline connection waits for ready before sending a sub
   assert.equal(metadata.subscriptions, 1);
   assert.equal(catalog.subscribed, true);
   catalog.stop();
+});
+
+async function panelModuleFixtures(t, registry = new Map()) {
+  const directory = await mkdtemp(join(tmpdir(), "circadian-panel-module-"));
+  const files = [];
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousCustomElements = globalThis.customElements;
+  globalThis.HTMLElement = class {};
+  globalThis.customElements = {
+    get: (name) => registry.get(name),
+    define(name, constructor) {
+      assert.equal(registry.has(name), false, "A registered element cannot be redefined");
+      assert.ok(![...registry.values()].includes(constructor), "Each constructor can be registered only once");
+      registry.set(name, constructor);
+    },
+  };
+  t.after(async () => {
+    try {
+      for (const file of files) await unlink(file);
+      await rmdir(directory);
+    } finally {
+      if (previousHTMLElement === undefined) delete globalThis.HTMLElement;
+      else globalThis.HTMLElement = previousHTMLElement;
+      if (previousCustomElements === undefined) delete globalThis.customElements;
+      else globalThis.customElements = previousCustomElements;
+    }
+  });
+  return async (filename) => {
+    const file = join(directory, filename);
+    await writeFile(file, source, "utf8");
+    files.push(file);
+    return pathToFileURL(file).href;
+  };
+}
+
+test("hashed panel modules register fresh components alongside an already loaded legacy panel", async (t) => {
+  class OldPanel {}
+  const registry = new Map([["circadian-pro-calibration", OldPanel]]);
+  const fixture = await panelModuleFixtures(t, registry);
+  const hashA = "aabbccddeeff0011";
+  const hashB = "1122334455667788";
+  const urlA = await fixture(`calibration-panel-${hashA}.js`);
+  const urlB = await fixture(`calibration-panel-${hashB}.js`);
+  const moduleA = await import(urlA);
+  assert.equal(registry.get("circadian-pro-calibration"), OldPanel);
+  assert.equal(registry.get(`circadian-pro-calibration-${hashA}`), moduleA.CircadianCalibrationPanel);
+  const moduleB = await import(urlB);
+  assert.equal(registry.get(`circadian-pro-calibration-${hashB}`), moduleB.CircadianCalibrationPanel);
+  assert.notEqual(moduleA.CircadianCalibrationPanel, moduleB.CircadianCalibrationPanel);
+  assert.equal(registry.size, 3);
+  assert.equal(await import(urlA), moduleA); // One URL remains one module in the same document.
+  const repeated = await import(urlA + "?repeat=1");
+  assert.notEqual(repeated.CircadianCalibrationPanel, moduleA.CircadianCalibrationPanel);
+  assert.equal(registry.get(`circadian-pro-calibration-${hashA}`), moduleA.CircadianCalibrationPanel);
+  assert.equal(registry.size, 3); // Another evaluation cannot redefine an existing hashed tag.
+});
+
+test("the unversioned legacy module still registers its original component name", async (t) => {
+  const registry = new Map();
+  const fixture = await panelModuleFixtures(t, registry);
+  const legacy = await import(await fixture("calibration-panel.js"));
+  assert.equal(registry.get("circadian-pro-calibration"), legacy.CircadianCalibrationPanel);
+  assert.equal(registry.size, 1);
 });
