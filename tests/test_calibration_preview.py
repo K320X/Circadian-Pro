@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ast
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import importlib.util
 from pathlib import Path
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 import unittest
 
@@ -44,6 +46,14 @@ def load_preview_module():
     ha_const.EVENT_STATE_CHANGED = "state_changed"
     ha_const.STATE_ON = "on"
     ha_const.STATE_OFF = "off"
+    core = ModuleType("homeassistant.core")
+
+    def callback(function):
+        # Match HA's callback marker, which controls HassJob's executor dispatch.
+        function._hass_callback = True
+        return function
+
+    core.callback = callback
     exceptions = ModuleType("homeassistant.exceptions")
     exceptions.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
     helpers = ModuleType("homeassistant.helpers")
@@ -56,7 +66,8 @@ def load_preview_module():
     sys.modules.update({
         "preview_tests_package": package, "preview_tests_package.const": const,
         "preview_tests_package.switch": switch, "homeassistant": ha,
-        "homeassistant.const": ha_const, "homeassistant.exceptions": exceptions,
+        "homeassistant.const": ha_const, "homeassistant.core": core,
+        "homeassistant.exceptions": exceptions,
         "homeassistant.helpers": helpers, "homeassistant.helpers.event": event,
         "homeassistant.helpers.entity_registry": entity_registry,
     })
@@ -82,7 +93,8 @@ class FakeState:
 
 
 class FakeBus:
-    def __init__(self):
+    def __init__(self, hass):
+        self.hass = hass
         self.listeners = []
 
     def async_listen(self, event_type, callback):
@@ -96,7 +108,7 @@ class FakeBus:
     def emit(self, data, context=None):
         event = SimpleNamespace(data=data, context=context or SimpleNamespace(id="external", parent_id=None))
         for callback in list(self.listeners):
-            callback(event)
+            self.hass.run_job(callback, event)
 
 
 class FakeManager:
@@ -161,9 +173,11 @@ class FakeSwitch:
 class FakeHass:
     def __init__(self):
         self.data = {}
+        self.loop_thread_id = threading.get_ident()
+        self.job_routes = []
         self.state_map = {"light.one": FakeState(), "light.two": FakeState()}
         self.states = SimpleNamespace(get=self.state_map.get)
-        self.bus = FakeBus()
+        self.bus = FakeBus(self)
         self.calls = []
         self.timers = []
         self.services = SimpleNamespace(async_call=self.call)
@@ -195,7 +209,19 @@ class FakeHass:
         return cancel
 
     def async_create_task(self, coroutine):
+        if threading.get_ident() != self.loop_thread_id:
+            coroutine.close()
+            raise RuntimeError("async_create_task called outside the event loop")
         return immediate(coroutine)
+
+    def run_job(self, callback, *args):
+        """Model HA's Callback/Executor routing with an actual executor thread."""
+        if getattr(callback, "_hass_callback", None) is True:
+            self.job_routes.append("callback")
+            return callback(*args)
+        self.job_routes.append("executor")
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(callback, *args).result()
 
     def add_profile(self, entry_id, lights):
         manager = FakeManager()
@@ -259,6 +285,17 @@ class CalibrationPreviewTests(unittest.TestCase):
         self.apply()
         calls = len(self.hass.calls)
         self.hass.bus.emit({"domain": "light", "service": "turn_on", "service_data": {"entity_id": "light.one", "brightness": 204}})
+        self.stop()
+        self.assertEqual(len(self.hass.calls), calls)
+
+    def test_bus_listeners_are_loop_callbacks_and_preserve_external_changes(self):
+        self.apply()
+        self.assertEqual(len(self.hass.bus.listeners), 2)
+        self.assertTrue(all(getattr(listener, "_hass_callback", None) is True for listener in self.hass.bus.listeners))
+        self.hass.job_routes.clear()
+        self.hass.bus.emit({"entity_id": "light.one", "new_state": FakeState(brightness=50)})
+        self.assertEqual(self.hass.job_routes, ["callback", "callback"])
+        calls = len(self.hass.calls)
         self.stop()
         self.assertEqual(len(self.hass.calls), calls)
 
@@ -413,9 +450,10 @@ class CalibrationPreviewTests(unittest.TestCase):
         self.apply(4000)
         first = self.hass.timers[-1]
         self.apply(1000)
-        first.callback(None)
+        self.hass.run_job(first.callback, None)
         self.assertTrue(self.preview.is_calibration_preview_active(self.hass, "light.one"))
-        self.hass.timers[-1].callback(None)
+        self.hass.run_job(self.hass.timers[-1].callback, None)
+        self.assertNotIn("executor", self.hass.job_routes)
         self.assertEqual(self.hass.state_map["light.one"].attributes, original)
         self.assertNotIn(self.preview.PREVIEW_DATA, self.hass.data)
 

@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from homeassistant.const import EVENT_CALL_SERVICE, EVENT_STATE_CHANGED, STATE_OFF, STATE_ON
+from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 
@@ -337,11 +338,20 @@ async def async_preview_calibration(hass: Any, entry_id: str, settings_dict: dic
     if preview is None:
         preview = _Preview(switch)
         registry[entry_id] = preview
+
+        @callback
+        def on_service(event: Any) -> None:
+            _service_listener(hass, preview, event)
+
+        @callback
+        def on_state(event: Any) -> None:
+            _state_listener(preview, event)
+
         remove_service = hass.bus.async_listen(
-            EVENT_CALL_SERVICE, lambda event: _service_listener(hass, preview, event),
+            EVENT_CALL_SERVICE, on_service,
         )
         remove_state = hass.bus.async_listen(
-            EVENT_STATE_CHANGED, lambda event: _state_listener(preview, event),
+            EVENT_STATE_CHANGED, on_state,
         )
 
         def remove_listeners() -> None:
@@ -405,6 +415,7 @@ async def async_preview_calibration(hass: Any, entry_id: str, settings_dict: dic
             preview.cancel_timeout()
         generation = preview.generation
 
+        @callback
         def expire(_now: Any) -> None:
             hass.async_create_task(_stop_preview(hass, entry_id, preview, generation))
 
