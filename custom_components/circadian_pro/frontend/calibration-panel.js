@@ -157,13 +157,13 @@ export class NewProfileFlow {
     if (!this.name) throw Object.assign(new Error("name_required"), { reason: "name_required" });
     if (this.createdEntryId) throw new Error("This profile has already been created.");
     if (this.uncertain) throw Object.assign(new Error("creation_uncertain"), { reason: "creation_uncertain" });
-    if (this.current?.type !== "form" || this.current.step_id !== "user") {
+    if (this.current?.type !== "form" || !["user", "menu"].includes(this.current.step_id)) {
       this.current = await this.callApi("POST", CONFIG_FLOW, {
         handler: "circadian_pro", show_advanced_options: false, source: "user",
       });
-      if (this.current.type === "form" && this.current.step_id === "menu") {
-        this.current = await this.callApi("POST", `${CONFIG_FLOW}/${this.current.flow_id}`, { action: "new" });
-      }
+    }
+    if (this.current.type === "form" && this.current.step_id === "menu") {
+      this.current = await this.callApi("POST", `${CONFIG_FLOW}/${this.current.flow_id}`, { action: "new" });
     }
     if (this.current.type === "form" && this.current.step_id === "user") {
       try { this.current = await this.callApi("POST", `${CONFIG_FLOW}/${this.current.flow_id}`, { name: this.name }); }
@@ -194,7 +194,7 @@ export class NewProfileFlow {
     if (!this.uncertain || !this.current?.flow_id) return this.current;
     try {
       const result = await this.callApi("GET", `${CONFIG_FLOW}/${this.current.flow_id}`);
-      if (result.type === "form" && result.step_id === "user") {
+      if (result.type === "form" && ["user", "menu"].includes(result.step_id)) {
         this.current = result;
         this.uncertain = false;
         return result;
@@ -487,7 +487,11 @@ export class CircadianCalibrationPanel extends HTMLElement {
       this.entries = await this._hass.callWS({ type: API + "entries" });
       const result = await this.creator.recover();
       if (result?.type === "form") this.error = this.copy.recoveredForm;
-      else { this.newProfileOpen = false; this.message = this.copy.uncertainList; }
+      else {
+        await this.creator.close();
+        this.newProfileOpen = false;
+        this.message = this.copy.uncertainList;
+      }
     });
   }
 

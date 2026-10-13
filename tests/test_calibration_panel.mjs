@@ -637,6 +637,48 @@ test("read recovery of a still-active name form permits only a later explicit cr
   assert.equal(backend.profiles.length, 1);
 });
 
+test("recovering HA's menu reuses its existing flow; abandoning an unsupported result cleans up first", async () => {
+  const backend = new ProfileBackend();
+  let loseNameRequest = true;
+  const creation = new NewProfileFlow(async (...args) => {
+    if (args[0] === "GET") {
+      backend.calls.push({ method: "GET", path: args[1] });
+      return { type: "form", flow_id: "server-config-flow", step_id: "menu" };
+    }
+    if (args[2]?.name && loseNameRequest) {
+      loseNameRequest = false;
+      throw new Error("Lost name request");
+    }
+    return backend.callApi(...args);
+  });
+  await assert.rejects(creation.create("Office"));
+  const recovered = await creation.recover();
+  assert.equal(recovered.step_id, "menu");
+  assert.equal(creation.uncertain, false);
+  const beforeRetry = backend.calls.length;
+  await creation.create("Office");
+  assert.deepEqual(backend.calls.slice(beforeRetry).map((call) => [call.method, call.path, call.data]), [
+    ["POST", CONFIG_FLOW + "/server-config-flow", { action: "new" }],
+    ["POST", CONFIG_FLOW + "/server-config-flow", { name: "Office" }],
+  ]);
+  assert.equal(backend.calls.filter((call) => call.path === CONFIG_FLOW).length, 1);
+  assert.equal(backend.profiles.length, 1);
+
+  const events = [];
+  const panel = {
+    _hass: { callWS: async () => { events.push("entries"); return []; } },
+    creator: {
+      recover: async () => { events.push("recover"); return null; },
+      close: async () => { assert.equal(panel.newProfileOpen, true); events.push("close-flow"); },
+    },
+    action: async (job) => job(), newProfileOpen: true, copy: { uncertainList: "Check existing profiles" },
+  };
+  await CircadianCalibrationPanel.prototype.reconcileCreation.call(panel);
+  assert.deepEqual(events, ["entries", "recover", "close-flow"]);
+  assert.equal(panel.newProfileOpen, false);
+  assert.equal(panel.message, "Check existing profiles");
+});
+
 test("loaded-entry polling is serial, bounded and does not claim readiness from creation alone", async () => {
   const delays = [];
   let reads = 0;
