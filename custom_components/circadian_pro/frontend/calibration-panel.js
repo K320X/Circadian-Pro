@@ -146,6 +146,7 @@ const COPY = {
   es: {
     title: "Calibración Circadian Pro", profile: "Perfil", start: "Configurar y calibrar",
     choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
+    selectEntities: "Seleccionar luces",
     close: "Cerrar sin guardar", preview: "Previsualizar luz", active: "Vista previa activa",
     idle: "Puedes ajustar los valores sin cambiar las luces.",
     hint: "Al marcar la casilla, la luz muestra este punto. Los ajustes se ven mientras está marcada. Se desactiva al cambiar de pantalla o después de 60 segundos sin ajustes.",
@@ -158,6 +159,7 @@ const COPY = {
   en: {
     title: "Circadian Pro calibration", profile: "Profile", start: "Configure and calibrate",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
+    selectEntities: "Select lights",
     close: "Close without saving", preview: "Preview light", active: "Preview active",
     idle: "You can adjust the values without changing the lights.",
     hint: "Check the box to show this calibration point. Edits are shown while checked. Changing steps or 60 seconds without edits ends the preview.",
@@ -174,6 +176,65 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+
+export function selectedEntityValues(picker) {
+  return [...picker.querySelectorAll("input[data-entity-choice]:checked")].map((input) => input.value);
+}
+
+function entityPicker(options, selected, labelId, copy, required) {
+  const choices = new Map(options);
+  const values = new Set(Array.isArray(selected) ? selected : []);
+  // Retain a configured entity even when it is temporarily absent from HA.
+  for (const id of values) if (!choices.has(id)) choices.set(id, copy.missing);
+  const picker = element("details", undefined, "entity-picker");
+  picker.dataset.kind = "entity";
+  picker.dataset.required = String(Boolean(required));
+  const summary = element("summary");
+  const selection = element("span", undefined, "entity-selection");
+  selection.id = labelId + "-selection";
+  selection.setAttribute("aria-live", "polite");
+  summary.setAttribute("aria-labelledby", `${labelId} ${selection.id}`);
+  const caret = element("span", "⌄", "entity-caret");
+  caret.setAttribute("aria-hidden", "true");
+  summary.append(selection, caret);
+  const list = element("div", undefined, "entity-choices");
+  list.setAttribute("role", "group");
+  list.setAttribute("aria-labelledby", labelId);
+  const updateSummary = () => {
+    selection.replaceChildren();
+    const selectedValues = selectedEntityValues(picker);
+    if (!selectedValues.length) selection.append(element("span", copy.selectEntities, "muted"));
+    for (const id of selectedValues) selection.append(element("span", choices.get(id), "entity-chip"));
+    summary.removeAttribute("aria-invalid");
+  };
+  for (const [id, name] of choices) {
+    const label = element("label", undefined, "entity-choice");
+    const checkbox = element("input");
+    checkbox.type = "checkbox";
+    checkbox.value = id;
+    checkbox.checked = values.has(id);
+    checkbox.dataset.entityChoice = "";
+    const text = element("span", undefined, "entity-choice-text");
+    text.append(element("span", name), element("small", id));
+    checkbox.addEventListener("change", () => {
+      updateSummary();
+      picker.open = false;
+      summary.focus();
+    });
+    label.append(checkbox, text);
+    list.append(label);
+  }
+  picker.append(summary, list);
+  picker.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      picker.open = false;
+      summary.focus();
+      event.preventDefault();
+    }
+  });
+  updateSummary();
+  return picker;
 }
 
 export class CircadianCalibrationPanel extends HTMLElement {
@@ -281,10 +342,21 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   readValues(validate = true) {
     const form = this.shadowRoot.querySelector("form");
+    if (validate) {
+      for (const picker of form?.querySelectorAll('[data-kind="entity"]') || []) {
+        if (picker.dataset.required === "true" && !selectedEntityValues(picker).length) {
+          picker.open = true;
+          const summary = picker.querySelector("summary");
+          summary.setAttribute("aria-invalid", "true");
+          summary.focus();
+          throw new Error(this.copy.invalid);
+        }
+      }
+    }
     if (validate && form && !form.reportValidity()) throw new Error(this.copy.invalid);
     const result = { ...this.values };
     for (const input of form?.querySelectorAll("[data-field]") || []) {
-      if (input.dataset.kind === "entity") result[input.dataset.field] = [...input.selectedOptions].map((option) => option.value);
+      if (input.dataset.kind === "entity") result[input.dataset.field] = selectedEntityValues(input);
       else if (input.type === "color") result[input.dataset.field] = hexToRgb(input.value);
       else if (input.type === "checkbox") result[input.dataset.field] = input.checked;
       else if (input.type === "number") result[input.dataset.field] = input.value === "" ? null : Number(input.value);
@@ -309,9 +381,12 @@ export class CircadianCalibrationPanel extends HTMLElement {
     const name = field.name;
     const step = this.flow.current.step_id;
     const text = this.translations.step?.[step] || {};
-    const wrapper = element("label", undefined, "field");
-    wrapper.append(element("span", text.data?.[name] || name.replaceAll("_", " "), "label"));
     const selector = field.selector || {};
+    const entityField = Boolean(selector.entity || field.type === "multi_select");
+    const wrapper = element(entityField ? "div" : "label", undefined, "field");
+    const label = element("span", text.data?.[name] || name.replaceAll("_", " "), "label");
+    label.id = `field-${name}-label`;
+    wrapper.append(label);
     const value = this.values[name];
     let input;
     if (selector.color_rgb) {
@@ -319,18 +394,9 @@ export class CircadianCalibrationPanel extends HTMLElement {
       input.type = "color";
       input.value = rgbToHex(value);
     } else if (selector.entity || field.type === "multi_select") {
-      input = element("select");
-      input.multiple = true;
-      input.size = 5;
-      input.dataset.kind = "entity";
       const options = selector.entity ? Object.entries(this._hass.states).filter(([id]) => id.startsWith("light.")).map(([id, state]) => [id, state.attributes.friendly_name || id])
         : Object.entries(field.options || {});
-      for (const [id, label] of options) {
-        const option = element("option", `${label} (${id})`);
-        option.value = id;
-        option.selected = (value || []).includes(id);
-        input.append(option);
-      }
+      input = entityPicker(options, value, label.id, this.copy, field.required);
     } else if (selector.select || field.type === "select") {
       input = element("select");
       const options = selector.select?.options || field.options || [];
@@ -391,9 +457,17 @@ export class CircadianCalibrationPanel extends HTMLElement {
       header strong { font-size:19px; } main { height:calc(100% - 64px); overflow:auto; padding:28px 20px; }
       article { max-width:850px; margin:auto; padding:28px; border:1px solid var(--divider-color,#ddd); border-radius:14px; background:var(--card-background-color,#fff); }
       h1 { margin:0 0 12px; font-size:24px; } p { line-height:1.55; white-space:pre-line; } .muted,small { color:var(--secondary-text-color,#606770); }
-      form { display:grid; gap:22px; margin-top:24px; } label.field { display:grid; gap:8px; } .label { font-weight:600; } small { line-height:1.45; }
+      form { display:grid; gap:22px; margin-top:24px; } .field { display:grid; gap:8px; } .label { font-weight:600; } small { line-height:1.45; }
       input:not([type=checkbox]),select { color:inherit; background:var(--card-background-color,#fff); font:inherit; width:100%; min-height:42px; padding:9px 12px; border:1px solid var(--divider-color,#aeb4bc); border-radius:8px; }
       input[type=checkbox] { width:20px; height:20px; accent-color:var(--primary-color,#03a9f4); margin:0; } label.preview { display:flex; align-items:center; gap:10px; font-weight:600; }
+      .entity-picker { border:1px solid var(--divider-color,#aeb4bc); border-radius:8px; background:var(--card-background-color,#fff); }
+      .entity-picker summary { display:flex; align-items:center; gap:12px; min-height:42px; padding:8px 12px; cursor:pointer; list-style:none; }
+      .entity-picker summary::-webkit-details-marker { display:none; } .entity-picker summary:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; border-radius:8px; }
+      .entity-selection { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; flex:1; } .entity-chip { max-width:100%; padding:4px 9px; border-radius:6px; background:var(--secondary-background-color,#f1f4f7); overflow-wrap:anywhere; }
+      .entity-caret { font-size:20px; line-height:1; color:var(--secondary-text-color,#606770); } .entity-picker[open] .entity-caret { transform:rotate(180deg); }
+      .entity-choices { max-height:240px; overflow:auto; padding:6px; border-top:1px solid var(--divider-color,#ddd); }
+      .entity-choice { display:flex; align-items:center; gap:12px; padding:10px; border-radius:6px; cursor:pointer; } .entity-choice:hover { background:var(--secondary-background-color,#f1f4f7); } .entity-choice input { flex-shrink:0; }
+      .entity-choice-text { display:grid; gap:3px; min-width:0; overflow-wrap:anywhere; } .entity-choice small { font-size:12px; }
       .preview-box { padding:18px; margin:24px 0; border-radius:10px; background:var(--secondary-background-color,#f1f4f7); } .preview-box p { margin:8px 0 0; }
       .actions { display:flex; justify-content:flex-end; gap:12px; margin-top:28px; } button { font:inherit; font-weight:600; border-radius:8px; padding:10px 18px; border:1px solid var(--divider-color,#ddd); cursor:pointer; background:var(--card-background-color,#fff); color:var(--primary-color,#0077ab); }
       button.primary { background:var(--primary-color,#0077ab); color:var(--text-primary-color,#fff); border-color:transparent; } button:disabled { opacity:.55; cursor:wait; } .close { margin-left:auto; font-size:13px; }

@@ -16,7 +16,7 @@ globalThis.customElements = {
   get: (name) => registered.get(name),
   define: (name, constructor) => registered.set(name, constructor),
 };
-const { PreviewSession, CalibrationFlow } = await import(
+const { PreviewSession, CalibrationFlow, CircadianCalibrationPanel, selectedEntityValues } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
 );
 if (originalHTMLElement === undefined) delete globalThis.HTMLElement;
@@ -370,4 +370,109 @@ test("failed restoration prevents advancing or saving", async () => {
   assert.deepEqual(events, []);
   assert.equal(flow.current.step_id, "init");
   assert.equal(backend.saved.length, 0);
+});
+
+test("compact entity values remain an array for multiple, single and empty selections", () => {
+  const choices = [
+    { value: "light.one", checked: true },
+    { value: "light.two", checked: true },
+  ];
+  const picker = {
+    dataset: { kind: "entity", field: "lights", required: "false" },
+    querySelectorAll(selector) {
+      assert.equal(selector, "input[data-entity-choice]:checked");
+      return choices.filter((choice) => choice.checked);
+    },
+  };
+  const form = { querySelectorAll: () => [picker], reportValidity: () => true };
+  const panel = { values: { lights: [] }, copy: { invalid: "Invalid" }, shadowRoot: { querySelector: () => form } };
+  assert.deepEqual(selectedEntityValues(picker), ["light.one", "light.two"]);
+  assert.deepEqual(CircadianCalibrationPanel.prototype.readValues.call(panel).lights, ["light.one", "light.two"]);
+  choices[0].checked = false;
+  assert.deepEqual(CircadianCalibrationPanel.prototype.readValues.call(panel).lights, ["light.two"]);
+  choices[1].checked = false;
+  assert.deepEqual(CircadianCalibrationPanel.prototype.readValues.call(panel).lights, []);
+});
+
+test("an empty required entity selection opens and focuses the chooser instead of advancing", () => {
+  const attributes = {};
+  let focused = false;
+  const summary = { setAttribute: (key, value) => { attributes[key] = value; }, focus: () => { focused = true; } };
+  const picker = {
+    dataset: { kind: "entity", field: "lights", required: "true" },
+    querySelectorAll: () => [], querySelector: () => summary, open: false,
+  };
+  const form = { querySelectorAll: () => [picker], reportValidity: () => true };
+  const panel = { values: { lights: [] }, copy: { invalid: "Choose a light" }, shadowRoot: { querySelector: () => form } };
+  assert.throws(() => CircadianCalibrationPanel.prototype.readValues.call(panel), /Choose a light/);
+  assert.equal(picker.open, true);
+  assert.equal(focused, true);
+  assert.equal(attributes["aria-invalid"], "true");
+});
+
+test("compact chooser shows friendly selections and closes after adding another light", (t) => {
+  class Node {
+    constructor(tag) {
+      this.tag = tag; this.children = []; this.dataset = {}; this.attributes = {};
+      this.listeners = {}; this.textContent = ""; this.open = false;
+    }
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = [...children]; }
+    setAttribute(name, value) { this.attributes[name] = value; }
+    removeAttribute(name) { delete this.attributes[name]; }
+    addEventListener(name, listener) { this.listeners[name] = listener; }
+    focus() { this.focused = true; }
+    descendants() { return this.children.flatMap((child) => [child, ...child.descendants()]); }
+    querySelector(selector) { return this.descendants().find((node) => node.tag === selector); }
+    querySelectorAll(selector) {
+      assert.equal(selector, "input[data-entity-choice]:checked");
+      return this.descendants().filter((node) => node.tag === "input" && Object.hasOwn(node.dataset, "entityChoice") && node.checked);
+    }
+  }
+  const originalDocument = globalThis.document;
+  globalThis.document = { createElement: (tag) => new Node(tag) };
+  t.after(() => {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  });
+  let refreshes = 0;
+  let picker;
+  const panel = {
+    flow: { current: { step_id: "init" } },
+    values: { lights: ["light.one"] }, settings: {},
+    translations: { step: { init: { data: { lights: "Luces" } } } },
+    copy: { selectEntities: "Seleccionar luces", missing: "No disponible" },
+    _hass: { states: {
+      "light.one": { attributes: { friendly_name: "Light A" } },
+      "light.two": { attributes: { friendly_name: "Light B" } },
+      "light.three": { attributes: { friendly_name: "Light C" } },
+    } },
+    readValues: () => ({ lights: selectedEntityValues(picker) }),
+    session: { refresh: () => { refreshes++; } },
+  };
+  const wrapper = CircadianCalibrationPanel.prototype.field.call(panel, {
+    name: "lights", selector: { entity: { domain: "light", multiple: true } },
+  });
+  picker = wrapper.querySelector("details");
+  const summary = picker.querySelector("summary");
+  const selection = summary.children[0];
+  assert.equal(wrapper.tag, "div");
+  assert.equal(picker.open, false);
+  assert.deepEqual(selection.children.map((node) => node.textContent), ["Light A"]);
+  assert.match(summary.attributes["aria-labelledby"], /field-lights-label/);
+  const checkboxes = picker.descendants().filter((node) => node.tag === "input");
+  picker.open = true;
+  checkboxes[1].checked = true;
+  picker.listeners.input(); // Native checkbox input bubbles to the chooser.
+  checkboxes[1].listeners.change();
+  assert.equal(picker.open, false);
+  assert.equal(summary.focused, true);
+  assert.deepEqual(panel.values.lights, ["light.one", "light.two"]);
+  assert.deepEqual(selection.children.map((node) => node.textContent), ["Light A", "Light B"]);
+  assert.equal(refreshes, 1);
+  checkboxes[0].checked = false;
+  picker.listeners.input();
+  checkboxes[0].listeners.change();
+  assert.deepEqual(selection.children.map((node) => node.textContent), ["Light B"]);
+  assert.deepEqual(panel.values.lights, ["light.two"]);
 });

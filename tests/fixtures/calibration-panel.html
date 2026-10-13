@@ -45,7 +45,14 @@
   const panel = document.querySelector('circadian-pro-calibration');
   panel.hass = {
     language:'es',user:{is_admin:true},
-    states:{'light.example_a':{attributes:{friendly_name:'Light A',supported_color_modes:['color_temp','rgbww']}},'light.example_b':{attributes:{friendly_name:'Light B',supported_color_modes:['rgbw']}}},
+    states:{
+      'light.example_a':{attributes:{friendly_name:'Light A',supported_color_modes:['color_temp','rgbww']}},
+      'light.example_b':{attributes:{friendly_name:'Light B',supported_color_modes:['rgbw']}},
+      'light.example_c':{attributes:{friendly_name:'Light C',supported_color_modes:['rgbw']}},
+      'light.example_d':{attributes:{friendly_name:'Light D',supported_color_modes:['rgb']}},
+      'light.example_e':{attributes:{friendly_name:'Light E',supported_color_modes:['color_temp','rgbww']}},
+      'light.example_f':{attributes:{friendly_name:'Light F',supported_color_modes:['rgb']}},
+    },
     callWS:async(message) => {
       commands.push(message);
       if(message.type.endsWith('/entries')) return [{entry_id:'local-profile-a',title:'Profile A',settings:{...original}}];
@@ -64,6 +71,7 @@
       if(method === 'DELETE') { flows.delete(id); return {}; }
       if(path.endsWith('/flow')) { const key = String(++sequence);flows.set(key,{index:0,draft:{...original}});return form(key,0); }
       const flow = flows.get(id);
+      if(flow.index === 0 && !Array.isArray(data.lights)) throw Error('La selección de luces debe conservar una lista, aunque solo haya una luz elegida.');
       if(flow.index === 0 && (!Array.isArray(data.sleep_rgb_color) || data.sunrise_time === null)) throw Error('RGB debe conservar tres canales y el horario opcional su valor vacío.');
       Object.assign(flow.draft,data);
       if(flow.index === 1 && data.white_w_kelvin >= data.white_cw_kelvin) return form(id,1,{base:'invalid_white_channel_range'});
