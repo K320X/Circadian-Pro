@@ -1339,6 +1339,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       const form = element("form");
       form.addEventListener("submit", (event) => { event.preventDefault(); this.navigate(); });
       const fields = step.data_schema || [];
+      if (step.step_id === "white_channels") form.className = "settings-row paired";
       if (step.step_id === "init") form.append(...generalSettings(fields, (field, beforeChange) => this.field(field, beforeChange), this.copy.groups));
       else for (const field of fields) form.append(this.field(field));
       article.append(form);
