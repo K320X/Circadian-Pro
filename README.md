@@ -15,9 +15,7 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.20.3`
-
-**Local development version:** `0.21.3` (RGB+CCT correction, unified profile creation and calibration, live profile updates and content-versioned panel assets; not yet released).
+**Current stable version:** `0.21.3`
 
 ## Features
 
@@ -66,6 +64,8 @@ Settings → Devices & services → Add integration
 
 6. Search for **Circadian Pro** and complete the configuration.
 
+Once the integration loads, it automatically adds the **Circadian Pro** sidebar panel for administrator users. No manual dashboard or sidebar configuration is required. The panel lets you create additional profiles and configure or calibrate existing ones.
+
 ## Updating
 
 1. Download the ZIP from the new release.
@@ -79,7 +79,7 @@ Settings → Devices & services → Add integration
 
 Creating a backup before updating is recommended.
 
-Reload the Home Assistant frontend after updating. Each panel script now has a URL based on its contents, so a new frontend session requests the changed script instead of reusing the previous URL. An already open panel still needs a full page reload. In the iOS Companion app, a persistent old view can be refreshed from **Settings → Companion App → Debugging → Clear web view cache** (called **Reset frontend cache** in older versions), followed by closing and reopening the app.
+Each panel script and its custom element now have identities based on the script's contents, so Home Assistant can load the updated interface without reusing an older panel implementation. If a view still shows the old interface after updating, reload the Home Assistant frontend. In the iOS Companion app, a persistent old view can be refreshed from **Settings → Companion App → Debugging → Clear web view cache** (called **Reset frontend cache** in older versions), followed by closing and reopening the app.
 
 ## RGBW and RGB+CCT calibration
 
@@ -124,6 +124,17 @@ circadian_pro.change_switch_settings
 ```
 
 These services can be used from automations, scripts and Developer Tools.
+
+## Release 0.21.3
+
+- Corrected RGB+CCT adaptation using separate cold-white and warm-white channels, while retaining RGB, RGBW and native color-temperature support.
+- Added physical white-channel settings and 4000 K / 1000 K calibration with immediate, optional light previews and automatic restoration.
+- Added an automatic administrator sidebar panel for profile creation, configuration and calibration.
+- Added compact light selection, wizard navigation, live profile updates and responsive mobile controls.
+- Fixed calibration callbacks and WebSocket reconnection handling.
+- Versioned panel scripts and custom elements by their contents to prevent stale interfaces after updates, including in the iOS Companion app.
+
+Validated with 86 Python tests and 49 frontend tests, plus live Home Assistant and mobile checks.
 
 ## Release 0.20.3
 
