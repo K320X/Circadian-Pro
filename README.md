@@ -17,6 +17,10 @@ It supports multiple independent instances, manual-control detection, automatic 
 
 **Current stable version:** `0.21.3`
 
+**Development version:** `0.21.4`, with the full-code audit fixes. It is not yet a published stable release.
+
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits. The development branch passes 219 Python and 73 frontend regressions.
+
 ## Features
 
 - Automatic brightness and color-temperature adaptation.
@@ -152,4 +156,18 @@ Validated with 86 Python tests and 49 frontend tests, plus live Home Assistant a
 Circadian Pro is a custom integration and is not part of the official Home Assistant project.
 
 Compatibility can vary depending on the capabilities and implementation of each light integration.
+
+## Development checks
+
+Use Python 3.12 or newer and Node.js 24. The checks do not require a Home Assistant installation:
+
+```sh
+python -m pip install -r requirements-dev.txt
+python scripts/check_sources.py
+ruff check custom_components scripts --select E9,F,B
+python -m unittest discover -s tests -p 'test_*.py'
+node --test tests/*.mjs
+```
+
+GitHub Actions runs the same checks on Python 3.12 and 3.14 for pushes and pull requests. The regression tests execute production logic with Home Assistant I/O doubles; they complement live validation and do not replace testing with real light integrations.
 

@@ -35,6 +35,19 @@ class State:
     def __init__(self, attributes: dict, context_id="test-report"):
         self.attributes = attributes
         self.context = SimpleNamespace(id=context_id)
+        self.state = "on"
+
+
+class Unauthorized(Exception):
+    """HA authorization exception, with observable error context."""
+
+    def __init__(self, **kwargs):
+        self.details = kwargs
+        super().__init__(str(kwargs))
+
+
+class UnknownUser(Unauthorized):
+    """The caller's user no longer exists."""
 
 
 def complete_immediate(coroutine):
@@ -116,15 +129,22 @@ def production_namespace():
         "SERVICE_TURN_ON": "turn_on",
         "DOMAIN": "circadian_pro",
         "SWITCH_DOMAIN": "switch",
+        "STATE_UNAVAILABLE": "unavailable",
+        "STATE_UNKNOWN": "unknown",
         "CONF_MANUAL_CONTROL": "manual_control",
         "is_calibration_preview_active": lambda hass, light: False,
+        "is_calibration_preview_context": lambda *_: False,
+        "POLICY_CONTROL": "control",
+        "Unauthorized": Unauthorized,
+        "UnknownUser": UnknownUser,
     }
     for filename in ("switch.py", "adaptation_utils.py"):
         source = (COMPONENT / filename).read_text(encoding="utf-8")
         for name in set(re.findall(r"\bATTR_[A-Z_]+\b", source)):
             namespace[name] = name.removeprefix("ATTR_").lower()
 
-    load_functions(namespace, "helpers.py", {"clamp", "color_difference_redmean"})
+    load_functions(namespace, "helpers.py", {"clamp", "color_difference_redmean", "remove_vowels"})
+    load_functions(namespace, "hass_utils.py", {"async_check_entity_control"})
     # helpers.color_difference_redmean uses math only for a real external RGB change.
     import math
 
@@ -154,6 +174,9 @@ def production_namespace():
             "BRIGHTNESS_CHANGE",
             "COLOR_TEMP_CHANGE",
             "RGB_REDMEAN_CHANGE",
+            "_DOMAIN_SHORT",
+            "is_our_context",
+            "is_our_context_id",
             "_supported_features",
             "_clamp_int",
             "_interp_white_intensity_rgbw",
@@ -233,9 +256,9 @@ class ProtocolHarness:
         async def sleep(seconds):
             self.sleeps.append(seconds)
 
-        def context(which):
+        def context(which, parent=None):
             self.context_counter += 1
-            return SimpleNamespace(id=f"test-adaptation-{self.context_counter}")
+            return SimpleNamespace(id=f"test-adaptation-{self.context_counter}", parent_id=parent.id if parent else None)
 
         # Dependency fixtures deliberately have an identical red value at the
         # calibration endpoints. This exercises the production flat-channel fix.
@@ -282,6 +305,7 @@ class ProtocolHarness:
             hass=self.hass,
             manager=self.manager,
             _name="Profile A",
+            is_on=True,
             entity_id="switch.circadian_pro_example_a",
             _transition=0,
             _prefer_rgb_color=False,
@@ -447,7 +471,8 @@ class RGBWWProtocolTests(unittest.TestCase):
         self.assertEqual(cold, 0)
         self.assertGreater(warm, 0)
         self.assertLess(warm, 255)
-        self.assertEqual(harness.manager.last_service_data[harness.light], payload)
+        self.assertEqual(harness.manager.last_service_data[harness.light]["rgbww_color"], payload["rgbww_color"])
+        self.assertEqual(harness.manager.last_service_data[harness.light]["brightness"], harness.calls[0][2]["brightness"])
 
     def test_calibration_endpoints_preserve_all_rgb_channels(self):
         for target, expected in ((1000, (180, 40, 10)), (4000, (100, 220, 240))):
@@ -495,7 +520,10 @@ class RGBWWProtocolTests(unittest.TestCase):
         self.assertEqual(set(payload), {"entity_id", "rgbww_color"})
         self.assertEqual(len(payload["rgbww_color"]), 5)
         self.assertEqual(harness.sleeps, [0])
-        self.assertEqual(harness.manager.last_service_data[harness.light], payload)
+        self.assertEqual(
+            harness.manager.last_service_data[harness.light],
+            {**payload, "brightness": 255},
+        )
 
     def test_own_vector_report_ignores_derived_rgb_and_temperature(self):
         for representation in (tuple, list):

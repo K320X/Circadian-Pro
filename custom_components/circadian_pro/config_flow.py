@@ -1,9 +1,14 @@
 """Config flow for Circadian Pro integration."""
 
 import logging
+from copy import deepcopy
 from typing import Any
 
 import voluptuous as vol
+try:
+    from probatio import Invalid as SelectorInvalid
+except ImportError:  # Home Assistant versions before the validator migration.
+    SelectorInvalid = vol.Invalid
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
@@ -58,8 +63,6 @@ def validate_entry(config_entry: config_entries.ConfigEntry) -> dict[str, Any]:
         if value is not None and value != NONE_STR:
             data[key] = validate_value(value)
 
-    validate_cross_options(data)
-
     # Backward compatibility: infer sleep_activation_mode from legacy options
     # if the new option is not present in the entry yet.
     if (
@@ -73,6 +76,7 @@ def validate_entry(config_entry: config_entries.ConfigEntry) -> dict[str, Any]:
         else:
             data[CONF_SLEEP_ACTIVATION_MODE] = "disabled"
 
+    validate_cross_options(data)
     return data
 
 
@@ -91,15 +95,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_menu(self, user_input: dict[str, Any] | None = None):
         """Handle the menu step."""
+        errors: dict[str, str] = {}
         if user_input is not None:
             if user_input["action"] == "new":
                 self.source_options = None
+                return await self.async_step_wait_for_name()
             else:
                 entry_id = user_input["action"]
                 entry = self.hass.config_entries.async_get_entry(entry_id)
-                if entry:
-                    self.source_options = dict(entry.options)
-            return await self.async_step_wait_for_name()
+                if entry is not None:
+                    self.source_options = deepcopy(validate_entry(entry))
+                    self.source_options.pop(CONF_NAME, None)
+                    for key, (_validate, serialize) in EXTRA_VALIDATION.items():
+                        value = self.source_options.get(key)
+                        if value is not None:
+                            self.source_options[key] = serialize(value)
+                    return await self.async_step_wait_for_name()
+                self.source_options = None
+                errors["base"] = "profile_missing"
 
         entries = self._async_current_entries()
         options = {"new": "Create new instance"}
@@ -111,6 +124,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {vol.Required("action", default="new"): vol.In(options)},
             ),
+            errors=errors,
         )
 
     async def async_step_wait_for_name(self, user_input: dict[str, Any] | None = None):
@@ -155,8 +169,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         for entry in self._async_current_entries():
             if entry.unique_id == self.unique_id:
-                self.hass.config_entries.async_update_entry(entry, data=user_input)
-                self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                if self.hass.config_entries.async_update_entry(entry, data=user_input):
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
                 self._abort_if_unique_id_configured()
 
         return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
@@ -182,14 +196,14 @@ def validate_options(user_input: dict[str, Any], errors: dict[str, str]) -> None
         try:
             if value is not None and value != NONE_STR:
                 _validate(value)
-        except vol.Invalid:
+        except (vol.Invalid, SelectorInvalid):
             _LOGGER.exception("Configuration option %s=%s is incorrect", key, value)
             errors["base"] = "option_error"
 
     if not errors:
         try:
             validate_cross_options(user_input)
-        except vol.Invalid as err:
+        except (vol.Invalid, SelectorInvalid) as err:
             error_key = str(err)
             if error_key not in {
                 "invalid_brightness_range",
@@ -199,19 +213,11 @@ def validate_options(user_input: dict[str, Any], errors: dict[str, str]) -> None
                 "invalid_sunset_bounds",
                 "invalid_white_channel_range",
                 "invalid_white_neutral_range",
+                "invalid_sleep_schedule",
+                "invalid_solar_times",
             }:
                 error_key = "option_error"
             errors["base"] = error_key
-
-    # If the user selected fixed schedule, ensure start/end are present
-    # (they can cross midnight, e.g. 23:00 -> 05:00).
-    mode = user_input.get(CONF_SLEEP_ACTIVATION_MODE, "disabled")
-    if mode == "schedule":
-        start = user_input.get("sleep_schedule_start")
-        end = user_input.get("sleep_schedule_end")
-        if not start or start == NONE_STR or not end or end == NONE_STR:
-            errors["base"] = "option_error"
-
 
 
 class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
@@ -224,9 +230,9 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Step 1: general settings."""
         conf = self.config_entry
-        data = validate_entry(conf)
         if conf.source == config_entries.SOURCE_IMPORT:
-            return self.async_show_form(step_id="init", data_schema=None)
+            return self.async_abort(reason="yaml_configuration")
+        data = validate_entry(conf)
 
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -260,20 +266,15 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             ),
             CONF_SLEEP_RGB_OR_COLOR_TEMP: selector.SelectSelector(
                 selector.SelectSelectorConfig(
-                    options=[
-                        {"value": "rgb_color", "label": "Definir con RGB"},
-                        {"value": "color_temp", "label": "Definir con temperatura de color"},
-                    ],
+                    options=["rgb_color", "color_temp"],
+                    translation_key=CONF_SLEEP_RGB_OR_COLOR_TEMP,
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 ),
             ),
             CONF_SLEEP_ACTIVATION_MODE: selector.SelectSelector(
                 selector.SelectSelectorConfig(
-                    options=[
-                        {"value": "disabled", "label": "Desactivado"},
-                        {"value": "sun", "label": "Por amanecer y atardecer"},
-                        {"value": "schedule", "label": "Por franja horaria"},
-                    ],
+                    options=["disabled", "sun", "schedule"],
+                    translation_key=CONF_SLEEP_ACTIVATION_MODE,
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 ),
             ),
@@ -338,7 +339,14 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
         for name, default, validation in VALIDATION_TUPLES:
             if name in calibration_keys or name not in allowed_init_keys:
                 continue
-            key = vol.Optional(name, default=conf.options.get(name, default))
+            selected_default = (user_input or {}).get(name, data.get(name, default))
+            if name in EXTRA_VALIDATION and selected_default not in (None, NONE_STR):
+                validate_value, serialize = EXTRA_VALIDATION[name]
+                try:
+                    selected_default = serialize(validate_value(selected_default))
+                except (vol.Invalid, SelectorInvalid, ValueError, TypeError):
+                    pass  # Keep the submitted value visible alongside its error.
+            key = vol.Optional(name, default=selected_default)
             value = to_replace.get(name, validation)
             options_schema[key] = value
 

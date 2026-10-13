@@ -43,6 +43,18 @@ utcnow.__doc__ = "Get now in UTC time."
 _LOGGER = logging.getLogger(__name__)
 
 
+class SunEventUnavailable(ValueError):
+    """Astral could not calculate a sunrise or sunset at this location."""
+
+
+# Astral 2.2 reports these two physical conditions as ValueError. Restrict the
+# adapter to those messages so bad configuration and unexpected failures escape.
+_ABSENT_SUN_EVENT_MESSAGES = {
+    f"Sun is always {direction} the horizon on this day, at this location."
+    for direction in ("above", "below")
+}
+
+
 @dataclass(frozen=True)
 class SunEvents:
     """Track the state of the sun and associated light settings."""
@@ -59,10 +71,26 @@ class SunEvents:
     sunset_offset: datetime.timedelta = datetime.timedelta()
     timezone: datetime.tzinfo = UTC
 
+    def _astral_event(self, event: str, dt: datetime.date) -> datetime.datetime:
+        try:
+            return getattr(self.astral_location, event)(dt, local=False)
+        except ValueError as err:
+            if str(err) not in _ABSENT_SUN_EVENT_MESSAGES:
+                raise
+            raise SunEventUnavailable(str(err)) from err
+
+    def uninterrupted_sun_position(self, dt: datetime.datetime) -> float:
+        """Use the horizon sign when real events cannot bracket the sample.
+
+        No transition times are invented: positive elevation means the daytime
+        endpoint, and zero/negative elevation means the nighttime endpoint.
+        """
+        return 1.0 if self.astral_location.solar_elevation(dt) > 0 else -1.0
+
     def sunrise(self, dt: datetime.date) -> datetime.datetime:
         """Return the (adjusted) sunrise time for the given datetime."""
         sunrise = (
-            self.astral_location.sunrise(dt, local=False)
+            self._astral_event("sunrise", dt)
             if self.sunrise_time is None
             else self._replace_time(dt, self.sunrise_time)
         ) + self.sunrise_offset
@@ -77,7 +105,7 @@ class SunEvents:
     def sunset(self, dt: datetime.date) -> datetime.datetime:
         """Return the (adjusted) sunset time for the given datetime."""
         sunset = (
-            self.astral_location.sunset(dt, local=False)
+            self._astral_event("sunset", dt)
             if self.sunset_time is None
             else self._replace_time(dt, self.sunset_time)
         ) + self.sunset_offset
@@ -164,19 +192,32 @@ class SunEvents:
         dt: datetime.datetime,
     ) -> list[tuple[SunEvent, float]]:
         """Get the previous and next sun event."""
-        events = [
-            event
-            for days in [-1, 0, 1]
-            for event in self.sun_events(dt + timedelta(days=days))
-        ]
+        events = []
+        unavailable: SunEventUnavailable | None = None
+        for days in [-1, 0, 1]:
+            try:
+                events.extend(self.sun_events(dt + timedelta(days=days)))
+            except SunEventUnavailable as err:
+                unavailable = err
         events = sorted(events, key=lambda x: x[1])
         i_now = bisect.bisect([ts for _, ts in events], dt.timestamp())
+        if not 0 < i_now < len(events) and unavailable is not None:
+            raise unavailable
         return events[i_now - 1 : i_now + 1]
 
-    def sun_position(self, dt: datetime.datetime) -> float:
+    def sun_position(
+        self,
+        dt: datetime.datetime,
+        events: list[tuple[SunEvent, float]] | None = None,
+    ) -> float:
         """Calculate the position of the sun, between [-1, 1]."""
+        if events is None:
+            try:
+                events = self.prev_and_next_events(dt)
+            except SunEventUnavailable:
+                return self.uninterrupted_sun_position(dt)
         target_ts = dt.timestamp()
-        (_, prev_ts), (next_event, next_ts) = self.prev_and_next_events(dt)
+        (_, prev_ts), (next_event, next_ts) = events
         h, x = (
             (prev_ts, next_ts)
             if next_event in (SunEvent.SUNSET, SunEvent.SUNRISE)
@@ -190,9 +231,10 @@ class SunEvents:
     def closest_event(
         self,
         dt: datetime.datetime,
+        events: list[tuple[SunEvent, float]] | None = None,
     ) -> tuple[Literal[SunEvent.SUNRISE, SunEvent.SUNSET], float]:
         """Get the closest sunset or sunrise event."""
-        (prev_event, prev_ts), (next_event, next_ts) = self.prev_and_next_events(dt)
+        (prev_event, prev_ts), (next_event, next_ts) = events if events is not None else self.prev_and_next_events(dt)
         if SunEvent.SUNRISE in (prev_event, next_event):
             ts_event = prev_ts if prev_event == SunEvent.SUNRISE else next_ts
             return SunEvent.SUNRISE, ts_event
@@ -248,16 +290,17 @@ class SunLightSettings:
             timezone=self.timezone,
         )
 
-    def _brightness_pct_default(self, dt: datetime.datetime) -> float:
+    def _brightness_pct_default(self, dt: datetime.datetime, sun_position: float | None = None) -> float:
         """Calculate the brightness percentage using the default method."""
-        sun_position = self.sun.sun_position(dt)
+        if sun_position is None:
+            sun_position = self.sun.sun_position(dt)
         if sun_position > 0:
             return self.max_brightness
         delta_brightness = self.max_brightness - self.min_brightness
         return (delta_brightness * (1 + sun_position)) + self.min_brightness
 
-    def _brightness_pct_tanh(self, dt: datetime.datetime) -> float:
-        event, ts_event = self.sun.closest_event(dt)
+    def _brightness_pct_tanh(self, dt: datetime.datetime, events: list[tuple[SunEvent, float]] | None = None) -> float:
+        event, ts_event = self.sun.closest_event(dt, events)
         dark = self.brightness_mode_time_dark.total_seconds()
         light = self.brightness_mode_time_light.total_seconds()
         if event == SunEvent.SUNRISE:
@@ -285,8 +328,8 @@ class SunLightSettings:
             raise ValueError(msg)
         return clamp(brightness, self.min_brightness, self.max_brightness)
 
-    def _brightness_pct_linear(self, dt: datetime.datetime) -> float:
-        event, ts_event = self.sun.closest_event(dt)
+    def _brightness_pct_linear(self, dt: datetime.datetime, events: list[tuple[SunEvent, float]] | None = None) -> float:
+        event, ts_event = self.sun.closest_event(dt, events)
         # at ts_event - dt_start, brightness == start_brightness
         # at ts_event + dt_end, brightness == end_brightness
         dark = self.brightness_mode_time_dark.total_seconds()
@@ -312,17 +355,23 @@ class SunLightSettings:
             raise ValueError(msg)
         return clamp(brightness, self.min_brightness, self.max_brightness)
 
-    def brightness_pct(self, dt: datetime.datetime, is_sleep: bool) -> float | None:
+    def brightness_pct(
+        self,
+        dt: datetime.datetime,
+        is_sleep: bool,
+        sun_position: float | None = None,
+        events: list[tuple[SunEvent, float]] | None = None,
+    ) -> float | None:
         """Calculate the brightness in %."""
         if is_sleep:
             return self.sleep_brightness
         assert self.brightness_mode in ("default", "linear", "tanh")
         if self.brightness_mode == "default":
-            return self._brightness_pct_default(dt)
+            return self._brightness_pct_default(dt, sun_position)
         if self.brightness_mode == "linear":
-            return self._brightness_pct_linear(dt)
+            return self._brightness_pct_linear(dt, events)
         if self.brightness_mode == "tanh":
-            return self._brightness_pct_tanh(dt)
+            return self._brightness_pct_tanh(dt, events)
         return None
 
     def color_temp_kelvin(self, sun_position: float) -> int:
@@ -334,7 +383,7 @@ class SunLightSettings:
         if sun_position == 0 or not self.adapt_until_sleep:
             return self.min_color_temp
         if self.adapt_until_sleep and sun_position < 0:
-            delta = abs(self.min_color_temp - self.sleep_color_temp)
+            delta = self.min_color_temp - self.sleep_color_temp
             ct = (delta * abs(1 + sun_position)) + self.sleep_color_temp
             return 5 * round(ct / 5)  # round to nearest 5
         msg = "Should not happen"
@@ -346,14 +395,31 @@ class SunLightSettings:
         is_sleep: bool,
     ) -> dict[str, Any]:
         """Calculate the brightness and color."""
-        sun_position = self.sun.sun_position(dt)
+        # Brightness and color use the same sample. Calculate its solar events
+        # once, rather than repeating all three days of Astral calls per curve.
+        try:
+            events = self.sun.prev_and_next_events(dt)
+        except SunEventUnavailable:
+            events = None
+            sun_position = self.sun.uninterrupted_sun_position(dt)
+        else:
+            sun_position = self.sun.sun_position(dt, events)
         rgb_color: tuple[int, int, int]
         # Variable force_rgb_color is needed for RGB color after sunset (if enabled)
         force_rgb_color = False
-        brightness_pct = self.brightness_pct(dt, is_sleep)
+        if events is None and not is_sleep:
+            # Linear/tanh have no sunrise/sunset window on uninterrupted days.
+            brightness_pct = self.max_brightness if sun_position > 0 else self.min_brightness
+        else:
+            brightness_pct = self.brightness_pct(dt, is_sleep, sun_position, events)
         if is_sleep:
             color_temp_kelvin = self.sleep_color_temp
             rgb_color = self.sleep_rgb_color
+        elif events is None:
+            # Keep the exact configured endpoints, including non-multiples of 5.
+            color_temp_kelvin = self.max_color_temp if sun_position > 0 else self.min_color_temp
+            r, g, b = color_temperature_to_rgb(color_temp_kelvin)
+            rgb_color = (round(r), round(g), round(b))
         elif (
             self.sleep_rgb_or_color_temp == "rgb_color"
             and self.adapt_until_sleep

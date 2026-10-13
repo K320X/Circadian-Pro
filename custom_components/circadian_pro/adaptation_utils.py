@@ -1,7 +1,7 @@
 """Utility functions for adaptation commands."""
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass
 from enum import IntFlag, auto
 from typing import Any
@@ -12,6 +12,7 @@ from homeassistant.components.light import (
     ATTR_BRIGHTNESS_STEP,
     ATTR_BRIGHTNESS_STEP_PCT,
     ATTR_COLOR_NAME,
+    ATTR_COLOR_MODE,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_EFFECT,
     ATTR_FLASH,
@@ -19,6 +20,7 @@ from homeassistant.components.light import (
     ATTR_RGB_COLOR,
     ATTR_RGBW_COLOR,
     ATTR_RGBWW_COLOR,
+    ATTR_SUPPORTED_COLOR_MODES,
     ATTR_TRANSITION,
     ATTR_XY_COLOR,
 )
@@ -98,7 +100,7 @@ def _split_service_call_data(service_data: ServiceData) -> list[ServiceData]:
         split_data = {
             attribute: service_data[attribute]
             for attribute in attributes
-            if service_data.get(attribute)
+            if attribute in service_data and service_data[attribute] is not None
         }
         if split_data:
             service_datas.append(common_data | split_data)
@@ -123,15 +125,25 @@ def _remove_redundant_attributes(
     in the target entity's state.
     """
     attributes: dict[str, Any] = dict(state.attributes)
+    color_modes = {
+        ATTR_COLOR_TEMP_KELVIN: "color_temp", ATTR_HS_COLOR: "hs",
+        ATTR_RGB_COLOR: "rgb", ATTR_RGBW_COLOR: "rgbw",
+        ATTR_RGBWW_COLOR: "rgbww", ATTR_XY_COLOR: "xy",
+    }
 
     def is_redundant(attribute: str, value: Any) -> bool:
         if attribute not in attributes:
             return False
         current = attributes[attribute]
-        if attribute in (ATTR_RGBW_COLOR, ATTR_RGBWW_COLOR):
-            requested_mode = "rgbww" if attribute == ATTR_RGBWW_COLOR else "rgbw"
-            current_mode = attributes.get("color_mode")
-            if current_mode is not None and current_mode != requested_mode:
+        if requested_mode := color_modes.get(attribute):
+            current_mode = attributes.get(ATTR_COLOR_MODE)
+            supported_modes = attributes.get(ATTR_SUPPORTED_COLOR_MODES) or ()
+            if (
+                current_mode is not None and current_mode != requested_mode
+                and (requested_mode in supported_modes or attribute in (ATTR_RGBW_COLOR, ATTR_RGBWW_COLOR))
+            ):
+                # RGB/HS/XY can be derived reports of another native mode. A
+                # numerically equal color still needs a supported mode change.
                 return False
             if isinstance(value, (tuple, list)) and isinstance(current, (tuple, list)):
                 return tuple(value) == tuple(current)
@@ -227,7 +239,7 @@ def _identify_light_control_attributes(
     service_data: ServiceData,
 ) -> LightControlAttributes:
     """Extract the 'which' attribute from the service data."""
-    has_brightness = ATTR_BRIGHTNESS in service_data
+    has_brightness = any(attr in service_data for attr in BRIGHTNESS_ATTRS)
     has_color = any(attr in service_data for attr in COLOR_ATTRS)
 
     parameters = LightControlAttributes.NONE
@@ -328,6 +340,9 @@ def get_light_control_attributes(
     service_data: ServiceData,
 ) -> LightControlAttributes:
     """Get the light control attributes affected by the service call data."""
+    if isinstance(params := service_data.get("params"), Mapping):
+        # HA's light service schema moves brightness/color/effect into params.
+        service_data = params
     parameters = LightControlAttributes.NONE
 
     if has_brightness_attribute(service_data):

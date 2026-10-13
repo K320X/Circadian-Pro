@@ -113,13 +113,17 @@ def load_api_module():
     calibration.PREVIEW_SECONDS = 60
     calibration.calls = []
     calibration.stops = []
+    calibration.preview_sessions = []
+    calibration.stop_sessions = []
 
-    async def preview(hass, entry_id, settings, kelvin):
+    async def preview(hass, entry_id, settings, kelvin, *, session_id=""):
         calibration.calls.append((entry_id, deepcopy(settings), kelvin))
+        calibration.preview_sessions.append(session_id)
         return True
 
-    async def stop(hass, entry_id):
+    async def stop(hass, entry_id, *, session_id=None):
         calibration.stops.append(entry_id)
+        calibration.stop_sessions.append(session_id)
 
     calibration.async_preview_calibration = preview
     calibration.async_stop_calibration_preview = stop
@@ -314,7 +318,7 @@ class ApiTests(unittest.TestCase):
     def test_preview_failure_returns_a_friendly_error_without_saving(self):
         original = deepcopy(self.entry.options)
 
-        async def unavailable(*args):
+        async def unavailable(*args, **kwargs):
             raise self.api.HomeAssistantError("Another profile is previewing this light")
 
         self.api.async_preview_calibration = unavailable
@@ -322,6 +326,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.errors[-1][1], "preview_unavailable")
         self.assertEqual(self.entry.options, original)
         self.assertEqual(self.results, [])
+
+    def test_session_id_is_forwarded_to_preview_and_stop(self):
+        self.invoke(self.api.websocket_preview, entry_id="loaded", settings={}, kelvin=4000, session_id="editor")
+        self.invoke(self.api.websocket_stop, entry_id="loaded", session_id="editor")
+        self.assertEqual(self.calibration.preview_sessions, ["editor"])
+        self.assertEqual(self.calibration.stop_sessions, ["editor"])
+
+    def test_legacy_websocket_requests_use_only_the_legacy_preview_session(self):
+        self.invoke(self.api.websocket_preview, entry_id="loaded", settings={}, kelvin=4000)
+        self.invoke(self.api.websocket_stop, entry_id="loaded")
+        self.assertEqual(self.calibration.preview_sessions, [""])
+        self.assertEqual(self.calibration.stop_sessions, [""])
 
     def test_stop_is_idempotent_and_available_after_unload(self):
         self.entry.state = EntryState.NOT_LOADED

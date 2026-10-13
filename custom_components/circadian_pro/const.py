@@ -603,11 +603,8 @@ VALIDATION_TUPLES: list[tuple[str, Any, Any]] = [
         DEFAULT_BRIGHTNESS_MODE,
         selector.SelectSelector(  # type: ignore[arg-type]
             selector.SelectSelectorConfig(
-                options=[
-                    {"value": "default", "label": "Natural"},
-                    {"value": "linear", "label": "Lineal"},
-                    {"value": "tanh", "label": "Sigmoide"},
-                ],
+                options=["default", "linear", "tanh"],
+                translation_key=CONF_BRIGHTNESS_MODE,
                 multiple=False,
                 mode=selector.SelectSelectorMode.DROPDOWN,
             ),
@@ -708,6 +705,21 @@ def _time_value(value: Any) -> time | None:
     return cv.time(value)
 
 
+def normalize_sleep_activation(data: dict[str, Any]) -> dict[str, Any]:
+    """Infer legacy sleep settings before a schema supplies the new default."""
+    if not isinstance(data, dict):
+        raise vol.Invalid("expected dictionary")
+    normalized = dict(data)
+    if CONF_SLEEP_ACTIVATION_MODE not in normalized:
+        if normalized.get(CONF_SLEEP_SCHEDULE_ENABLED) is True:
+            normalized[CONF_SLEEP_ACTIVATION_MODE] = "schedule"
+        elif normalized.get(CONF_ADAPT_UNTIL_SLEEP) is True:
+            normalized[CONF_SLEEP_ACTIVATION_MODE] = "sun"
+        else:
+            normalized[CONF_SLEEP_ACTIVATION_MODE] = DEFAULT_SLEEP_ACTIVATION_MODE
+    return normalized
+
+
 def validate_cross_options(data: dict[str, Any]) -> dict[str, Any]:
     """Validate relationships between individually valid configuration values."""
     min_brightness = data.get(CONF_MIN_BRIGHTNESS)
@@ -756,6 +768,28 @@ def validate_cross_options(data: dict[str, Any]) -> dict[str, Any]:
     if min_sunset is not None and max_sunset is not None and min_sunset > max_sunset:
         raise vol.Invalid("invalid_sunset_bounds")
 
+    fixed_sunrise = _time_value(data.get(CONF_SUNRISE_TIME))
+    fixed_sunset = _time_value(data.get(CONF_SUNSET_TIME))
+    if fixed_sunrise is not None and fixed_sunset is not None:
+        sunrise_seconds = (
+            fixed_sunrise.hour * 3600 + fixed_sunrise.minute * 60 + fixed_sunrise.second
+            + fixed_sunrise.microsecond / 1_000_000
+            + _duration_seconds(data.get(CONF_SUNRISE_OFFSET, 0))
+        )
+        sunset_seconds = (
+            fixed_sunset.hour * 3600 + fixed_sunset.minute * 60 + fixed_sunset.second
+            + fixed_sunset.microsecond / 1_000_000
+            + _duration_seconds(data.get(CONF_SUNSET_OFFSET, 0))
+        )
+        if sunrise_seconds % 86400 == sunset_seconds % 86400:
+            raise vol.Invalid("invalid_solar_times")
+
+    if data.get(CONF_SLEEP_ACTIVATION_MODE) == "schedule":
+        start = _time_value(data.get(CONF_SLEEP_SCHEDULE_START))
+        end = _time_value(data.get(CONF_SLEEP_SCHEDULE_END))
+        if start is None or end is None:
+            raise vol.Invalid("invalid_sleep_schedule")
+
     return data
 
 
@@ -765,6 +799,7 @@ _yaml_validation_tuples = [
 ] + [(CONF_NAME, DEFAULT_NAME, cv.string)]
 
 _DOMAIN_SCHEMA = vol.All(
+    normalize_sleep_activation,
     vol.Schema(
         {
             vol.Optional(key, default=replace_none_str(default, vol.UNDEFINED)): validation
@@ -798,8 +833,8 @@ SET_MANUAL_CONTROL_SCHEMA = vol.Schema(
         vol.Optional(CONF_ENTITY_ID): cv.entity_ids,  # type: ignore[arg-type]
         vol.Optional(CONF_LIGHTS, default=[]): cv.entity_ids,  # type: ignore[arg-type]
         vol.Optional(CONF_MANUAL_CONTROL, default=True): vol.Any(
-            cv.boolean,
             vol.In(["brightness", "color"]),
+            cv.boolean,
         ),
     },
 )

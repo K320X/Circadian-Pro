@@ -3,6 +3,10 @@ from typing import Any
 import homeassistant.helpers.config_validation as cv
 import pandas as pd
 import voluptuous as vol
+try:
+    import probatio as ha_schema
+except ImportError:
+    ha_schema = vol
 from homeassistant.helpers import selector
 
 from .const import (
@@ -21,9 +25,9 @@ def _format_voluptuous_instance(instance: vol.All) -> str:
     max_val = None
 
     for validator in instance.validators:
-        if isinstance(validator, vol.Coerce):
+        if isinstance(validator, (vol.Coerce, ha_schema.Coerce)):
             coerce_type = validator.type.__name__
-        elif isinstance(validator, vol.Clamp | vol.Range):
+        elif isinstance(validator, (vol.Clamp, vol.Range, ha_schema.Range, getattr(ha_schema, "Clamp", vol.Clamp))):
             min_val = validator.min
             max_val = validator.max
 
@@ -38,22 +42,32 @@ def _format_voluptuous_instance(instance: vol.All) -> str:
 
 def _type_to_str(type_: Any) -> str:  # noqa: PLR0911
     """Convert a (voluptuous) type to a string."""
+    if type_ is None:
+        return "None"
     if type_ == cv.entity_ids:
         return "list of entity_ids"
     if type_ in (bool, int, float, str):
         return f"{type_.__name__}"
     if type_ == cv.boolean:
         return "bool"
-    if isinstance(type_, vol.All):
+    if type_ == cv.string:
+        return "str"
+    if isinstance(type_, (vol.All, ha_schema.All)):
         return _format_voluptuous_instance(type_)
-    if isinstance(type_, vol.Any):
+    if isinstance(type_, (vol.Any, ha_schema.Any)):
         return " or ".join(_type_to_str(t) for t in type_.validators)
-    if isinstance(type_, vol.In):
+    if isinstance(type_, (vol.In, ha_schema.In)):
         return f"one of {type_.container}"
     if isinstance(type_, selector.SelectSelector):
         return f"one of {type_.config['options']}"
     if isinstance(type_, selector.ColorRGBSelector):
         return "RGB color"
+    if isinstance(type_, selector.NumberSelector):
+        minimum = type_.config.get("min")
+        maximum = type_.config.get("max")
+        if minimum is not None and maximum is not None:
+            return f"number {minimum}-{maximum}"
+        return "number"
     msg = f"Unknown type: {type_}"
     raise ValueError(msg)
 

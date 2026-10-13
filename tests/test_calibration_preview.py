@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import importlib.util
+import inspect
 from pathlib import Path
 import sys
 import threading
@@ -24,7 +26,7 @@ def immediate(coroutine):
     raise AssertionError("Unexpected background work in preview lifecycle test")
 
 
-def load_preview_module():
+def load_preview_module(*, real_io_timeout=False):
     """Load the complete production module; replace only HA and platform I/O."""
     saved = dict(sys.modules)
     package = ModuleType("preview_tests_package")
@@ -56,6 +58,18 @@ def load_preview_module():
     core.callback = callback
     exceptions = ModuleType("homeassistant.exceptions")
     exceptions.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
+    class PermissionErrorStub(exceptions.HomeAssistantError):
+        def __init__(self, **kwargs):
+            super().__init__(str(kwargs))
+
+    permission_helpers = ModuleType("preview_tests_package.hass_utils")
+    permission_helpers.__dict__.update(
+        POLICY_CONTROL="control", UnknownUser=PermissionErrorStub, Unauthorized=PermissionErrorStub,
+    )
+    permission_tree = ast.parse((COMPONENT / "hass_utils.py").read_text(encoding="utf-8"))
+    permission_functions = [node for node in permission_tree.body if getattr(node, "name", None) == "async_check_entity_control"]
+    permission_module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *permission_functions], type_ignores=[])
+    exec(compile(ast.fix_missing_locations(permission_module), "<real permission helper>", "exec"), permission_helpers.__dict__)
     helpers = ModuleType("homeassistant.helpers")
     helpers.__path__ = []
     event = ModuleType("homeassistant.helpers.event")
@@ -66,6 +80,7 @@ def load_preview_module():
     sys.modules.update({
         "preview_tests_package": package, "preview_tests_package.const": const,
         "preview_tests_package.switch": switch, "homeassistant": ha,
+        "preview_tests_package.hass_utils": permission_helpers,
         "homeassistant.const": ha_const, "homeassistant.core": core,
         "homeassistant.exceptions": exceptions,
         "homeassistant.helpers": helpers, "homeassistant.helpers.event": event,
@@ -76,6 +91,17 @@ def load_preview_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
+    if not real_io_timeout:
+        class ImmediateDeadline:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        # These synchronous coroutine tests replace HA/controller I/O. The
+        # integrated manager tests retain real asyncio deadlines and scheduling.
+        module.asyncio = SimpleNamespace(Lock=asyncio.Lock, timeout=lambda _: ImmediateDeadline())
     # Keep the lazy platform import available for the duration of each test.
     return module, saved
 
@@ -83,7 +109,7 @@ def load_preview_module():
 class FakeState:
     def __init__(self, state="on", context=None, **attributes):
         self.state = state
-        self.context = context or SimpleNamespace(id="external", parent_id=None)
+        self.context = context or SimpleNamespace(id="external", parent_id=None, user_id=None)
         self.attributes = {
             "supported_color_modes": ["rgbww", "color_temp"],
             "color_mode": "rgbww", "brightness": 177,
@@ -106,7 +132,7 @@ class FakeBus:
         return remove
 
     def emit(self, data, context=None):
-        event = SimpleNamespace(data=data, context=context or SimpleNamespace(id="external", parent_id=None))
+        event = SimpleNamespace(data=data, context=context or SimpleNamespace(id="external", parent_id=None, user_id=None))
         for callback in list(self.listeners):
             self.hass.run_job(callback, event)
 
@@ -116,6 +142,12 @@ class FakeManager:
         self.last_service_data = {}
         self.manual_control = {"light.one": "color"}
         self.resets = []
+
+    def _get_entity_list(self, data):
+        targets = data.get("entity_id", [])
+        if targets == "all":
+            return list(self.hass.state_map)
+        return [target.strip() for target in targets.split(",")] if isinstance(targets, str) else list(targets)
 
     def reset(self, *lights, reset_manual_control=True):
         self.resets.append((lights, reset_manual_control))
@@ -142,7 +174,7 @@ class FakeSwitch:
 
     def create_context(self, kind):
         self.context_count += 1
-        return SimpleNamespace(id=f"calibration-{self.context_count}", parent_id=None)
+        return SimpleNamespace(id=f"calibration-{self.context_count}", parent_id=None, user_id=None)
 
     def _set_changeable_settings(self, data, defaults):
         self._current_settings = deepcopy(data)
@@ -216,6 +248,9 @@ class FakeHass:
 
     def run_job(self, callback, *args):
         """Model HA's Callback/Executor routing with an actual executor thread."""
+        if inspect.iscoroutinefunction(callback):
+            self.job_routes.append("coroutine")
+            return immediate(callback(*args))
         if getattr(callback, "_hass_callback", None) is True:
             self.job_routes.append("callback")
             return callback(*args)
@@ -225,6 +260,7 @@ class FakeHass:
 
     def add_profile(self, entry_id, lights):
         manager = FakeManager()
+        manager.hass = self
         switch = FakeSwitch(self, manager, lights)
         self.data.setdefault("circadian_pro", {})[entry_id] = {"switch": switch}
         return switch
@@ -291,10 +327,10 @@ class CalibrationPreviewTests(unittest.TestCase):
     def test_bus_listeners_are_loop_callbacks_and_preserve_external_changes(self):
         self.apply()
         self.assertEqual(len(self.hass.bus.listeners), 2)
-        self.assertTrue(all(getattr(listener, "_hass_callback", None) is True for listener in self.hass.bus.listeners))
+        self.assertTrue(all(inspect.iscoroutinefunction(listener) or getattr(listener, "_hass_callback", None) is True for listener in self.hass.bus.listeners))
         self.hass.job_routes.clear()
         self.hass.bus.emit({"entity_id": "light.one", "new_state": FakeState(brightness=50)})
-        self.assertEqual(self.hass.job_routes, ["callback", "callback"])
+        self.assertEqual(self.hass.job_routes, ["coroutine", "callback"])
         calls = len(self.hass.calls)
         self.stop()
         self.assertEqual(len(self.hass.calls), calls)

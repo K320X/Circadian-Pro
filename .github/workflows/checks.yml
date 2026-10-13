@@ -1,0 +1,41 @@
+name: Code checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python: ['3.12', '3.14']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install check dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Validate Python and translations
+        run: python scripts/check_sources.py
+      - name: Check Python errors and suspicious constructs
+        run: ruff check custom_components scripts --select E9,F,B
+      - name: Python regression tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+      - name: Frontend regression tests
+        run: node --test tests/*.mjs

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import math
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -57,7 +58,8 @@ def int_to_base36(num: int) -> str:
 
 def short_hash(string: str, length: int = 4) -> str:
     """Create a hash of 'string' with length 'length'."""
-    return base64.b32encode(string.encode()).decode("utf-8").zfill(length)[:length]
+    digest = sha256(string.encode("utf-8")).digest()
+    return base64.b32encode(digest).decode("ascii").zfill(length)[:length]
 
 
 def remove_vowels(input_str: str, length: int = 4) -> str:

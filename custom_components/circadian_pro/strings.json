@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Choose a name",
-        "description": "Create a Circadian Pro profile. Select its lights in the next step.",
+        "description": "Create a Circadian Pro profile. Then choose its lights from the Circadian Pro panel or integration options.",
         "data": {
           "name": "Name"
         }
@@ -19,7 +19,8 @@
     },
     "error": {
       "unique_name": "A profile with this name already exists or is being created. Choose another name.",
-      "name_required": "Enter a name for this profile."
+      "name_required": "Enter a name for this profile.",
+      "profile_missing": "The selected profile no longer exists. Choose another profile or create a new one."
     },
     "abort": {
       "already_configured": "A profile with this name already exists."
@@ -28,7 +29,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Ajustes generales",
+        "title": "General settings",
         "submit": "Next",
         "description": "Configure the general behavior, then the 4000K and 1000K visual references. White channel settings appear automatically for selected RGBW or RGB+CCT lights. For immediate light previews while editing, open the Circadian Pro panel.",
         "data": {
@@ -59,30 +60,34 @@
           "min_sunset_time": "Earliest sunset",
           "max_sunset_time": "Latest sunset",
           "sleep_brightness": "Sleep brightness (%)",
-          "sleep_rgb_or_color_temp": "Modo noche: definir con",
-          "sleep_color_temp": "Modo noche: temperatura de color (K)",
-          "sleep_rgb_color": "Modo noche: color RGB",
+          "sleep_rgb_or_color_temp": "Sleep mode: define with",
+          "sleep_color_temp": "Sleep mode: color temperature (K)",
+          "sleep_rgb_color": "Sleep mode: RGB color",
           "sleep_transition": "Sleep transition (s)",
+          "sleep_schedule_start": "Sleep schedule start",
+          "sleep_schedule_end": "Sleep schedule end",
           "brightness_mode": "Brightness mode",
           "brightness_mode_time_light": "Brightness transition time (light) (s)",
           "brightness_mode_time_dark": "Brightness transition time (dark) (s)",
           "sleep_activation_mode": "Automatic sleep mode activation"
         },
         "data_description": {
-          "lights": "Lista de luces que controlará esta instancia (puede estar vacía).",
-          "interval": "Frecuencia con la que se recalculan y aplican ajustes.",
-          "transition": "Duración de la transición cuando las luces se adaptan.",
-          "initial_transition": "Duración de la primera transición al pasar de apagado a encendido.",
-          "min_brightness": "Brillo mínimo permitido.",
-          "max_brightness": "Brillo máximo permitido.",
-          "min_color_temp": "Kelvin mínimo del ciclo (más cálido).",
-          "max_color_temp": "Kelvin máximo del ciclo (más frío).",
-          "sleep_rgb_or_color_temp": "Cómo se define el color en modo noche.",
-          "sleep_brightness": "Brillo objetivo en modo noche.",
-          "sleep_color_temp": "Temperatura de color en modo noche (si eliges “temperatura de color”).",
-          "sleep_rgb_color": "Color RGB en modo noche (si eliges “RGB”). En este modo el canal W se fuerza a 0.",
-          "sleep_transition": "Duración de la transición al activar/desactivar modo noche.",
-          "take_over_control": "Si está activo, detiene adaptaciones cuando detecta un ajuste manual.",
+          "lights": "List of lights controlled by this instance (may be empty).",
+          "interval": "How often settings are recalculated and applied.",
+          "transition": "Transition time used when adapting lights and when enabling/disabling sleep mode.",
+          "initial_transition": "Transition time for the first change when turning on a light.",
+          "min_brightness": "Minimum allowed brightness.",
+          "max_brightness": "Maximum allowed brightness.",
+          "min_color_temp": "Minimum Kelvin in the cycle (warmer).",
+          "max_color_temp": "Maximum Kelvin in the cycle (cooler).",
+          "sleep_rgb_or_color_temp": "How color is defined in sleep mode.",
+          "sleep_brightness": "Target brightness in sleep mode.",
+          "sleep_color_temp": "Sleep color temperature (if using color temperature).",
+          "sleep_rgb_color": "Sleep RGB color (if using RGB). In this mode the W channel is forced to 0.",
+          "sleep_transition": "Transition time when enabling/disabling sleep mode.",
+          "sleep_schedule_start": "Start time for the fixed sleep schedule (only used when the automatic sleep mode is set to \"By schedule\").",
+          "sleep_schedule_end": "End time for the fixed sleep schedule (only used when the automatic sleep mode is set to \"By schedule\").",
+          "take_over_control": "If enabled, pauses adaptation when manual changes are detected.",
           "sunrise_offset": "Shifts sunrise by adding or subtracting seconds. Positive values delay sunrise and negative values advance it.",
           "sunset_offset": "Shifts sunset by adding or subtracting seconds. Positive values delay sunset and negative values advance it.",
           "sunrise_time": "Forces a fixed sunrise time every day instead of using Home Assistant's calculated sun time. If set to None, the real sunrise time is used based on your location and date.",
@@ -93,18 +98,18 @@
           "max_sunset_time": "Sets an upper bound so the virtual sunset will not occur later than this time even if the real sunset is later. If None, no limit is applied.",
           "brightness_mode_time_dark": "How many seconds the brightness transition towards night lasts around sunset. Higher values make the change smoother and slower. Only applies when brightness_mode is linear or tanh; with default it is ignored or has little effect.",
           "brightness_mode_time_light": "How many seconds the brightness transition towards day lasts around sunrise. Higher values make the change smoother and slower. Only applies when brightness_mode is linear or tanh; with default it is ignored or has little effect.",
-          "sleep_activation_mode": "Controls when sleep mode is enabled automatically. Disabled: only manual sleep mode switch. Sunrise/sunset: from sunset until sunrise. Schedule: only within the time window configured below."
+          "sleep_activation_mode": "Choose how sleep mode is enabled automatically. Disabled: only manual sleep switch. By sunrise/sunset: sleep mode from sunset until sunrise. By schedule: sleep mode only within the schedule below."
         }
       },
       "white_w_kelvin": {
-        "title": "Canal blanco (W)",
+        "title": "White channel (W)",
         "submit": "Next",
-        "description": "Indica el Kelvin real del canal blanco dedicado (W) de tu tira RGBW (por ejemplo, 3000K).",
+        "description": "Enter the real Kelvin of the dedicated white channel (W) of your RGBW strip (for example, 3000K).",
         "data": {
-          "white_w_kelvin": "Kelvin del canal W (K)"
+          "white_w_kelvin": "W channel Kelvin (K)"
         },
         "data_description": {
-          "white_w_kelvin": "Kelvin real del LED blanco dedicado (W) de tu tira. Desde 4000K hasta este valor, el canal W se mantiene al nivel de 4000K; por debajo, se reduce progresivamente hacia la calibración de 1000K."
+          "white_w_kelvin": "Actual Kelvin of the dedicated W (white) LED in your strip. From 4000K down to this value, the W channel stays at the 4000K level; below it, W is progressively reduced towards the 1000K calibration."
         }
       },
       "white_channels": {
@@ -121,13 +126,13 @@
         }
       },
       "cal_neutral": {
-        "title": "Calibración 4000K",
+        "title": "Calibration 4000K",
         "submit": "Next",
         "description": "Adjust RGB for your 4000K visual reference. RGBW lights add one white intensity control; RGB+CCT lights also add the warm/cold white mixture temperature. The Circadian Pro panel provides an immediate preview while editing.",
         "data": {
-          "cal_rgb_neutral_r": "Intensidad rojo (0–255)",
-          "cal_rgb_neutral_g": "Intensidad verde (0–255)",
-          "cal_rgb_neutral_b": "Intensidad azul (0–255)",
+          "cal_rgb_neutral_r": "Red intensity (0–255)",
+          "cal_rgb_neutral_g": "Green intensity (0–255)",
+          "cal_rgb_neutral_b": "Blue intensity (0–255)",
           "cal_white_intensity_neutral": "White intensity (0–100%)",
           "cal_white_kelvin_neutral": "White mixture temperature (K)"
         },
@@ -137,13 +142,13 @@
         }
       },
       "cal_warm": {
-        "title": "Calibración 1000K",
+        "title": "Calibration 1000K",
         "submit": "Finish",
         "description": "Adjust RGB for your 1000K visual reference. White intensity appears only when a selected light supports RGBW or RGB+CCT; keeping it low lets RGB create a warm/orange appearance. The Circadian Pro panel provides an immediate preview while editing.",
         "data": {
-          "cal_rgb_warm_r": "Intensidad rojo (0–255)",
-          "cal_rgb_warm_g": "Intensidad verde (0–255)",
-          "cal_rgb_warm_b": "Intensidad azul (0–255)",
+          "cal_rgb_warm_r": "Red intensity (0–255)",
+          "cal_rgb_warm_g": "Green intensity (0–255)",
+          "cal_rgb_warm_b": "Blue intensity (0–255)",
           "cal_white_intensity_warm": "White intensity (0–100%)"
         },
         "data_description": {
@@ -160,7 +165,42 @@
       "invalid_sunrise_bounds": "Earliest sunrise cannot be later than latest sunrise.",
       "invalid_sunset_bounds": "Earliest sunset cannot be later than latest sunset.",
       "invalid_white_channel_range": "The warm white WW temperature must be lower than the cold white CW temperature.",
-      "invalid_white_neutral_range": "The white mixture temperature must be between the physical warm white WW and cold white CW temperatures."
+      "invalid_white_neutral_range": "The white mixture temperature must be between the physical warm white WW and cold white CW temperatures.",
+      "invalid_sleep_schedule": "Set both a valid start and end time for the automatic sleep schedule.",
+      "invalid_solar_times": "Fixed sunrise and sunset must occur at different times after applying their offsets."
+    },
+    "abort": {
+      "yaml_configuration": "This profile is configured in YAML. Edit its settings in your YAML configuration."
+    }
+  },
+  "selector": {
+    "sleep_rgb_or_color_temp": {
+      "options": {
+        "rgb_color": "Define with RGB",
+        "color_temp": "Define with color temperature"
+      }
+    },
+    "sleep_activation_mode": {
+      "options": {
+        "disabled": "Disabled",
+        "sun": "By sunrise and sunset",
+        "schedule": "By schedule"
+      }
+    },
+    "brightness_mode": {
+      "options": {
+        "default": "Natural",
+        "linear": "Linear",
+        "tanh": "Sigmoid"
+      }
+    },
+    "manual_control": {
+      "options": {
+        "true": "Pause brightness and color",
+        "false": "Resume adaptation",
+        "brightness": "Pause brightness only",
+        "color": "Pause color only"
+      }
     }
   }
 }

@@ -57,7 +57,7 @@ test("checking previews immediately without submitting an options flow", async (
   assert.equal(session.enabled, true);
   await flushMicrotasks();
   assert.deepEqual(messages, [{
-    type: API + "preview", entry_id: "profile-1", settings: { red: 101 }, kelvin: 4000,
+    type: API + "preview", entry_id: "profile-1", session_id: session.sessionId, settings: { red: 101 }, kelvin: 4000,
   }]);
   await pending;
   assert.ok(messages.every((message) => !message.type.startsWith("config/")));

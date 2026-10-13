@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from copy import copy, deepcopy
 from dataclasses import dataclass, field
 import logging
@@ -14,9 +15,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 
 from .const import DOMAIN
+from .hass_utils import async_check_entity_control
 
 PREVIEW_DATA = "circadian_pro_calibration_preview"
 PREVIEW_SECONDS = 60
+PREVIEW_SERVICE_TIMEOUT = 10
 _LOGGER = logging.getLogger(__name__)
 _COLOR_ATTRIBUTES = (
     "color_temp_kelvin", "rgbww_color", "rgbw_color", "rgb_color", "xy_color", "hs_color",
@@ -29,6 +32,25 @@ _MODE_ATTRIBUTES = {
 
 class CalibrationPreviewError(HomeAssistantError):
     """A preview cannot safely be started for the requested lights."""
+
+
+async def _call_preview_service(hass: Any, *args: Any, **kwargs: Any) -> Any:
+    """Bound controller I/O so a stalled device cannot retain a preview lock."""
+    try:
+        async with asyncio.timeout(PREVIEW_SERVICE_TIMEOUT):
+            return await hass.services.async_call(*args, **kwargs)
+    except TimeoutError as err:
+        raise CalibrationPreviewError("The light controller did not finish the calibration command in time.") from err
+
+
+@asynccontextmanager
+async def _preview_deadline():
+    """Limit the complete dispatch, including profiles containing many lights."""
+    try:
+        async with asyncio.timeout(PREVIEW_SECONDS):
+            yield
+    except TimeoutError as err:
+        raise CalibrationPreviewError("Calibration could not be applied within its time budget.") from err
 
 
 @dataclass
@@ -44,6 +66,7 @@ class _LightPreview:
 @dataclass
 class _Preview:
     switch: Any
+    session_id: str = ""
     lights: dict[str, _LightPreview] = field(default_factory=dict)
     contexts: set[str] = field(default_factory=set)
     dispatching: set[str] = field(default_factory=set)
@@ -87,7 +110,7 @@ class _PreviewServices:
                     break
             saved.expected_attributes = expected
             self._preview.switch.manager.last_service_data[light] = payload
-        return await self._hass.services.async_call(domain, service, payload, **kwargs)
+        return await _call_preview_service(self._hass, domain, service, payload, **kwargs)
 
 
 class _PreviewHass:
@@ -102,6 +125,14 @@ class _PreviewHass:
 def is_calibration_preview_active(hass: Any, light: str) -> bool:
     """Pause normal adaptation only for lights reserved by an active preview."""
     return any(light in preview.lights for preview in hass.data.get(PREVIEW_DATA, {}).values())
+
+
+def is_calibration_preview_context(hass: Any, light: str, context: Any) -> bool:
+    """Recognize only commands belonging to a currently reserved preview light."""
+    return any(
+        light in preview.lights and _is_preview_context(preview, context)
+        for preview in hass.data.get(PREVIEW_DATA, {}).values()
+    )
 
 
 def _observed_attributes(state: Any) -> dict[str, Any]:
@@ -179,7 +210,7 @@ def _snapshot(state: Any) -> _LightPreview:
     return _LightPreview(state.state, deepcopy(dict(state.attributes)))
 
 
-def _service_listener(hass: Any, preview: _Preview, event: Any) -> None:
+async def _service_listener(hass: Any, preview: _Preview, event: Any) -> None:
     """An explicit external light command wins even if its values match ours."""
     if event.data.get("domain") != "light" or event.data.get("service") not in {
         "turn_on", "turn_off", "toggle",
@@ -189,16 +220,18 @@ def _service_listener(hass: Any, preview: _Preview, event: Any) -> None:
         return
     from .switch import _expand_light_groups  # Imported only after platforms are loaded.
 
-    targets = event.data.get("service_data", {}).get("entity_id", [])
-    if isinstance(targets, str):
-        targets = [target.strip() for target in targets.split(",")]
-    if not targets or "all" in targets:
-        # Area/device targets are resolved by HA later; do not undo an ambiguous
-        # external command while its individual targets are still unknown.
-        for saved in preview.lights.values():
-            saved.externally_changed = True
+    service_data = event.data.get("service_data", {})
+    targets = _expand_light_groups(hass, preview.switch.manager._get_entity_list(service_data))
+    try:
+        targets = await async_check_entity_control(
+            hass, event.context, targets,
+            filter_allowed=service_data.get("entity_id") == "all",
+        )
+    except HomeAssistantError:
+        # HA emits call_service before checking permissions. A rejected command
+        # must neither take over a preview nor suppress its restoration.
         return
-    for light in _expand_light_groups(hass, list(targets)):
+    for light in targets:
         if light in preview.lights:
             preview.lights[light].externally_changed = True
 
@@ -229,12 +262,29 @@ def _state_listener(preview: _Preview, event: Any) -> None:
     light = event.data.get("entity_id")
     saved = preview.lights.get(light)
     state = event.data.get("new_state")
-    if saved is None or saved.observed_state is None or light in preview.dispatching:
+    if saved is None:
+        return
+    own_context = _is_preview_context(preview, event.context)
+    if light in preview.dispatching:
+        # A physical change can arrive while the blocking service call is in
+        # flight. Its resulting state must not become a restorable preview.
+        if not own_context and (
+            state is None or state.state != STATE_ON
+            or not _matches_expected(preview, light, state, saved)
+        ):
+            saved.externally_changed = True
+        return
+    if saved.observed_state is None:
+        if not own_context and (
+            state is None or state.state != saved.state
+            or not _same_attributes(_observed_attributes(state), _observed_attributes(saved))
+        ):
+            saved.externally_changed = True
         return
     if (
         state is not None
         and state.state == STATE_ON
-        and _is_preview_context(preview, event.context)
+        and own_context
         and _matches_expected(preview, light, state, saved)
     ):
         saved.observed_state = state.state
@@ -266,11 +316,11 @@ async def _restore_light(hass: Any, preview: _Preview, light: str) -> None:
     context = preview.switch.create_context("calibration")
     preview.contexts.add(context.id)
     if saved.state == STATE_OFF:
-        await hass.services.async_call("light", "turn_off", {"entity_id": light, "transition": 0}, context=context, blocking=True)
+        await _call_preview_service(hass, "light", "turn_off", {"entity_id": light, "transition": 0}, context=context, blocking=True)
     elif saved.state == STATE_ON:
         payload = _restore_payload(light, saved)
         payload["transition"] = 0
-        await hass.services.async_call("light", "turn_on", payload, context=context, blocking=True)
+        await _call_preview_service(hass, "light", "turn_on", payload, context=context, blocking=True)
 
 
 async def _finish_preview(hass: Any, entry_id: str, preview: _Preview) -> None:
@@ -279,11 +329,14 @@ async def _finish_preview(hass: Any, entry_id: str, preview: _Preview) -> None:
         preview.cancel_timeout()
         preview.cancel_timeout = None
     try:
-        for light in list(preview.lights):
-            try:
-                await _restore_light(hass, preview, light)
-            except Exception:  # One unavailable light must not retain other reservations.
-                _LOGGER.exception("Could not restore calibration preview for %s", light)
+        async with asyncio.timeout(PREVIEW_SECONDS):
+            for light in list(preview.lights):
+                try:
+                    await _restore_light(hass, preview, light)
+                except Exception:  # One unavailable light must not retain other reservations.
+                    _LOGGER.exception("Could not restore calibration preview for %s", light)
+    except TimeoutError:
+        _LOGGER.error("Calibration restoration exceeded its time budget; releasing the remaining reservations")
     finally:
         preview.switch.manager.reset(*preview.lights, reset_manual_control=False)
         if preview.remove_listener is not None:
@@ -295,10 +348,15 @@ async def _finish_preview(hass: Any, entry_id: str, preview: _Preview) -> None:
             hass.data.pop(PREVIEW_DATA, None)
 
 
-async def _stop_preview(hass: Any, entry_id: str, expected: _Preview | None = None, generation: int | None = None) -> None:
+async def _stop_preview(
+    hass: Any, entry_id: str, expected: _Preview | None = None,
+    generation: int | None = None, session_id: str | None = None,
+) -> None:
     preview = hass.data.get(PREVIEW_DATA, {}).get(entry_id)
     if preview is None or (expected is not None and preview is not expected):
         return
+    if session_id is not None and preview.session_id != session_id:
+        return  # A late stop from a closed editor must not end a newer preview.
     async with preview.lock:
         if hass.data.get(PREVIEW_DATA, {}).get(entry_id) is not preview:
             return
@@ -307,12 +365,17 @@ async def _stop_preview(hass: Any, entry_id: str, expected: _Preview | None = No
         await _finish_preview(hass, entry_id, preview)
 
 
-async def async_stop_calibration_preview(hass: Any, entry_id: str) -> None:
+async def async_stop_calibration_preview(
+    hass: Any, entry_id: str, *, session_id: str | None = None,
+) -> None:
     """Stop a preview on uncheck, continuation, expiry, or config-entry unload."""
-    await _stop_preview(hass, entry_id)
+    await _stop_preview(hass, entry_id, session_id=session_id)
 
 
-async def async_preview_calibration(hass: Any, entry_id: str, settings_dict: dict[str, Any], kelvin: int) -> bool:
+async def async_preview_calibration(
+    hass: Any, entry_id: str, settings_dict: dict[str, Any], kelvin: int,
+    *, session_id: str = "",
+) -> bool:
     """Apply an unsaved calibration draft for sixty seconds, without editing its entry."""
     from .switch import _expand_light_groups
 
@@ -335,13 +398,14 @@ async def async_preview_calibration(hass: Any, entry_id: str, settings_dict: dic
             raise CalibrationPreviewError("Another Circadian Pro profile is already previewing one of these lights.")
 
     preview = registry.get(entry_id)
+    if preview is not None and preview.session_id != session_id:
+        raise CalibrationPreviewError("Another editor is already previewing this Circadian Pro profile.")
     if preview is None:
-        preview = _Preview(switch)
+        preview = _Preview(switch, session_id=session_id)
         registry[entry_id] = preview
 
-        @callback
-        def on_service(event: Any) -> None:
-            _service_listener(hass, preview, event)
+        async def on_service(event: Any) -> None:
+            await _service_listener(hass, preview, event)
 
         @callback
         def on_state(event: Any) -> None:
@@ -359,36 +423,44 @@ async def async_preview_calibration(hass: Any, entry_id: str, settings_dict: dic
             remove_state()
 
         preview.remove_listener = remove_listeners
-    async with preview.lock:
+    async with preview.lock, _preview_deadline():
         if hass.data.get(PREVIEW_DATA, {}).get(entry_id) is not preview:
             raise CalibrationPreviewError("This calibration preview has ended; submit it again to start a new preview.")
         for other_id, other in registry.items():
             if other_id != entry_id and set(lights).intersection(other.lights):
                 raise CalibrationPreviewError("Another Circadian Pro profile is already previewing one of these lights.")
-        for light in list(preview.lights):
-            if light not in lights:
-                await _restore_light(hass, preview, light)
-                preview.lights.pop(light)
-        for light in lights:
-            saved = preview.lights.get(light)
-            if saved is None or saved.externally_changed or (saved.observed_state is not None and not _can_restore(hass, light, saved, preview)):
-                # A newly submitted preview uses an intervening user's state as its baseline.
-                preview.lights[light] = _snapshot(hass.states.get(light))
-        switch.manager.reset(*lights, reset_manual_control=False)
-        clone = copy(switch)
-        clone.hass = _PreviewHass(hass, preview)
-        clone._configured_lights = list(lights)
-        clone.lights = list(lights)
-        settings.update({
-            "min_color_temp": kelvin, "max_color_temp": kelvin,
-            "min_brightness": settings["max_brightness"], "sleep_activation_mode": "disabled",
-            "transition_until_sleep": False, "sleep_schedule_enabled": False,
-        })
         try:
+            if any(hass.states.get(light) is None or hass.states.get(light).state not in {STATE_ON, STATE_OFF} for light in lights):
+                raise CalibrationPreviewError("Select available lights before previewing calibration.")
+            # Reserve every new light atomically before restoration can await
+            # I/O and let another profile start a conflicting preview.
+            for light in lights:
+                saved = preview.lights.get(light)
+                if saved is None or saved.externally_changed or (saved.observed_state is not None and not _can_restore(hass, light, saved, preview)):
+                    preview.lights[light] = _snapshot(hass.states.get(light))
+            switch.manager.reset(*lights, reset_manual_control=False)
+            for light in list(preview.lights):
+                if light not in lights:
+                    await _restore_light(hass, preview, light)
+                    preview.lights.pop(light)
+            clone = copy(switch)
+            clone.hass = _PreviewHass(hass, preview)
+            clone._configured_lights = list(lights)
+            clone.lights = list(lights)
+            settings.update({
+                "min_color_temp": kelvin, "max_color_temp": kelvin,
+                "min_brightness": settings["max_brightness"], "sleep_activation_mode": "disabled",
+                "transition_until_sleep": False, "sleep_schedule_enabled": False,
+            })
             clone._set_changeable_settings(data=settings, defaults=deepcopy(switch._current_settings))
             clone._effective_sleep_state = lambda: False
             clone._skip_redundant_commands = False
+            # Calibration edits must remain visible even when normal operation
+            # prefers a dual-mode light's native color temperature.
+            clone._prefer_rgb_color = True
             for light in lights:
+                if preview.lights[light].externally_changed:
+                    continue
                 preview.lights[light].expected_attributes = None
                 context = switch.create_context("calibration")
                 preview.contexts.add(context.id)
@@ -397,6 +469,8 @@ async def async_preview_calibration(hass: Any, entry_id: str, settings_dict: dic
                 )
                 if data is None:
                     raise CalibrationPreviewError(f"The light {light} cannot preview brightness or color.")
+                if preview.lights[light].externally_changed:
+                    continue
                 preview.dispatching.add(light)
                 try:
                     await clone.execute_cancellable_adaptation_calls(data)

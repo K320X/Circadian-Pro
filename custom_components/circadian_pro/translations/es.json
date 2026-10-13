@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Elige un nombre",
-        "description": "Crea un perfil de Circadian Pro. Selecciona sus luces en el siguiente paso.",
+        "description": "Crea un perfil de Circadian Pro. Después, selecciona sus luces desde el panel Circadian Pro o los ajustes de la integración.",
         "data": {
           "name": "Nombre"
         }
@@ -19,7 +19,8 @@
     },
     "error": {
       "unique_name": "Ya existe un perfil con este nombre o se está creando. Elige otro nombre.",
-      "name_required": "Escribe un nombre para este perfil."
+      "name_required": "Escribe un nombre para este perfil.",
+      "profile_missing": "El perfil seleccionado ya no existe. Elige otro perfil o crea uno nuevo."
     },
     "abort": {
       "already_configured": "Ya existe un perfil con este nombre."
@@ -174,7 +175,42 @@
       "invalid_sunrise_bounds": "El amanecer más temprano no puede ser posterior al amanecer más tardío.",
       "invalid_sunset_bounds": "El atardecer más temprano no puede ser posterior al atardecer más tardío.",
       "invalid_white_channel_range": "La temperatura del blanco cálido WW debe ser menor que la del blanco frío CW.",
-      "invalid_white_neutral_range": "La temperatura de la mezcla blanca debe estar entre las temperaturas físicas del blanco cálido WW y del blanco frío CW."
+      "invalid_white_neutral_range": "La temperatura de la mezcla blanca debe estar entre las temperaturas físicas del blanco cálido WW y del blanco frío CW.",
+      "invalid_sleep_schedule": "Indica horas válidas de inicio y fin para la franja automática del modo noche.",
+      "invalid_solar_times": "El amanecer y el atardecer fijos deben ocurrir a horas distintas después de aplicar sus desplazamientos."
+    },
+    "abort": {
+      "yaml_configuration": "Este perfil está configurado mediante YAML. Edita sus ajustes en la configuración YAML."
+    }
+  },
+  "selector": {
+    "sleep_rgb_or_color_temp": {
+      "options": {
+        "rgb_color": "Definir con RGB",
+        "color_temp": "Definir con temperatura de color"
+      }
+    },
+    "sleep_activation_mode": {
+      "options": {
+        "disabled": "Desactivado",
+        "sun": "Por amanecer y atardecer",
+        "schedule": "Por franja horaria"
+      }
+    },
+    "brightness_mode": {
+      "options": {
+        "default": "Natural",
+        "linear": "Lineal",
+        "tanh": "Sigmoide"
+      }
+    },
+    "manual_control": {
+      "options": {
+        "true": "Pausar brillo y color",
+        "false": "Reanudar adaptación",
+        "brightness": "Pausar solo brillo",
+        "color": "Pausar solo color"
+      }
     }
   }
 }

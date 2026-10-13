@@ -74,8 +74,10 @@ def production_namespace():
         "time": time,
         "timedelta": timedelta,
         "Enum": Enum,
+        "deepcopy": deepcopy,
         "_LOGGER": logging.getLogger("circadian_pro.flow_tests"),
         "vol": SimpleNamespace(Optional=Optional, Schema=Schema, Invalid=Invalid),
+        "SelectorInvalid": Invalid,
         "cv": SimpleNamespace(time=lambda value: time.fromisoformat(value)),
         "config_entries": SimpleNamespace(SOURCE_IMPORT="import"),
         "EXTRA_VALIDATION": {},
@@ -87,6 +89,19 @@ def production_namespace():
         try:
             value = ast.literal_eval(node.value)
         except (ValueError, TypeError):
+            # Preserve constant names and real clock defaults in tuple assignments.
+            if (
+                len(node.targets) == 1 and isinstance(node.targets[0], ast.Tuple)
+                and isinstance(node.value, ast.Tuple)
+            ):
+                for target, part in zip(node.targets[0].elts, node.value.elts):
+                    if not isinstance(target, ast.Name):
+                        continue
+                    try:
+                        namespace[target.id] = ast.literal_eval(part)
+                    except (ValueError, TypeError):
+                        if isinstance(part, ast.Call) and isinstance(part.func, ast.Name) and part.func.id == "time":
+                            namespace[target.id] = eval(compile(ast.Expression(part), "<real clock default>", "eval"), namespace)
             continue
         for target in node.targets:
             if isinstance(target, ast.Name):
@@ -192,7 +207,7 @@ class ConfigCreationTests(unittest.TestCase):
         self.assertEqual(self.namespace["validate_entry"](entry)["lights"], ["light.bedroom"])
 
     def test_existing_and_concurrent_names_return_recoverable_field_errors(self):
-        entry = SimpleNamespace(entry_id="existing", title="Bedroom", unique_id="Bedroom", options={})
+        entry = SimpleNamespace(entry_id="existing", title="Bedroom", unique_id="Bedroom", data={"name": "Bedroom"}, options={})
         for flow in (self.Flow([entry]), self.Flow(in_progress=["Bedroom"])):
             with self.subTest(flow=flow):
                 form = immediate(flow.async_step_wait_for_name({"name": "Bedroom"}))
@@ -214,11 +229,12 @@ class ConfigCreationTests(unittest.TestCase):
         self.assertEqual(flow.created_entries, [])
 
     def test_existing_profile_menu_new_selection_clears_duplicate_options(self):
-        entry = SimpleNamespace(entry_id="existing", title="Bedroom", unique_id="Bedroom", options={"lights": ["light.existing"]})
+        entry = SimpleNamespace(entry_id="existing", title="Bedroom", unique_id="Bedroom", data={"name": "Bedroom"}, options={"lights": ["light.existing"]})
         flow = self.Flow([entry])
         self.assertEqual(immediate(flow.async_step_user())["step_id"], "menu")
         immediate(flow.async_step_menu({"action": "existing"}))
-        self.assertEqual(flow.source_options, entry.options)
+        self.assertEqual(flow.source_options["lights"], entry.options["lights"])
+        self.assertNotIn("name", flow.source_options)
         form = immediate(flow.async_step_menu({"action": "new"}))
         self.assertEqual(form["step_id"], "user")
         result = immediate(flow.async_step_user({"name": "Desk"}))
@@ -228,7 +244,7 @@ class ConfigCreationTests(unittest.TestCase):
     def test_creation_errors_have_labels_in_both_languages_and_base_strings(self):
         for filename in ("strings.json", "translations/en.json", "translations/es.json"):
             strings = json.loads((COMPONENT / filename).read_text(encoding="utf-8"))
-            self.assertEqual(set(strings["config"]["error"]), {"unique_name", "name_required"})
+            self.assertTrue({"unique_name", "name_required", "profile_missing"}.issubset(strings["config"]["error"]))
             self.assertIn("already_configured", strings["config"]["abort"])
             self.assertIn("name", strings["config"]["step"]["user"]["data"])
 

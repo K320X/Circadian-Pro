@@ -6,6 +6,17 @@ const CONFIG_FLOW = "config/config_entries/flow";
 const OPTIONAL_TIMES = new Set([
   "sunrise_time", "sunset_time", "min_sunrise_time", "max_sunrise_time", "min_sunset_time", "max_sunset_time",
 ]);
+let previewSessionCounter = 0;
+
+function previewSessionId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  // randomUUID requires a secure context; local HA can run over HTTP.
+  if (globalThis.crypto?.getRandomValues) {
+    return [...globalThis.crypto.getRandomValues(new Uint8Array(16))]
+      .map((value) => value.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now().toString(36)}-${++previewSessionCounter}-${Math.random().toString(36).slice(2)}`;
+}
 
 export function rgbToHex(rgb) {
   if (typeof rgb === "string" && /^#[0-9a-f]{6}$/i.test(rgb)) return rgb;
@@ -21,6 +32,7 @@ export class PreviewSession {
   constructor(callWS, entryId, getDraft, onChange = () => {}) {
     this.callWS = callWS;
     this.entryId = entryId;
+    this.sessionId = previewSessionId();
     this.getDraft = getDraft;
     this.onChange = onChange;
     this.enabled = false;
@@ -48,14 +60,14 @@ export class PreviewSession {
     const revision = ++this.revision;
     this.onChange();
     if (!enabled) {
-      return this.enqueue(() => this.callWS({ type: API + "stop", entry_id: this.entryId }));
+      return this.enqueue(() => this.callWS({ type: API + "stop", entry_id: this.entryId, session_id: this.sessionId }));
     }
     try {
       return await this.enqueue(async () => {
         if (!this.enabled || revision !== this.revision) return;
         const draft = this.getDraft();
         const result = await this.callWS({
-          type: API + "preview", entry_id: this.entryId,
+          type: API + "preview", entry_id: this.entryId, session_id: this.sessionId,
           settings: draft.settings, kelvin: draft.kelvin,
         });
         if (this.enabled && revision === this.revision) {
@@ -83,6 +95,24 @@ export class PreviewSession {
   }
 }
 
+function closedFlowError() {
+  return Object.assign(new Error("This configuration flow has been closed."), { reason: "flow_closed" });
+}
+
+function deleteFlow(callApi, path, deletions, flowId) {
+  if (!deletions.has(flowId)) {
+    const deleting = Promise.resolve().then(() => callApi("DELETE", `${path}/${flowId}`)).catch((error) => {
+      // HA removes completed/aborted flows. Cleanup of an already absent flow
+      // is successful, including after a save whose response was lost.
+      if (error?.status_code === 404) return;
+      deletions.delete(flowId); // A later explicit close may retry a failed deletion.
+      throw error;
+    });
+    deletions.set(flowId, deleting);
+  }
+  return deletions.get(flowId);
+}
+
 export class CalibrationFlow {
   constructor(callApi, preview, entryId) {
     this.callApi = callApi;
@@ -92,54 +122,146 @@ export class CalibrationFlow {
     this.steps = [];
     this.drafts = {};
     this.index = 0;
+    this.closed = false;
+    this.deletions = new Map();
+    this.pending = null;
+    this.rebuilding = false;
+    this.pendingSubmission = null;
+  }
+
+  assertOpen() {
+    if (this.closed) throw closedFlowError();
+  }
+
+  async accept(result, publish = true) {
+    if (this.closed) {
+      if (result.type === "form") await deleteFlow(this.callApi, FLOW, this.deletions, result.flow_id);
+      throw closedFlowError();
+    }
+    if (publish) this.current = result;
+    else this.pending = result;
+    return result;
   }
 
   async start() {
-    this.current = await this.callApi("POST", FLOW, { handler: this.entryId });
+    this.assertOpen();
+    await this.accept(await this.callApi("POST", FLOW, { handler: this.entryId }));
     this.steps = [this.current.step_id];
     this.index = 0;
     return this.current;
   }
 
   async next(data) {
+    this.assertOpen();
     await this.preview.setEnabled(false);
+    this.assertOpen();
     const previous = this.current.step_id;
     this.drafts[previous] = { ...data };
-    const result = await this.callApi("POST", `${FLOW}/${this.current.flow_id}`, data);
-    this.current = result;
+    // An uncertain POST is reconciled through GET before another write is
+    // allowed. A retry must never submit the previous screen to a later step.
+    if (this.pendingSubmission) return this.reconcileSubmission();
+    if (this.rebuilding) {
+      const restored = await this.recreate(this.index);
+      if (restored.type !== "form" || restored.step_id !== previous || Object.keys(restored.errors || {}).length) return restored;
+    }
+    const flowId = this.current.flow_id;
+    this.pendingSubmission = { flowId, previous };
+    let result;
+    try { result = await this.accept(await this.callApi("POST", `${FLOW}/${flowId}`, data)); }
+    catch (error) {
+      if (this.closed) throw error;
+      return this.reconcileSubmission(error);
+    }
+    this.pendingSubmission = null;
+    this.recordStep(result, previous);
+    return result;
+  }
+
+  recordStep(result, previous) {
     if (result.type === "form" && result.step_id !== previous) {
       this.index++;
       this.steps[this.index] = result.step_id;
       this.steps.length = this.index + 1;
     }
+  }
+
+  async reconcileSubmission(submissionError) {
+    this.assertOpen();
+    const pending = this.pendingSubmission;
+    let result;
+    try { result = await this.accept(await this.callApi("GET", `${FLOW}/${pending.flowId}`)); }
+    catch (error) {
+      if (this.closed) throw error;
+      if (error?.status_code === 404) {
+        this.pendingSubmission = null;
+        if (pending.previous === "cal_warm") {
+          // The flow may have completed, expired, or been aborted elsewhere.
+          // Refresh the profile, without asserting success or repeating Save.
+          this.closed = true;
+          this.current = null;
+          return { type: "save_uncertain" };
+        }
+        this.rebuilding = true;
+        throw Object.assign(new Error("flow_expired", { cause: error }), { reason: "flow_expired" });
+      }
+      throw Object.assign(new Error("submission_uncertain", { cause: submissionError || error }), { reason: "submission_uncertain" });
+    }
+    this.pendingSubmission = null;
+    this.recordStep(result, pending.previous);
+    if (result.type === "form" && result.step_id === pending.previous && submissionError) throw submissionError;
     return result;
   }
 
   async back(data) {
+    this.assertOpen();
     if (!this.index) return this.current;
     await this.preview.setEnabled(false);
+    this.assertOpen();
     this.drafts[this.current.step_id] = { ...data };
     const destination = this.index - 1;
+    // Back never repeats a possibly completed final submission.
+    if (this.pendingSubmission) return this.reconcileSubmission();
+    return this.recreate(destination);
+  }
+
+  async recreate(destination) {
+    this.rebuilding = true;
     // Replay only completed steps in a fresh, unsaved options flow. No final
     // step is submitted, so going back cannot save or reload an integration.
-    await this.callApi("DELETE", `${FLOW}/${this.current.flow_id}`);
-    let result = await this.callApi("POST", FLOW, { handler: this.entryId });
-    for (let index = 0; index < destination; index++) {
-      result = await this.callApi("POST", `${FLOW}/${result.flow_id}`, this.drafts[result.step_id]);
+    if (this.pending?.type === "form") {
+      await deleteFlow(this.callApi, FLOW, this.deletions, this.pending.flow_id);
+    }
+    await deleteFlow(this.callApi, FLOW, this.deletions, this.current.flow_id);
+    this.pending = null;
+    this.assertOpen();
+    // Keep the displayed form and its draft until the entire replay succeeds.
+    // A failed creation/replay can then be retried or closed safely.
+    let result = await this.accept(await this.callApi("POST", FLOW, { handler: this.entryId }), false);
+    for (let index = 0; index < destination && result.type === "form" && !Object.keys(result.errors || {}).length; index++) {
+      this.assertOpen();
+      result = await this.accept(await this.callApi("POST", `${FLOW}/${result.flow_id}`, this.drafts[result.step_id]), false);
       if (result.type !== "form" || Object.keys(result.errors || {}).length) break;
     }
     this.current = result;
+    this.pending = null;
+    this.rebuilding = false;
     this.index = this.steps.indexOf(result.step_id);
     if (this.index < 0) this.index = 0;
     return result;
   }
 
   async close() {
-    await this.preview.setEnabled(false);
-    if (this.current?.type === "form") {
-      await this.callApi("DELETE", `${FLOW}/${this.current.flow_id}`);
+    this.closed = true;
+    let failure;
+    try { await this.preview.setEnabled(false); }
+    catch (error) { failure = error; }
+    const flowIds = new Set([this.current, this.pending].filter((result) => result?.type === "form").map((result) => result.flow_id));
+    for (const flowId of flowIds) {
+      try { await deleteFlow(this.callApi, FLOW, this.deletions, flowId); }
+      catch (error) { failure ||= error; }
     }
-    this.current = null;
+    this.current = this.pending = null;
+    if (failure) throw failure;
   }
 }
 
@@ -150,24 +272,38 @@ export class NewProfileFlow {
     this.name = "";
     this.createdEntryId = null;
     this.uncertain = false;
+    this.closed = false;
+    this.deletions = new Map();
+  }
+
+  async accept(result) {
+    if (this.closed) {
+      if (result.type === "form") await deleteFlow(this.callApi, CONFIG_FLOW, this.deletions, result.flow_id);
+      if (result.type === "create_entry") this.createdEntryId = result.result?.entry_id || null;
+      throw closedFlowError();
+    }
+    this.current = result;
+    return result;
   }
 
   async create(name) {
+    if (this.createdEntryId) throw new Error("This profile has already been created.");
+    if (this.closed) throw closedFlowError();
     this.name = name.trim();
     if (!this.name) throw Object.assign(new Error("name_required"), { reason: "name_required" });
-    if (this.createdEntryId) throw new Error("This profile has already been created.");
     if (this.uncertain) throw Object.assign(new Error("creation_uncertain"), { reason: "creation_uncertain" });
     if (this.current?.type !== "form" || !["user", "menu"].includes(this.current.step_id)) {
-      this.current = await this.callApi("POST", CONFIG_FLOW, {
+      await this.accept(await this.callApi("POST", CONFIG_FLOW, {
         handler: "circadian_pro", show_advanced_options: false, source: "user",
-      });
+      }));
     }
     if (this.current.type === "form" && this.current.step_id === "menu") {
-      this.current = await this.callApi("POST", `${CONFIG_FLOW}/${this.current.flow_id}`, { action: "new" });
+      await this.accept(await this.callApi("POST", `${CONFIG_FLOW}/${this.current.flow_id}`, { action: "new" }));
     }
     if (this.current.type === "form" && this.current.step_id === "user") {
-      try { this.current = await this.callApi("POST", `${CONFIG_FLOW}/${this.current.flow_id}`, { name: this.name }); }
+      try { await this.accept(await this.callApi("POST", `${CONFIG_FLOW}/${this.current.flow_id}`, { name: this.name })); }
       catch (error) {
+        if (this.closed) throw error;
         this.uncertain = true;
         throw Object.assign(new Error("creation_uncertain", { cause: error }), { reason: "creation_uncertain" });
       }
@@ -183,17 +319,20 @@ export class NewProfileFlow {
   }
 
   async close() {
+    this.closed = true;
     if (this.current?.type === "form") {
-      try { await this.callApi("DELETE", `${CONFIG_FLOW}/${this.current.flow_id}`); }
+      try { await deleteFlow(this.callApi, CONFIG_FLOW, this.deletions, this.current.flow_id); }
       catch (error) { if (!this.uncertain) throw error; }
     }
     this.current = null;
   }
 
   async recover() {
+    if (this.closed) return null;
     if (!this.uncertain || !this.current?.flow_id) return this.current;
     try {
       const result = await this.callApi("GET", `${CONFIG_FLOW}/${this.current.flow_id}`);
+      if (this.closed) return null;
       if (result.type === "form" && ["user", "menu"].includes(result.step_id)) {
         this.current = result;
         this.uncertain = false;
@@ -377,6 +516,10 @@ const COPY = {
     catalogError: "No se pudo actualizar la lista de perfiles. Se conserva la última lista disponible.", retry: "Reintentar",
     recoveredForm: "El perfil aún no se ha creado. Puedes volver a pulsar Crear perfil.",
     uncertainList: "La creación no se pudo confirmar. Revisa los perfiles de la lista antes de crear otro con el mismo nombre.",
+    submission_uncertain: "No se pudo confirmar el último paso. Pulsa Comprobar estado antes de continuar.",
+    flow_expired: "La sesión terminó. Pulsa Siguiente para recuperar este borrador.",
+    save_uncertain: "No se pudo confirmar el guardado. Comprueba la configuración actual del perfil antes de repetir los cambios.",
+    checkStep: "Comprobar estado",
     choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
     selectEntities: "Seleccionar luces",
     close: "Cerrar sin guardar", preview: "Previsualizar luz", active: "Vista previa activa",
@@ -403,6 +546,10 @@ const COPY = {
     catalogError: "The profile list could not be updated. The last available list is kept.", retry: "Retry",
     recoveredForm: "The profile has not been created yet. You can click Create profile again.",
     uncertainList: "Creation could not be confirmed. Check the profiles in the list before creating another with the same name.",
+    submission_uncertain: "The last step could not be confirmed. Click Check status before continuing.",
+    flow_expired: "The session ended. Click Next to recover this draft.",
+    save_uncertain: "The save could not be confirmed. Check the profile's current configuration before repeating the changes.",
+    checkStep: "Check status",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
     selectEntities: "Select lights",
     close: "Close without saving", preview: "Preview light", active: "Preview active",
@@ -491,6 +638,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.busy = false;
     this.initialized = false;
     this.message = "";
+    this.saveUncertain = false;
     this.error = "";
     this.newProfileOpen = false;
     this.newProfileName = "";
@@ -601,7 +749,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.error = "";
     this.updateControls();
     try { await job(); }
-    catch (error) { this.error = error?.message || this.copy.error; }
+    catch (error) { if (error?.reason !== "flow_closed") this.error = error?.message || this.copy.error; }
     finally {
       this.busy = false;
       if (this.isConnected !== false) this.render();
@@ -623,6 +771,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       this.settings = { ...entry.settings };
       this.values = {};
       this.message = "";
+      this.saveUncertain = false;
       this.session = new PreviewSession(
         (message) => this._hass.callWS(message), entryId,
         () => ({ settings: { ...this.settings, ...this.readValues() }, kelvin: this.flow.current.step_id === "cal_warm" ? 1000 : 4000 }),
@@ -670,7 +819,10 @@ export class CircadianCalibrationPanel extends HTMLElement {
       const creator = this.creator;
       let result;
       try { result = await creator.create(this.newProfileName); }
-      catch (error) { throw new Error(this.copy[error.reason] || error.message || this.copy.error); }
+      catch (error) {
+        if (revision !== this.creationRevision || this.creator !== creator) return;
+        throw new Error(this.copy[error.reason] || error.message || this.copy.error);
+      }
       if (revision !== this.creationRevision || this.creator !== creator) { await creator.close(); return; }
       if (result.type !== "create_entry") { this.error = this.creationError(result); return; }
       this.pendingCreated = { entry_id: creator.createdEntryId, title: creator.name };
@@ -697,11 +849,15 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   async reconcileCreation() {
     await this.action(async () => {
+      const creator = this.creator;
+      const revision = this.creationRevision;
       this.applyEntries(await this.readEntries());
-      const result = await this.creator.recover();
+      if (revision !== this.creationRevision || this.creator !== creator) return;
+      const result = await creator.recover();
+      if (revision !== this.creationRevision || this.creator !== creator) return;
       if (result?.type === "form") this.error = this.copy.recoveredForm;
       else {
-        await this.creator.close();
+        await creator.close();
         this.newProfileOpen = false;
         this.message = this.copy.uncertainList;
       }
@@ -709,17 +865,32 @@ export class CircadianCalibrationPanel extends HTMLElement {
   }
 
   async closeWizard() {
-    await this.flow.close();
-    this.flow = this.session = null;
-    this.message = this.createdProfile ? this.copy.createdKept : "";
-    this.createdProfile = null;
+    const flow = this.flow;
+    if (!flow) return;
+    try { await flow.close(); }
+    finally {
+      if (this.flow === flow) {
+        this.flow = this.session = null;
+        this.message = this.createdProfile ? this.copy.createdKept : "";
+        this.createdProfile = null;
+      }
+    }
   }
 
   showStep(result) {
-    if (result.type === "create_entry") {
+    if (result.type === "abort") {
+      if (this.flow) this.flow.closed = true;
+      this.flow = this.session = null;
+      this.createdProfile = null;
+      this.message = "";
+      this.error = this.translations.abort?.[result.reason] || result.reason || this.copy.error;
+      return;
+    }
+    if (["create_entry", "save_uncertain"].includes(result.type)) {
       this.flow = null;
       this.session = null;
-      this.message = this.copy.saved;
+      this.saveUncertain = result.type === "save_uncertain";
+      this.message = this.saveUncertain ? this.copy.save_uncertain : this.copy.saved;
       this.createdProfile = null;
       // Saving reloads the profile. Retain the last displayed values until a
       // fresh entries request, rather than starting another flow from old data.
@@ -763,11 +934,25 @@ export class CircadianCalibrationPanel extends HTMLElement {
   }
 
   async navigate(back = false) {
+    if (this.busy) return;
+    // Native constraint validation excludes disabled controls. Validate and
+    // capture the form before action freezes its inputs for the request.
+    let data;
+    try { data = this.readValues(!back); }
+    catch (error) {
+      this.error = error?.message || this.copy.error;
+      this.updateControls();
+      return;
+    }
     await this.action(async () => {
-      const data = this.readValues(!back);
       Object.assign(this.settings, data);
       const flow = this.flow;
-      const result = back ? await flow.back(data) : await flow.next(data);
+      let result;
+      try { result = back ? await flow.back(data) : await flow.next(data); }
+      catch (error) {
+        if (["submission_uncertain", "flow_expired"].includes(error?.reason)) throw new Error(this.copy[error.reason]);
+        throw error;
+      }
       if (this.flow !== flow) return;
       this.showStep(result);
       this.shadowRoot.querySelector("main")?.scrollTo(0, 0);
@@ -798,9 +983,10 @@ export class CircadianCalibrationPanel extends HTMLElement {
     } else if (selector.select || field.type === "select") {
       input = element("select");
       const options = selector.select?.options || field.options || [];
+      const optionLabels = this.translations.selector?.[selector.select?.translation_key]?.options || {};
       for (const choice of options) {
         const [id, label] = Array.isArray(choice) ? choice : typeof choice === "string" ? [choice, choice] : [choice.value, choice.label];
-        const option = element("option", label);
+        const option = element("option", optionLabels[id] ?? label ?? id);
         option.value = id;
         input.append(option);
       }
@@ -848,7 +1034,12 @@ export class CircadianCalibrationPanel extends HTMLElement {
       catalogWarning.hidden = !this.catalogError;
       catalogWarning.querySelector("p").textContent = this.catalogError;
     }
-    for (const button of this.shadowRoot.querySelectorAll("button")) button.disabled = this.busy;
+    // Freeze submitted inputs while the request is pending, so edits cannot
+    // disappear when the next step replaces the form. Navigation stays usable.
+    for (const input of this.shadowRoot.querySelectorAll("input,select")) input.disabled = this.busy;
+    for (const button of this.shadowRoot.querySelectorAll("button")) {
+      button.disabled = this.busy && !String(button.className || "").split(" ").includes("mobile-menu");
+    }
     const create = this.shadowRoot.querySelector("#create-profile");
     if (create && this.creator?.uncertain) create.disabled = true;
     const start = this.shadowRoot.querySelector("#start-profile");
@@ -987,13 +1178,13 @@ export class CircadianCalibrationPanel extends HTMLElement {
         back.addEventListener("click", () => this.navigate(true));
         actions.append(back);
       }
-      const next = element("button", last ? this.copy.finish : this.copy.next, "primary");
+      const next = element("button", this.flow.pendingSubmission ? this.copy.checkStep : last ? this.copy.finish : this.copy.next, "primary");
       next.addEventListener("click", () => this.navigate());
       actions.append(next);
       article.append(error, actions);
     } else {
       article.append(element("h1", this.copy.title));
-      if (this.message) article.append(element("p", this.message, "saved"));
+      if (this.message) article.append(element("p", this.message, this.saveUncertain ? "muted" : "saved"));
       if (this.pendingCreated) {
         article.append(element("p", this.pendingCreated.title, "label"));
         const retry = element("button", this.copy.retryLoading, "primary");

@@ -27,6 +27,11 @@ from .const import DOMAIN, EXTRA_VALIDATION, NONE_STR, VALIDATION_TUPLES, _DOMAI
 FRONTEND_DATA = "circadian_pro_frontend"
 PANEL_PATH = "circadian-pro-calibration"
 PANEL_URL = "/circadian_pro_static/calibration-panel.js"
+_LEGACY_CALIBRATION_OPTIONS = {
+    "rgb_calibration_r", "rgb_calibration_g", "rgb_calibration_b",
+    "combine_rgbctt_or_rgbw", "combine_rgb_scale", "combine_white_scale",
+    "rgbw_fixed_white_kelvin",
+}
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -63,8 +68,14 @@ def _validated_draft(entry: Any, draft: dict[str, Any]) -> dict[str, Any]:
     from .config_flow import validate_entry
 
     merged = _serializable_settings(validate_entry(entry))
+    ignored_legacy = _LEGACY_CALIBRATION_OPTIONS.intersection(merged)
     merged.update(deepcopy(draft))
     merged.pop("preview_light", None)
+    # Old profiles retain these inactive options for compatibility. They must
+    # not make a temporary preview fail the current strict schema; newly
+    # supplied unknown fields are still rejected below.
+    for name in ignored_legacy:
+        merged.pop(name, None)
     # Optional time fields have no YAML default and cv.time cannot accept null.
     # Omit only fields which explicitly allow being unset, then put null back.
     optional = {name for name, default, _ in VALIDATION_TUPLES if default is None or default == NONE_STR}
@@ -98,6 +109,7 @@ async def websocket_entries(hass: Any, connection: Any, msg: dict[str, Any]) -> 
     ws_schema.Required("entry_id"): str,
     ws_schema.Required("settings"): dict,
     ws_schema.Required("kelvin"): ws_schema.All(int, ws_schema.In((1000, 4000))),
+    ws_schema.Optional("session_id", default=""): str,
 })
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -113,7 +125,9 @@ async def websocket_preview(hass: Any, connection: Any, msg: dict[str, Any]) -> 
         connection.send_error(msg["id"], "invalid_options", str(err))
         return
     try:
-        await async_preview_calibration(hass, entry.entry_id, settings, msg["kelvin"])
+        await async_preview_calibration(
+            hass, entry.entry_id, settings, msg["kelvin"], session_id=msg.get("session_id", ""),
+        )
     except HomeAssistantError as err:
         connection.send_error(msg["id"], "preview_unavailable", str(err))
         return
@@ -122,6 +136,7 @@ async def websocket_preview(hass: Any, connection: Any, msg: dict[str, Any]) -> 
 
 @websocket_api.websocket_command({
     "type": "circadian_pro/calibration/stop", ws_schema.Required("entry_id"): str,
+    ws_schema.Optional("session_id", default=""): str,
 })
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -131,14 +146,17 @@ async def websocket_stop(hass: Any, connection: Any, msg: dict[str, Any]) -> Non
         connection.send_error(msg["id"], "not_found", "This Circadian Pro profile does not exist.")
         return
     # Idempotent cleanup remains available even if the profile was unloaded.
-    await async_stop_calibration_preview(hass, entry.entry_id)
+    await async_stop_calibration_preview(hass, entry.entry_id, session_id=msg.get("session_id", ""))
     connection.send_result(msg["id"], {"active": False})
 
 
 def _read_translations(language: str) -> dict[str, Any]:
     path = Path(__file__).parent / "translations" / f"{language}.json"
     translations = json.loads(path.read_text(encoding="utf-8"))
-    return {**translations.get("options", {}), "config": translations.get("config", {})}
+    return {
+        **translations.get("options", {}), "config": translations.get("config", {}),
+        "selector": translations.get("selector", {}),
+    }
 
 
 @websocket_api.websocket_command({

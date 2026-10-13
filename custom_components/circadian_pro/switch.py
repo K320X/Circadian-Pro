@@ -6,12 +6,12 @@ import asyncio
 import datetime
 import logging
 import zoneinfo
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import timedelta
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 
-import homeassistant.helpers.config_validation as cv
 import homeassistant.util.dt as dt_util
 import voluptuous as vol
 from homeassistant.components.light import (
@@ -36,8 +36,11 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import (
     ATTR_AREA_ID,
+    ATTR_DEVICE_ID,
     ATTR_DOMAIN,
     ATTR_ENTITY_ID,
+    ATTR_FLOOR_ID,
+    ATTR_LABEL_ID,
     ATTR_SERVICE,
     ATTR_SERVICE_DATA,
     ATTR_SUPPORTED_FEATURES,
@@ -51,6 +54,8 @@ from homeassistant.const import (
     SERVICE_TURN_ON,
     STATE_OFF,
     STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
 )
 from homeassistant.core import (
     CALLBACK_TYPE,
@@ -61,7 +66,8 @@ from homeassistant.core import (
     State,
     callback,
 )
-from homeassistant.helpers import entity_platform, entity_registry
+from homeassistant.exceptions import Unauthorized, UnknownUser
+from homeassistant.helpers import entity_platform, entity_registry, target as target_helpers
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_component import async_update_entity
 from homeassistant.helpers.event import (
@@ -78,7 +84,9 @@ from homeassistant.util.color import (
 )
 
 from .adaptation_utils import (
+    BRIGHTNESS_ATTRS,
     AdaptationData,
+    COLOR_ATTRS,
     LightControlAttributes,
     ServiceData,
     get_light_control_attributes,
@@ -86,7 +94,7 @@ from .adaptation_utils import (
     manual_control_event_attribute_to_flags,
     prepare_adaptation_data,
 )
-from .calibration import is_calibration_preview_active
+from .calibration import is_calibration_preview_active, is_calibration_preview_context
 from .color_and_brightness import SunLightSettings
 from .const import (
     ADAPT_BRIGHTNESS_SWITCH,
@@ -168,7 +176,7 @@ from .const import (
     replace_none_str,
     validate_cross_options,
 )
-from .hass_utils import area_entities, setup_service_call_interceptor
+from .hass_utils import ServiceCallPostProcessor, async_check_entity_control, setup_service_call_interceptor
 from .helpers import (
     clamp,
     color_difference_redmean,
@@ -194,6 +202,7 @@ SCAN_INTERVAL = timedelta(seconds=10)
 BRIGHTNESS_CHANGE = 25  # ≈10% of total range
 COLOR_TEMP_CHANGE = 100  # ≈3% of total range (2000-6500)
 RGB_REDMEAN_CHANGE = 80  # ≈10% of total range
+MAX_STATE_HISTORY = 8  # Keep the first and most recent reports of one command.
 
 
 # Keep a short domain version for the context instances (which can only be 36 chars)
@@ -222,7 +231,7 @@ def create_context(
     index_packed = int_to_base36(index).zfill(chars_left)[-chars_left:]
     context_id = context_id_start + index_packed
     parent_id = parent.id if parent else None
-    return Context(id=context_id, parent_id=parent_id)
+    return Context(id=context_id, parent_id=parent_id, user_id=parent.user_id if parent else None)
 
 
 def is_our_context_id(context_id: str | None, which: str | None = None) -> bool:
@@ -249,22 +258,34 @@ def _switches_with_lights(
     hass: HomeAssistant,
     lights: list[str],
     expand_light_groups: bool = True,
+    *,
+    refresh_lights: bool = True,
 ) -> CircadianProSwitches:
     """Get all switches that control at least one of the lights passed."""
     config_entries = hass.config_entries.async_entries(DOMAIN)
-    data = hass.data[DOMAIN]
+    data = hass.data.get(DOMAIN, {})
     switches: CircadianProSwitches = []
-    all_check_lights = (
+    all_check_lights = set(
         _expand_light_groups(hass, lights) if expand_light_groups else set(lights)
     )
     for config in config_entries:
         entry = data.get(config.entry_id)
         if entry is None:  # entry might be disabled and therefore missing
             continue
-        switch = data[config.entry_id][SWITCH_DOMAIN]
-        switch._expand_light_groups(hass=hass)
+        switch = entry.get(SWITCH_DOMAIN)
+        if switch is None:  # The platform may still be loading or unloading.
+            continue
+        if refresh_lights:
+            switch._expand_light_groups(hass=hass)
+            candidate_lights = switch.lights
+        else:
+            # Permission checks need a current target snapshot without changing
+            # shared timers/tasks before the actor has been authorized.
+            candidate_lights = _expand_light_groups(
+                hass, getattr(switch, "_configured_lights", switch.lights),
+            )
         # Check if any of the lights are in the switch's lights
-        if set(switch.lights) & set(all_check_lights):
+        if all_check_lights.intersection(candidate_lights):
             switches.append(switch)
     return switches
 
@@ -277,9 +298,13 @@ def _switch_with_lights(
     hass: HomeAssistant,
     lights: list[str],
     expand_light_groups: bool = True,
+    *,
+    refresh_lights: bool = True,
 ) -> CircadianProSwitch:
     """Find the switch that controls the lights in 'lights'."""
-    switches = _switches_with_lights(hass, lights, expand_light_groups)
+    switches = _switches_with_lights(
+        hass, lights, expand_light_groups, refresh_lights=refresh_lights,
+    )
     if len(switches) == 1:
         return switches[0]
     if len(switches) > 1:
@@ -306,6 +331,8 @@ def _switch_with_lights(
 def _switches_from_service_call(
     hass: HomeAssistant,
     service_call: ServiceCall,
+    *,
+    refresh_lights: bool = True,
 ) -> CircadianProSwitches:
     data = service_call.data
     lights = data[CONF_LIGHTS]
@@ -331,13 +358,15 @@ def _switches_from_service_call(
         ent_reg = entity_registry.async_get(hass)
         for entity_id in switch_entity_ids:
             ent_entry = ent_reg.async_get(entity_id)
-            assert ent_entry is not None
-            config_id = ent_entry.config_entry_id
-            switches.append(hass.data[DOMAIN][config_id][SWITCH_DOMAIN])
+            config_id = ent_entry.config_entry_id if ent_entry is not None else None
+            switch = hass.data.get(DOMAIN, {}).get(config_id, {}).get(SWITCH_DOMAIN)
+            if switch is None or entity_id != switch.entity_id:
+                raise ValueError(f"{entity_id} is not a loaded Circadian Pro main switch.")
+            switches.append(switch)
         return switches
 
     if lights:
-        switch = _switch_with_lights(hass, lights)
+        switch = _switch_with_lights(hass, lights, refresh_lights=refresh_lights)
         return [switch]
 
     msg = (
@@ -347,11 +376,37 @@ def _switches_from_service_call(
     raise ValueError(msg)
 
 
+async def _authorized_switch_targets(
+    hass: HomeAssistant,
+    service_call: ServiceCall,
+) -> list[tuple[CircadianProSwitch, list[str]]]:
+    """Resolve every profile/light and check all access before changing any."""
+    switches = _switches_from_service_call(hass, service_call, refresh_lights=False)
+    requested_lights = service_call.data[CONF_LIGHTS]
+    plans = []
+    entities = list(service_call.data.get(ATTR_ENTITY_ID, [])) + list(requested_lights)
+    for switch in switches:
+        lights = _expand_light_groups(
+            hass,
+            requested_lights or getattr(switch, "_configured_lights", switch.lights),
+        )
+        entities.append(switch.entity_id)
+        entities.extend(lights)
+        plans.append((switch, lights))
+    await async_check_entity_control(hass, service_call.context, entities)
+    return plans
+
+
 async def handle_change_switch_settings(
     switch: CircadianProSwitch,
     service_call: ServiceCall,
 ) -> None:
     """Allows HASS to change config values via a service call."""
+    if not isinstance(switch, CircadianProSwitch):
+        raise ValueError("Select the main Circadian Pro switch to change profile settings.")
+    await async_check_entity_control(
+        switch.hass, service_call.context, [switch.entity_id, *switch.lights],
+    )
     data = service_call.data
     which = data.get(CONF_USE_DEFAULTS, "current")
     if which == "current":  # use whatever we're already using.
@@ -362,7 +417,7 @@ async def handle_change_switch_settings(
         # use whatever's in the config flow or configuration.yaml
         defaults = switch._config_backup
     else:
-        defaults = None
+        raise ValueError(f"Unknown use_defaults value: {which}")
 
     # deep copy the defaults so we don't modify the original dicts
     switch._set_changeable_settings(data=data, defaults=deepcopy(defaults))
@@ -462,13 +517,8 @@ async def async_setup_entry(  # noqa: PLR0915
             "Called 'circadian_pro.apply' service with '%s'",
             data,
         )
-        switches = _switches_from_service_call(hass, service_call)
-        lights = data[CONF_LIGHTS]
-        for switch in switches:
-            if not lights:
-                all_lights = switch.lights
-            else:
-                all_lights = _expand_light_groups(hass, lights)
+        plans = await _authorized_switch_targets(hass, service_call)
+        for switch, all_lights in plans:
             for light in all_lights:
                 if data[CONF_TURN_ON_LIGHTS] or is_on(hass, light):
                     context = switch.create_context(
@@ -493,13 +543,8 @@ async def async_setup_entry(  # noqa: PLR0915
             "Called 'circadian_pro.set_manual_control' service with '%s'",
             data,
         )
-        switches = _switches_from_service_call(hass, service_call)
-        lights = data[CONF_LIGHTS]
-        for switch in switches:
-            if not lights:
-                all_lights = switch.lights
-            else:
-                all_lights = _expand_light_groups(hass, lights)
+        plans = await _authorized_switch_targets(hass, service_call)
+        for switch, all_lights in plans:
 
             manual_attributes = manual_control_event_attribute_to_flags(
                 service_call.data[CONF_MANUAL_CONTROL],
@@ -546,7 +591,11 @@ async def async_setup_entry(  # noqa: PLR0915
         schema=SET_MANUAL_CONTROL_SCHEMA,
     )
 
-    args: VolDictType = {vol.Optional(CONF_USE_DEFAULTS, default="current"): cv.string}
+    args: VolDictType = {
+        vol.Optional(CONF_USE_DEFAULTS, default="current"): vol.In(
+            ("current", "factory", "configuration"),
+        ),
+    }
     # Modifying these after init isn't possible
     skip = (CONF_INTERVAL, CONF_NAME, CONF_LIGHTS)
     for k, _, valid in VALIDATION_TUPLES:
@@ -559,6 +608,7 @@ async def async_setup_entry(  # noqa: PLR0915
         args,
         handle_change_switch_settings,
     )
+    data[config_entry.entry_id]["platform_setup_complete"] = True
 
 
 def validate(
@@ -621,19 +671,32 @@ def _expand_light_groups(
     hass: HomeAssistant,
     lights: list[str],
 ) -> list[str]:
+    """Resolve nested groups once per entity, keeping native Hue groups intact."""
     all_lights: set[str] = set()
-    for light in lights:
+    visited: set[str] = set()
+    pending = list(lights)
+    while pending:
+        light = pending.pop()
+        if light in visited:
+            continue
+        visited.add(light)
         state = hass.states.get(light)
         if state is None:
             _LOGGER.debug("State of %s is None", light)
             all_lights.add(light)
         elif _is_light_group(state):
             group = state.attributes["entity_id"]
-            all_lights.update(group)
+            pending.extend(group)
             _LOGGER.debug("Expanded %s to %s", light, group)
         else:
             all_lights.add(light)
     return sorted(all_lights)
+
+
+def _service_parameters(service_data: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Read normalized HA light parameters while accepting older flat events."""
+    parameters = service_data.get(CONF_PARAMS)
+    return parameters if isinstance(parameters, Mapping) else service_data
 
 
 def _is_light_group(state: State) -> bool:
@@ -1042,7 +1105,7 @@ def _attributes_have_changed(
             ):
                 native_compared = True
                 # WLED quantizes the white split during its transport round trip.
-                if any(abs(new - old) > 2 for old, new in zip(old_color, new_color)):
+                if any(abs(new - old) > 2 for old, new in zip(old_color, new_color, strict=True)):
                     changed_attributes |= LightControlAttributes.COLOR
                 break
 
@@ -1248,7 +1311,7 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 self._name,
             )
             self._multi_light_intercept = False
-        self._expand_light_groups()  # updates manual control timers
+        self._expand_light_groups(rebuild=True)  # updates manual control timers
         location, _ = get_astral_location(self.hass)
 
         self._sleep_activation_mode = str(
@@ -1337,11 +1400,14 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
             self._state = False
             assert not self.remove_listeners
 
-    def _expand_light_groups(self, hass: HomeAssistant | None = None) -> None:
+    def _expand_light_groups(
+        self, hass: HomeAssistant | None = None, *, rebuild: bool = False,
+    ) -> None:
         hass = hass or self.hass
         all_lights = _expand_light_groups(hass, self._configured_lights)
-        self.lights = list(all_lights)
-        if self in self.manager.switches:
+        changed = self.lights != all_lights
+        self.lights = all_lights
+        if (changed or rebuild) and self in self.manager.switches:
             self.manager.rebuild_lights()
 
     async def _setup_listeners(self, _: Event[NoEventData] | None = None) -> None:
@@ -1536,8 +1602,14 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
         prefer_rgb_color: bool | None = None,
         force: bool = False,
         context: Context | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
+        effective_sleep: bool | None = None,
     ) -> AdaptationData | None:
         """Prepare AdaptationData for adapting a light."""
+        state = self.hass.states.get(light)
+        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return None
         adaptation_attributes = self.manager.get_adaption_control_attributes(
             self,
             light,
@@ -1564,11 +1636,11 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
             return None
 
         # The switch might be off and not have _settings set.
-        effective_sleep = self._effective_sleep_state()
-        self._settings = self._sun_light_settings.get_settings(
-            effective_sleep,
-            transition,
-        )
+        if effective_sleep is None:
+            effective_sleep = self._effective_sleep_state()
+        if settings is None:
+            settings = self._sun_light_settings.get_settings(effective_sleep, transition)
+        self._settings = dict(settings)
 
         # Build service data.
         service_data: dict[str, Any] = {ATTR_ENTITY_ID: light}
@@ -1598,9 +1670,9 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
         # - En el resto de casos, calculamos RGB calibrado (dos puntos) + W según intensidad
         #   y con 'meseta' hasta el Kelvin real del canal W.
         if adapt_color:
-            state = self.hass.states.get(light)
-            assert isinstance(state, State)
             supported_color_modes = state.attributes.get(ATTR_SUPPORTED_COLOR_MODES, set())
+            min_kelvin = state.attributes.get(ATTR_MIN_COLOR_TEMP_KELVIN) or 1000
+            max_kelvin = state.attributes.get(ATTR_MAX_COLOR_TEMP_KELVIN) or 10000
 
             force_rgb = bool(self._settings.get("force_rgb_color", False))
 
@@ -1613,9 +1685,12 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                     service_data[ATTR_RGBW_COLOR] = (rgb[0], rgb[1], rgb[2], 0)
                 elif ColorMode.RGB in supported_color_modes or "color" in features:
                     service_data[ATTR_RGB_COLOR] = rgb
-                else:
-                    # Último recurso: intentamos RGB igualmente
-                    service_data[ATTR_RGB_COLOR] = rgb
+                elif "color_temp" in features:
+                    # A white-only light cannot display RGB; keep its sleep
+                    # temperature inside the native range instead of dropping color.
+                    service_data[ATTR_COLOR_TEMP_KELVIN] = _clamp_int(
+                        self._settings["color_temp_kelvin"], min_kelvin, max_kelvin,
+                    )
 
             else:
                 target_kelvin = int(self._settings.get("color_temp_kelvin", 4000))
@@ -1653,13 +1728,12 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 elif ColorMode.RGBW in supported_color_modes:
                     w = round(255 * (white_intensity_pct / 100.0))
                     service_data[ATTR_RGBW_COLOR] = (cal_rgb[0], cal_rgb[1], cal_rgb[2], w)
-                elif ColorMode.RGB in supported_color_modes and "color" in features:
-                    service_data[ATTR_RGB_COLOR] = cal_rgb
-                elif ColorMode.COLOR_TEMP in supported_color_modes or "color_temp" in features:
+                elif "color_temp" in features and (
+                    "color" not in features
+                    or (not prefer_rgb_color and min_kelvin <= target_kelvin <= max_kelvin)
+                ):
                     # Keep the sent target within the light's native range so
                     # rejected commands cannot look like external manual changes.
-                    min_kelvin = state.attributes.get(ATTR_MIN_COLOR_TEMP_KELVIN) or 1000
-                    max_kelvin = state.attributes.get(ATTR_MAX_COLOR_TEMP_KELVIN) or 10000
                     service_data[ATTR_COLOR_TEMP_KELVIN] = _clamp_int(
                         target_kelvin, min_kelvin, max_kelvin,
                     )
@@ -1706,6 +1780,9 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
         adapt_color: bool | None = None,
         prefer_rgb_color: bool | None = None,
         force: bool = False,
+        *,
+        settings: dict[str, Any] | None = None,
+        effective_sleep: bool | None = None,
     ) -> None:
         if (lock := self.manager.turn_off_locks.get(light)) and lock.locked():
             _LOGGER.debug("%s: '%s' is locked", self._name, light)
@@ -1719,6 +1796,8 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
             prefer_rgb_color,
             force,
             context,
+            settings=settings,
+            effective_sleep=effective_sleep,
         )
         if data is None:
             return  # nothing to adapt
@@ -1727,12 +1806,31 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
 
     async def _execute_adaptation_calls(self, data: AdaptationData) -> None:
         """Executes a sequence of adaptation service calls for the given service datas."""
+        previous_context = self.manager.last_service_context.get(data.entity_id)
+        seed_contexts = {data.context.id, getattr(data.context, "parent_id", None)}
+        expected_data = dict(self.manager.last_service_data.get(data.entity_id, {})) if previous_context is not None and previous_context in seed_contexts else {}
         for index in range(data.max_length):
             is_first_call = index == 0
 
             # Sleep between multiple service calls.
             if not is_first_call or data.initial_sleep:
                 await asyncio.sleep(data.sleep_time)
+
+            calibration = is_our_context(data.context, "calibration")
+            explicit_apply = is_our_context(data.context, "service")
+            if getattr(self.manager, "_disabled", False):
+                return
+            registered = getattr(self.manager, "switches", None)
+            if registered is not None and self not in registered and not calibration:
+                return
+
+            if not self.is_on and not (explicit_apply or calibration):
+                return  # Only an explicit apply/preview may control an off profile.
+
+            # A preview may reserve the light while this sequence is sleeping.
+            # Calibration itself uses the same executor and must remain allowed.
+            if is_calibration_preview_active(self.hass, data.entity_id) and not calibration:
+                return
 
             # Instead of directly iterating the generator in the while-loop, we get
             # the next item here after the sleep to make sure it incorporates state
@@ -1743,11 +1841,23 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 # All service datas processed
                 break
 
+            await async_check_entity_control(self.hass, data.context, [data.entity_id])
+
+            if not (explicit_apply or calibration):
+                allowed = self.manager.get_adaption_control_attributes(self, data.entity_id)
+                service_data = {
+                    key: value for key, value in service_data.items()
+                    if (key not in COLOR_ATTRS or LightControlAttributes.COLOR in allowed)
+                    and (key not in BRIGHTNESS_ATTRS or LightControlAttributes.BRIGHTNESS in allowed)
+                }
+                if not any(key in COLOR_ATTRS or key in BRIGHTNESS_ATTRS for key in service_data):
+                    return
+
             if (
                 not data.force
                 and not is_on(self.hass, data.entity_id)
                 # if proactively adapting, we are sure that it came from a light.turn_on
-                and not self.manager.is_proactively_adapting(data.context.id)
+                and not self.manager.is_proactively_adapting(data.context.id, data.entity_id)
             ):
                 # Do a last-minute check if the entity is still on.
                 _LOGGER.debug(
@@ -1765,6 +1875,10 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 data.context.id,
             )
             light = service_data[ATTR_ENTITY_ID]
+            if any(key in COLOR_ATTRS for key in service_data):
+                for key in COLOR_ATTRS:
+                    expected_data.pop(key, None)
+            expected_data.update(service_data)
             previous_data = self.manager.last_service_data.get(light)
             previous_context = self.manager.last_service_context.get(light)
             acknowledgement = self.manager.last_service_acknowledgements.get(light)
@@ -1795,24 +1909,43 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 key: tuple(value)
                 if key in (ATTR_RGBW_COLOR, ATTR_RGBWW_COLOR)
                 else value
-                for key, value in service_data.items()
+                for key, value in expected_data.items()
                 if key not in (ATTR_ENTITY_ID, ATTR_TRANSITION)
             }
-            if acknowledgement is not None and acknowledgement[0] == requested_values:
+            color_values = {key: value for key, value in requested_values.items() if key in COLOR_ATTRS}
+            acknowledged_color = {key: value for key, value in (acknowledgement[0] if acknowledgement else {}).items() if key in COLOR_ATTRS}
+            if acknowledgement is not None and color_values and acknowledged_color == color_values:
                 # Identical commands may produce no state_changed event. Keep
                 # their confirmed native-white normalization, even with a new
                 # context or transition, until the requested light values change.
-                self.manager.last_service_acknowledgements[light] = acknowledgement
-            else:
+                self.manager.last_service_acknowledgements[light] = (requested_values, acknowledgement[1])
+            elif color_values:
                 self.manager.last_service_acknowledgements.pop(light, None)
-            self.manager.last_service_data[light] = service_data
-            self.manager.last_service_context[light] = data.context.id
-            await self.hass.services.async_call(
-                LIGHT_DOMAIN,
-                SERVICE_TURN_ON,
-                service_data,
-                context=data.context,
-            )
+            elif acknowledgement is not None:
+                self.manager.last_service_acknowledgements[light] = acknowledgement
+            context = self.create_context("split", parent=data.context) if not is_first_call or data.initial_sleep else data.context
+            if context is not data.context:
+                context.user_id = getattr(data.context, "user_id", None)
+            self.manager.last_service_data[light] = dict(expected_data)
+            self.manager.last_service_context[light] = context.id
+            try:
+                await self.hass.services.async_call(
+                    LIGHT_DOMAIN,
+                    SERVICE_TURN_ON,
+                    service_data,
+                    context=context,
+                    blocking=True,
+                )
+            except BaseException:
+                if self.manager.last_service_context.get(light) == context.id:
+                    # The device may have rejected or only partly applied this
+                    # command. It is not a reliable manual-change baseline.
+                    self.manager.last_service_data.pop(light, None)
+                    self.manager.last_service_context.pop(light, None)
+                    self.manager.last_service_acknowledgements.pop(light, None)
+                    self.manager.our_last_state_on_change.pop(light, None)
+                    self.manager.clear_proactively_adapting(light)
+                raise
 
     async def execute_cancellable_adaptation_calls(
         self,
@@ -1840,6 +1973,8 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 self.manager.adaptation_tasks_color[data.entity_id] = task
             await task
         except asyncio.CancelledError:
+            if (caller := asyncio.current_task()) is not None and caller.cancelling():
+                raise  # Request/timeout cancellation must not report a partial sequence as success.
             _LOGGER.debug(
                 "%s: Ongoing adaptation of %s cancelled, with AdaptationData: %s",
                 self._name,
@@ -1871,13 +2006,13 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
             transition,
             force,
         )
-        assert self.is_on
-        self._settings.update(
-            self._sun_light_settings.get_settings(
-                self._effective_sleep_state(),
-                transition,
-            ),
-        )
+        if not self.is_on:
+            return  # An interval/state callback may already be queued when disabled.
+        if transition is None:
+            transition = self._transition
+        effective_sleep = self._effective_sleep_state()
+        settings = self._sun_light_settings.get_settings(effective_sleep, transition)
+        self._settings.update(settings)
         self.async_write_ha_state()
 
         if not force and self._only_once:
@@ -1932,6 +2067,8 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 force,
                 context,
             )
+            if not self.is_on:
+                break  # A light refresh can yield to a profile-off/config reload.
 
             # Performance optimization: Skip adaptation task if all attributes are
             # manually controlled and the task wouldn't actually do anything.
@@ -1952,7 +2089,10 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
                 transition,
                 context.id,
             )
-            coro = self._adapt_light(light, context, transition, force=force)
+            coro = self._adapt_light(
+                light, context, transition, force=force,
+                settings=settings, effective_sleep=effective_sleep,
+            )
             task = self.hass.async_create_task(
                 coro,
             )
@@ -1965,7 +2105,7 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
         entity_id: str,
         event: Event[EventStateChangedData],
     ) -> None:
-        assert not self.manager.is_proactively_adapting(event.context.id)
+        assert not self.manager.is_proactively_adapting(event.context.id, entity_id)
         from_turn_on = self.manager._off_to_on_state_event_is_from_turn_on(
             entity_id,
             event,
@@ -2206,7 +2346,7 @@ class CircadianProManager:
             ),
         ]
 
-        self._proactively_adapting_contexts: dict[str, str] = {}
+        self._proactively_adapting_contexts: dict[str, set[str]] = {}
         self._context_cnt: int = 0
 
         try:
@@ -2370,12 +2510,13 @@ class CircadianProManager:
         """Declare the adaptation with context_id as proactively adapting,
         and associate it to an entity_id.
         """  # noqa: D205
-        self._proactively_adapting_contexts[context_id] = entity_id
+        self._proactively_adapting_contexts.setdefault(context_id, set()).add(entity_id)
 
-    def is_proactively_adapting(self, context_id: str) -> bool:
+    def is_proactively_adapting(self, context_id: str, entity_id: str | None = None) -> bool:
         """Determine whether an adaptation with the given context_id is proactive."""
         is_proactively_adapting_context = (
             context_id in self._proactively_adapting_contexts
+            and (entity_id is None or entity_id in self._proactively_adapting_contexts[context_id])
         )
 
         _LOGGER.debug(
@@ -2391,12 +2532,10 @@ class CircadianProManager:
 
         Call this method to clear past context IDs and avoid a memory leak.
         """
-        # First get the keys to avoid modifying the dict while iterating it
-        keys = [
-            k for k, v in self._proactively_adapting_contexts.items() if v == entity_id
-        ]
-        for key in keys:
-            self._proactively_adapting_contexts.pop(key)
+        for context_id, lights in list(self._proactively_adapting_contexts.items()):
+            lights.discard(entity_id)
+            if not lights:
+                self._proactively_adapting_contexts.pop(context_id)
 
     def create_context(
         self,
@@ -2507,32 +2646,11 @@ class CircadianProManager:
         self,
         call: ServiceCall,
         service_data: ServiceData,
-    ) -> None:
-        """Intercept light.turn_on and light.toggle service calls and adapt them.
+    ) -> ServiceCallPostProcessor | None:
+        """Prepare each light separately, then retain one original service call.
 
-        It is possible that the calls are made for multiple lights at once,
-        which in turn might be in different switches or no switches at all.
-        If there are lights that are not all in a single switch, we need to
-        make multiple calls to light.turn_on with the correct entity IDs.
-        One of these calls can be intercepted and adapted, the others need to
-        be adapted by calling _adapt_light with the correct entity IDs or
-        by calling light.turn_on directly.
-
-        We create a mapping from switch to entity IDs and keep a list
-        of skipped lights which are lights in no switches or in switches that
-        are off or lights that are already on.
-
-        If there is only one switch and 0 skipped lights, we just intercept the
-        call directly.
-
-        If there are multiple switches and skipped lights, we can adapt the call
-        for one of the switches to include only the lights in that switch and
-        need to call _adapt_light for the other switches with their
-        entity_ids. For skipped lights, we call light.turn_on directly with the
-        entity_ids and original service data.
-
-        If there are only skipped lights, we can use the intercepted call
-        directly.
+        Other lights keep their original parameters and receive their own native
+        color/brightness payload and optional split-command continuation.
         """
         is_skipped_hash = is_our_context(call.context, "skipped")
         _LOGGER.debug(
@@ -2558,7 +2676,10 @@ class CircadianProManager:
         # original service data, we need to make a copy of it to use in the skipped call
         service_data_copy = deepcopy(service_data)
 
-        entity_ids = self._get_entity_list(service_data)
+        entity_ids = await async_check_entity_control(
+            self.hass, call.context, self._get_entity_list(service_data),
+            filter_allowed=service_data.get(ATTR_ENTITY_ID) == "all",
+        )
         # Note: we do not expand light groups anywhere in this method, instead
         # we skip them and rely on the followup call that HA will make
         # with the expanded entity IDs.
@@ -2587,56 +2708,91 @@ class CircadianProManager:
             entity_ids: list[str],
         ) -> dict[str, Any]:
             """Modify the service data to contain the entity IDs."""
-            service_data.pop(ATTR_ENTITY_ID, None)
-            service_data.pop(ATTR_AREA_ID, None)
+            for target in (ATTR_ENTITY_ID, ATTR_AREA_ID, ATTR_DEVICE_ID, ATTR_FLOOR_ID, ATTR_LABEL_ID):
+                service_data.pop(target, None)
             service_data[ATTR_ENTITY_ID] = entity_ids
             return service_data
 
-        # Intercept the call for first switch and call _adapt_light for the rest
-        has_intercepted = False  # Can only intercept a turn_on call once
-        for switch, _entity_ids in switch_to_eids.items():
-            transition = service_data[CONF_PARAMS].get(
-                ATTR_TRANSITION,
-                switch.initial_transition,
-            )
-            if not has_intercepted:
-                _LOGGER.debug(
-                    "(3) _service_interceptor_turn_on_handler: intercepting entity_ids='%s'",
-                    _entity_ids,
-                )
-                await self._service_interceptor_turn_on_single_light_handler(
-                    entity_ids=_entity_ids,
-                    switch=switch,
-                    transition=transition,
-                    call=call,
-                    data=modify_service_data(service_data, _entity_ids),
-                )
-                has_intercepted = True
-                continue
+        targets = [(switch, eid) for switch, eids in switch_to_eids.items() for eid in eids]
+        if not targets:
+            return  # Keep the original call intact when interception is disabled.
 
-            for eid in _entity_ids:
-                # Must add a new context otherwise _adapt_light will bail out
-                context = switch.create_context("intercept")
+        planned = []
+        for index, (switch, eid) in enumerate(targets):
+            data = modify_service_data(deepcopy(service_data_copy), [eid])
+            context = call.context
+            individual_call = call
+            if index:
+                context = switch.create_context("intercept", parent=call.context)
+                context.user_id = call.context.user_id
+                individual_call = ServiceCall(
+                    self.hass, call.domain, call.service, data, context,
+                    return_response=call.return_response,
+                )
+            try:
+                adaptation_data = await self._service_interceptor_turn_on_single_light_handler(
+                    entity_ids=[eid], switch=switch,
+                    transition=service_data_copy[CONF_PARAMS].get(ATTR_TRANSITION, switch.initial_transition),
+                    call=individual_call, data=data,
+                )
+            except Exception:
+                # Preparation has not sent a command yet. Retain this light's
+                # original parameters without undoing other lights' plans.
+                _LOGGER.exception("Could not prepare intercepted light %s; keeping its original parameters", eid)
                 self.clear_proactively_adapting(eid)
-                self.set_proactively_adapting(context.id, eid)
-                _LOGGER.debug(
-                    "(4) _service_interceptor_turn_on_handler: calling _adapt_light with eid='%s', context='%s', transition='%s'",
-                    eid,
-                    context,
-                    transition,
+                self.reset(eid, reset_manual_control=False)
+                data = modify_service_data(deepcopy(service_data_copy), [eid])
+                adaptation_data = None
+            planned.append((switch, eid, context, data, adaptation_data))
+
+        def schedule_remainder(switch: CircadianProSwitch, data: AdaptationData | None) -> None:
+            if data is None or data.max_length <= 1:
+                return
+            data.initial_sleep = True
+            task = self.hass.async_create_task(switch.execute_cancellable_adaptation_calls(data))
+            self.adaptation_tasks.add(task)
+            task.add_done_callback(self.adaptation_tasks.discard)
+
+        def current_payload(
+            switch: CircadianProSwitch,
+            eid: str,
+            data: ServiceData,
+            adaptation_data: AdaptationData | None,
+        ) -> tuple[ServiceData, AdaptationData | None]:
+            if not switch.is_on or is_calibration_preview_active(self.hass, eid):
+                # Another service handler can yield to profile-off or preview.
+                # Honor the pending human action with its original parameters.
+                self.clear_proactively_adapting(eid)
+                self.reset(eid, reset_manual_control=False)
+                return modify_service_data(deepcopy(service_data_copy), [eid]), None
+            return data, adaptation_data
+
+        # Restrict the original handler before secondary calls: a later failure
+        # must never cause an already completed toggle to be sent a second time.
+        service_data.clear()
+        service_data.update(planned[0][3])
+        for switch, eid, context, data, adaptation_data in planned[1:]:
+            data, adaptation_data = current_payload(switch, eid, data, adaptation_data)
+            try:
+                await self.hass.services.async_call(
+                    LIGHT_DOMAIN, call.service,
+                    {ATTR_ENTITY_ID: [eid], **data[CONF_PARAMS]},
+                    blocking=True, context=context,
                 )
-                await switch._adapt_light(
-                    light=eid,
-                    context=context,
-                    transition=transition,
-                )
+            except Exception:
+                _LOGGER.exception("Could not execute intercepted light %s", eid)
+                self.clear_proactively_adapting(eid)
+                self.reset(eid, reset_manual_control=False)
+            else:
+                # Only start its continuation after its first service handler
+                # completed, even when the split delay and transition are zero.
+                schedule_remainder(switch, adaptation_data)
 
         # Call the original light service for skipped entities.
         if skipped:
-            if not has_intercepted:
-                assert set(skipped) == set(entity_ids)
-                return  # The call will be intercepted with the original data
-            context = self.create_context("skipped")
+            # This forwards a user's command unchanged. Keep it external so
+            # already-on lights still register the user's manual adjustments.
+            context = Context(user_id=call.context.user_id, parent_id=call.context.id)
             _LOGGER.debug(
                 "(5) _service_interceptor_turn_on_handler: calling light.%s with skipped='%s', service_data: '%s', context='%s'",
                 call.service,
@@ -2644,14 +2800,31 @@ class CircadianProManager:
                 service_data_copy,  # This is the original service data
                 context.id,
             )
-            service_data = {ATTR_ENTITY_ID: skipped, **service_data_copy[CONF_PARAMS]}
-            await self.hass.services.async_call(
-                LIGHT_DOMAIN,
-                call.service,
-                service_data,
-                blocking=True,
-                context=context,
-            )
+            try:
+                await self.hass.services.async_call(
+                    LIGHT_DOMAIN, call.service,
+                    {ATTR_ENTITY_ID: skipped, **service_data_copy[CONF_PARAMS]},
+                    blocking=True, context=context,
+                )
+            except Exception:
+                _LOGGER.exception("Could not execute original light parameters for %s", skipped)
+
+        # The proxy owns execution of the original handler. Its continuation
+        # must wait for that handler to finish, including slow device I/O.
+        switch, eid, _context, data, adaptation_data = planned[0]
+        data, adaptation_data = current_payload(switch, eid, data, adaptation_data)
+        service_data.clear()
+        service_data.update(data)
+        def after_original(success: bool) -> None:
+            if self.last_service_context.get(eid) != _context.id:
+                return  # A newer command or a turn-off has already taken over.
+            if not success:
+                self.clear_proactively_adapting(eid)
+                self.reset(eid, reset_manual_control=False)
+                return
+            schedule_remainder(switch, adaptation_data)
+
+        return after_original
 
     async def _service_interceptor_turn_on_single_light_handler(
         self,
@@ -2660,7 +2833,10 @@ class CircadianProManager:
         transition: float,
         call: ServiceCall,
         data: ServiceData,
-    ):
+    ) -> AdaptationData | None:
+        """Prepare exactly one light without scheduling its remaining calls."""
+        if len(entity_ids) != 1:
+            raise ValueError("An intercepted adaptation must target exactly one light")
         _LOGGER.debug(
             "Intercepted TURN_ON call with data %s (%s)",
             data,
@@ -2674,10 +2850,9 @@ class CircadianProManager:
         for eid in entity_ids:
             self.clear_proactively_adapting(eid)
 
-        adaptation_data = await switch.prepare_adaptation_data(
-            entity_ids[0],
-            transition,
-        )
+        context = switch.create_context("intercept", parent=call.context)
+        context.user_id = call.context.user_id
+        adaptation_data = await switch.prepare_adaptation_data(entity_ids[0], transition, context=context)
         if adaptation_data is None:
             return
 
@@ -2696,24 +2871,26 @@ class CircadianProManager:
         # into its original service call structure which cannot be reliably done due to the
         # lack of a bijective mapping.)
         preprocess_turn_on_alternatives(self.hass, first_service_data)
+        if any(attribute in first_service_data for attribute in COLOR_ATTRS):
+            for attribute in COLOR_ATTRS:
+                data[CONF_PARAMS].pop(attribute, None)
+        if ATTR_BRIGHTNESS in first_service_data:
+            # Relative steps otherwise overwrite the adapted absolute target
+            # later in HA's per-entity preprocessing, invalidating its baseline.
+            for attribute in BRIGHTNESS_ATTRS:
+                data[CONF_PARAMS].pop(attribute, None)
         data[CONF_PARAMS].update(first_service_data)
 
-        # Schedule additional service calls for the remaining adaptation data.
-        # We cannot know here whether there is another call to follow (since the
-        # state can change until the next call), so we just schedule it and let
-        # it sort out by itself.
-        for entity_id in entity_ids:
-            self.set_proactively_adapting(call.context.id, entity_id)
-            self.set_proactively_adapting(adaptation_data.context.id, entity_id)
-        adaptation_data.initial_sleep = True
+        entity_id = entity_ids[0]
+        self.last_service_data[entity_id] = {ATTR_ENTITY_ID: entity_id, **deepcopy(data[CONF_PARAMS])}
+        self.last_service_context[entity_id] = call.context.id
+        self.last_service_acknowledgements.pop(entity_id, None)
 
-        # Don't await to avoid blocking the service call.
-        # Assign to a variable only to await in tests.
-        task = self.hass.async_create_task(
-            switch.execute_cancellable_adaptation_calls(adaptation_data),
-        )
-        self.adaptation_tasks.add(task)
-        task.add_done_callback(self.adaptation_tasks.discard)
+        # Associate both contexts with this light before its first handler can
+        # report state. The caller owns this light's independent continuation.
+        self.set_proactively_adapting(call.context.id, entity_id)
+        self.set_proactively_adapting(adaptation_data.context.id, entity_id)
+        return adaptation_data
 
     def _handle_timer(
         self,
@@ -2954,30 +3131,16 @@ class CircadianProManager:
             self.cancel_ongoing_adaptation_calls(light)
 
     def _get_entity_list(self, service_data: ServiceData) -> list[str]:
-        if ATTR_ENTITY_ID in service_data:
-            return cv.ensure_list_csv(service_data[ATTR_ENTITY_ID])
-        if ATTR_AREA_ID in service_data:
-            entity_ids: list[str] = []
-            area_ids: list[str] = cv.ensure_list_csv(service_data[ATTR_AREA_ID])
-            for area_id in area_ids:
-                area_entity_ids = area_entities(self.hass, area_id)
-                eids = [
-                    entity_id
-                    for entity_id in area_entity_ids
-                    if entity_id.startswith(LIGHT_DOMAIN)
-                ]
-                entity_ids.extend(eids)
-                _LOGGER.debug(
-                    "Found entity_ids '%s' for area_id '%s'",
-                    entity_ids,
-                    area_id,
-                )
-            return entity_ids
-        _LOGGER.debug(
-            "No entity_ids or area_ids found in service_data: %s",
-            service_data,
+        """Use HA's target resolution so areas/devices/floors/labels can be combined."""
+        if service_data.get(ATTR_ENTITY_ID) == "all":
+            return sorted(self.hass.states.async_entity_ids(LIGHT_DOMAIN))
+        referenced = target_helpers.async_extract_referenced_entity_ids(
+            self.hass, target_helpers.TargetSelection(service_data), expand_group=False,
         )
-        return []
+        return sorted(
+            entity_id for entity_id in referenced.referenced | referenced.indirectly_referenced
+            if entity_id.startswith(f"{LIGHT_DOMAIN}.")
+        )
 
     async def turn_on_off_event_listener(self, event: Event) -> None:
         """Track 'light.turn_off' and 'light.turn_on' service calls."""
@@ -2986,10 +3149,21 @@ class CircadianProManager:
             return
 
         service = event.data[ATTR_SERVICE]
+        if service not in (SERVICE_TURN_ON, SERVICE_TURN_OFF, SERVICE_TOGGLE):
+            return
         service_data = event.data[ATTR_SERVICE_DATA]
-        entity_ids = self._get_entity_list(service_data)
-
-        if not any(eid in self.lights for eid in entity_ids):
+        try:
+            permitted = await async_check_entity_control(
+                self.hass, event.context, self._get_entity_list(service_data),
+                filter_allowed=service_data.get(ATTR_ENTITY_ID) == "all",
+            )
+        except (Unauthorized, UnknownUser):
+            return  # HA has not checked access yet when this event is fired.
+        entity_ids = [
+            eid for eid in permitted
+            if eid in self.lights and not is_calibration_preview_context(self.hass, eid, event.context)
+        ]
+        if not entity_ids:
             return
 
         def off(eid: str, event: Event) -> None:
@@ -3029,7 +3203,7 @@ class CircadianProManager:
                 timer.start()
 
         if service == SERVICE_TURN_OFF:
-            transition = service_data.get(ATTR_TRANSITION)
+            transition = _service_parameters(service_data).get(ATTR_TRANSITION)
             _LOGGER.debug(
                 "Detected an 'light.turn_off('%s', transition=%s)' event with context.id='%s'",
                 entity_ids,
@@ -3056,7 +3230,8 @@ class CircadianProManager:
             )
             for eid in entity_ids:
                 state = self.hass.states.get(eid)
-                assert state
+                if state is None:
+                    continue
                 self.toggle_event[eid] = event
                 if state.state == STATE_ON:  # is turning off
                     off(eid, event)
@@ -3070,6 +3245,10 @@ class CircadianProManager:
         """Track 'state_changed' events."""
         entity_id = event.data.get(ATTR_ENTITY_ID, "")
         if entity_id not in self.lights:
+            return
+        if is_calibration_preview_context(self.hass, entity_id, event.context):
+            # Preview has its own snapshots and restoration listener. Normal
+            # off/on resets would cancel its split task or clear manual flags.
             return
 
         old_state = event.data.get("old_state")
@@ -3104,7 +3283,7 @@ class CircadianProManager:
             # event leads to an instant state change of
             # new_state=dict(brightness=100, ...). However, after polling the light
             # could still only be new_state=dict(brightness=50, ...).
-            # We save all events because the first event change might indicate at what
+            # Keep the first and recent own reports because the first event might indicate at what
             # settings the light will be later *or* the second event might indicate a
             # final state. The latter case happens for example when a light was
             # called with a color_temp outside of its range (and HA reports the
@@ -3113,7 +3292,7 @@ class CircadianProManager:
             last_state: list[State] | None = self.our_last_state_on_change.get(
                 entity_id,
             )
-            if is_our_context(new_on.context):
+            if is_our_context(new_on.context) or self.is_proactively_adapting(new_on.context.id, entity_id):
                 if (
                     last_state is not None
                     and last_state[0].context.id == new_on.context.id
@@ -3126,6 +3305,8 @@ class CircadianProManager:
                         new_on.context.id,
                     )
                     self.our_last_state_on_change[entity_id].append(new_on)
+                    if len(last_state) > MAX_STATE_HISTORY:
+                        del last_state[1:-MAX_STATE_HISTORY + 1]
                 else:
                     _LOGGER.debug(
                         "CircadianProManager: New adapt '%s' found for %s",
@@ -3134,8 +3315,8 @@ class CircadianProManager:
                     )
                     self.our_last_state_on_change[entity_id] = [new_on]
                     self.start_transition_timer(entity_id)
-            elif last_state is not None:
-                self.our_last_state_on_change[entity_id].append(new_on)
+            # External updates are compared with last_service_data/current state;
+            # retaining them here would grow forever while manual control is paused.
 
         if old_on and new_off:
             # Tracks 'on' → 'off' state changes
@@ -3155,7 +3336,7 @@ class CircadianProManager:
                 event.context.id,
             )
 
-            if self.is_proactively_adapting(event.context.id):
+            if self.is_proactively_adapting(event.context.id, entity_id):
                 _LOGGER.debug(
                     "Skipping responding to 'off' → 'on' event for '%s' with context.id='%s' because"
                     " we are already proactively adapting",
@@ -3191,14 +3372,18 @@ class CircadianProManager:
         force: bool,
     ) -> None:
         """Check if the light has been manually controlled by the latest turn on event."""
-        if not switch._take_over_control:
+        if not switch._take_over_control or not is_on(self.hass, light):
+            # call_service listeners run eagerly, before the light turns on.
+            # An explicit initial brightness/color is only a manual takeover
+            # when the user enabled adapt_only_on_bare_turn_on; the initial
+            # adaptation routes enforce that option separately.
             return
 
         turn_on_event = self.turn_on_event.get(light)
 
         if (
             turn_on_event is None
-            or self.is_proactively_adapting(turn_on_event.context.id)
+            or self.is_proactively_adapting(turn_on_event.context.id, light)
             or is_our_context(turn_on_event.context)
             or force
         ):
@@ -3284,7 +3469,8 @@ class CircadianProManager:
         # can happen e.g. using zigbee2mqtt with 'report: false' in device settings.
         await async_update_entity(self.hass, light)
         refreshed_state = self.hass.states.get(light)
-        assert refreshed_state is not None
+        if refreshed_state is None or refreshed_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return LightControlAttributes.NONE
 
         rgbww = last_service_data.get(ATTR_RGBWW_COLOR)
         if (
@@ -3318,7 +3504,9 @@ class CircadianProManager:
             else:
                 acknowledgement = self.last_service_acknowledgements.get(light)
             if acknowledgement is not None and acknowledgement[0] == requested_values:
-                last_service_data = acknowledgement[1].attributes
+                last_service_data = dict(acknowledgement[1].attributes)
+                if ATTR_BRIGHTNESS in requested_values:
+                    last_service_data[ATTR_BRIGHTNESS] = requested_values[ATTR_BRIGHTNESS]
             else:
                 # Color is inconclusive until the changed command is confirmed.
                 # Brightness remains observable and must not be hidden with it.
@@ -3422,7 +3610,7 @@ class CircadianProManager:
 
         turn_off_event = self.turn_off_event.get(entity_id)
         if turn_off_event is not None:
-            transition = turn_off_event.data[ATTR_SERVICE_DATA].get(ATTR_TRANSITION)
+            transition = _service_parameters(turn_off_event.data[ATTR_SERVICE_DATA]).get(ATTR_TRANSITION)
         else:
             transition = None
 

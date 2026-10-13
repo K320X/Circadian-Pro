@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Choose a name",
-        "description": "Create a Circadian Pro profile. Select its lights in the next step.",
+        "description": "Create a Circadian Pro profile. Then choose its lights from the Circadian Pro panel or integration options.",
         "data": {
           "name": "Name"
         }
@@ -19,7 +19,8 @@
     },
     "error": {
       "unique_name": "A profile with this name already exists or is being created. Choose another name.",
-      "name_required": "Enter a name for this profile."
+      "name_required": "Enter a name for this profile.",
+      "profile_missing": "The selected profile no longer exists. Choose another profile or create a new one."
     },
     "abort": {
       "already_configured": "A profile with this name already exists."
@@ -164,7 +165,42 @@
       "invalid_sunrise_bounds": "Earliest sunrise cannot be later than latest sunrise.",
       "invalid_sunset_bounds": "Earliest sunset cannot be later than latest sunset.",
       "invalid_white_channel_range": "The warm white WW temperature must be lower than the cold white CW temperature.",
-      "invalid_white_neutral_range": "The white mixture temperature must be between the physical warm white WW and cold white CW temperatures."
+      "invalid_white_neutral_range": "The white mixture temperature must be between the physical warm white WW and cold white CW temperatures.",
+      "invalid_sleep_schedule": "Set both a valid start and end time for the automatic sleep schedule.",
+      "invalid_solar_times": "Fixed sunrise and sunset must occur at different times after applying their offsets."
+    },
+    "abort": {
+      "yaml_configuration": "This profile is configured in YAML. Edit its settings in your YAML configuration."
+    }
+  },
+  "selector": {
+    "sleep_rgb_or_color_temp": {
+      "options": {
+        "rgb_color": "Define with RGB",
+        "color_temp": "Define with color temperature"
+      }
+    },
+    "sleep_activation_mode": {
+      "options": {
+        "disabled": "Disabled",
+        "sun": "By sunrise and sunset",
+        "schedule": "By schedule"
+      }
+    },
+    "brightness_mode": {
+      "options": {
+        "default": "Natural",
+        "linear": "Linear",
+        "tanh": "Sigmoid"
+      }
+    },
+    "manual_control": {
+      "options": {
+        "true": "Pause brightness and color",
+        "false": "Resume adaptation",
+        "brightness": "Pause brightness only",
+        "color": "Pause color only"
+      }
     }
   }
 }
