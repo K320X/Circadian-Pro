@@ -13,7 +13,7 @@ const GENERAL_GROUPS = [
   { id: "limits", rows: [["min_brightness", "max_brightness"], ["min_color_temp", "max_color_temp"],
     ["brightness_mode"], ["brightness_mode_time_light", "brightness_mode_time_dark"]] },
   { id: "night", rows: [["sleep_activation_mode"], ["sleep_schedule_start", "sleep_schedule_end"],
-    ["sleep_brightness", "sleep_transition"], ["sleep_rgb_or_color_temp"], ["sleep_color_temp", "sleep_rgb_color"]] },
+    ["sleep_brightness", "sleep_transition"], ["sleep_rgb_or_color_temp", "sleep_color_temp", "sleep_rgb_color"]] },
   { id: "solar", rows: [["sunrise_time", "sunrise_offset"], ["min_sunrise_time", "max_sunrise_time"],
     ["sunset_time", "sunset_offset"], ["min_sunset_time", "max_sunset_time"]] },
   { id: "manual", rows: [["take_over_control"], ["detect_non_ha_changes"], ["autoreset_control_seconds"]] },
@@ -606,6 +606,38 @@ function generalSettings(fields, renderField, titles) {
       const available = names.filter((name) => remaining.has(name));
       if (!available.length) continue;
       const row = element("div", undefined, available.length > 1 ? "settings-row paired" : "settings-row");
+      if (available.length === 3 && available[0] === "sleep_rgb_or_color_temp") {
+        const fields = new Map(available.map((name) => [name, remaining.get(name)]));
+        let activeMode;
+        let activeField;
+        const choice = renderField(fields.get("sleep_rgb_or_color_temp"), (input) => {
+          // HA validates both saved colors. Never hide an invalid draft where
+          // the user cannot repair it before continuing to the next step.
+          if (activeField && !activeField.querySelector("input").reportValidity()) {
+            input.value = activeMode;
+            return false;
+          }
+          return true;
+        });
+        const selector = choice.querySelector("select");
+        row.append(choice);
+        const update = () => {
+          if (selector.value === activeMode) return;
+          // field() captures the outgoing value before this listener runs.
+          // Only the chosen control is mounted; readValues retains both drafts.
+          const name = selector.value === "rgb_color" ? "sleep_rgb_color" : "sleep_color_temp";
+          activeMode = selector.value;
+          const nextField = renderField(fields.get(name));
+          if (activeField) row.replaceChild(nextField, activeField);
+          else row.append(nextField);
+          activeField = nextField;
+        };
+        selector.addEventListener("input", update);
+        update();
+        for (const name of available) remaining.delete(name);
+        section.append(row);
+        continue;
+      }
       for (const name of available) {
         row.append(renderField(remaining.get(name)));
         remaining.delete(name);
@@ -659,7 +691,7 @@ function entityPicker(options, selected, labelId, copy, required) {
   selection.id = labelId + "-selection";
   selection.setAttribute("aria-live", "polite");
   summary.setAttribute("aria-labelledby", `${labelId} ${selection.id}`);
-  const caret = element("span", "⌄", "entity-caret");
+  const caret = element("span", undefined, "entity-caret");
   caret.setAttribute("aria-hidden", "true");
   summary.append(selection, caret);
   const list = element("div", undefined, "entity-choices");
@@ -1033,7 +1065,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     if (!this.initialized && !this.flow) this.initialize();
   }
 
-  field(field) {
+  field(field, beforeChange) {
     const name = field.name;
     const step = this.flow.current.step_id;
     const text = this.translations.step?.[step] || {};
@@ -1087,6 +1119,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     if (input.type === "checkbox") wrapper.className += " checkbox-field";
     input.required = Boolean(field.required) || input.type === "number";
     const changed = () => {
+      if (beforeChange && !beforeChange(input)) return;
       this.values = this.readValues(false);
       Object.assign(this.settings, this.values);
       this.session.refresh();
@@ -1171,8 +1204,9 @@ export class CircadianCalibrationPanel extends HTMLElement {
       header strong { font-size:19px; } main { height:calc(100% - 64px); overflow:auto; padding:28px 20px; }
       article { max-width:850px; margin:auto; padding:28px; border:1px solid var(--divider-color,#ddd); border-radius:14px; background:var(--card-background-color,#fff); container-type:inline-size; }
       h1 { margin:0 0 12px; font-size:24px; } p { line-height:1.55; white-space:pre-line; } .muted,small { color:var(--secondary-text-color,#606770); }
-      form { display:grid; gap:22px; margin-top:24px; min-width:0; } .field { display:grid; gap:8px; min-width:0; align-content:start; } .label { font-weight:600; } small { line-height:1.45; }
-      .settings-group { min-width:0; margin:0; padding:20px; border:1px solid var(--divider-color,#ddd); border-radius:12px; }
+      form { display:grid; gap:22px; margin-top:24px; min-width:0; } .field { display:grid; gap:8px; min-width:0; align-content:start; } .label { font-weight:600; } small { line-height:1.55; }
+      .field small { white-space:pre-line; }
+      .settings-group { min-width:0; margin:0; padding:20px; border:1px solid var(--divider-color,#ddd); border-radius:12px; background:var(--secondary-background-color,#f1f4f7); background:color-mix(in srgb,var(--card-background-color,#fff) 94%,var(--primary-text-color,#202124)); }
       .settings-group legend { max-width:100%; padding:0 8px; font-size:16px; font-weight:650; }
       .settings-row { display:grid; gap:8px 24px; min-width:0; } .settings-row + .settings-row { margin-top:22px; }
       .settings-row.paired { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -1202,7 +1236,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .entity-picker summary { display:flex; align-items:center; gap:12px; min-height:42px; padding:8px 12px; cursor:pointer; list-style:none; }
       .entity-picker summary::-webkit-details-marker { display:none; } .entity-picker summary:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; border-radius:8px; }
       .entity-selection { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; flex:1; } .entity-chip { max-width:100%; padding:4px 9px; border-radius:6px; background:var(--secondary-background-color,#f1f4f7); overflow-wrap:anywhere; }
-      .entity-caret { font-size:20px; line-height:1; color:var(--secondary-text-color,#606770); } .entity-picker[open] .entity-caret { transform:rotate(180deg); }
+      .entity-caret { flex-shrink:0; width:8px; height:8px; margin:-4px 3px 0; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:rotate(45deg); } .entity-picker[open] .entity-caret { margin-top:4px; transform:rotate(225deg); }
       .entity-choices { max-height:240px; overflow:auto; padding:6px; border-top:1px solid var(--divider-color,#ddd); }
       .entity-choice { display:flex; align-items:center; gap:12px; padding:10px; border-radius:6px; cursor:pointer; } .entity-choice:hover { background:var(--secondary-background-color,#f1f4f7); } .entity-choice input { flex-shrink:0; }
       .entity-choice-text { display:grid; gap:3px; min-width:0; overflow-wrap:anywhere; } .entity-choice small { font-size:12px; }
@@ -1214,10 +1248,11 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .profile-table thead th { padding:0 12px 12px; color:var(--secondary-text-color,#606770); font-size:13px; }
       .profile-table thead th:last-child { width:72px; } .profile-table tbody th { padding:16px 12px; overflow-wrap:anywhere; }
       .profile-table td { padding:10px 0 10px 12px; text-align:right; } .profile-table tbody tr { border-top:1px solid var(--divider-color,#ddd); }
-      .profile-settings { width:44px; height:44px; display:inline-flex; align-items:center; justify-content:center; padding:9px; }
+      .profile-settings { width:44px; height:44px; display:inline-flex; align-items:center; justify-content:center; padding:9px; border-color:var(--secondary-text-color,#606770); border-color:color-mix(in srgb,var(--secondary-text-color,#606770) 65%,var(--card-background-color,#fff)); }
+      .profile-settings:hover { border-color:var(--primary-color,#0077ab); background:var(--secondary-background-color,#f1f4f7); }
       .tune-icon { display:grid; grid-template-columns:repeat(3,1.5px); justify-content:space-between; width:24px; height:24px; padding:2px 3.25px; }
       .tune-icon span { position:relative; border-radius:1px; background:currentColor; }
-      .tune-icon span::after { content:""; position:absolute; left:50%; transform:translateX(-50%); top:4px; width:6px; height:3px; border:1px solid currentColor; border-radius:1px; background:var(--card-background-color,#fff); }
+      .tune-icon span::after { content:""; position:absolute; left:50%; transform:translateX(-50%); top:4px; width:6px; height:2px; border-radius:1px; background:currentColor; }
       .tune-icon span:nth-child(2)::after { top:13px; } .tune-icon span:nth-child(3)::after { top:8px; }
       .profile-settings:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; }
       .profile-create { display:flex; justify-content:center; margin-top:28px; } .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
@@ -1296,7 +1331,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       const form = element("form");
       form.addEventListener("submit", (event) => { event.preventDefault(); this.navigate(); });
       const fields = step.data_schema || [];
-      if (step.step_id === "init") form.append(...generalSettings(fields, (field) => this.field(field), this.copy.groups));
+      if (step.step_id === "init") form.append(...generalSettings(fields, (field, beforeChange) => this.field(field, beforeChange), this.copy.groups));
       else for (const field of fields) form.append(this.field(field));
       article.append(form);
       const errors = Object.entries(step.errors || {}).map(([key, value]) => {

@@ -26,10 +26,17 @@ class Node {
   }
   set value(value) { this._value = String(value); }
   get value() { return this._value; }
+  set innerHTML(value) { this.children = []; }
   get valueAsNumber() { return this.value === "" ? NaN : Number(this.value); }
   append(...children) { this.children.push(...children); }
   prepend(...children) { this.children.unshift(...children); }
   replaceChildren(...children) { this.children = children; }
+  replaceChild(child, previous) {
+    const index = this.children.indexOf(previous);
+    if (index < 0) throw new Error("The replaced node is not a child");
+    this.children[index] = child;
+    return previous;
+  }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] ?? null; }
   removeAttribute(name) { delete this.attributes[name]; }
@@ -57,7 +64,11 @@ class Node {
     return !this.step || this.step === "any" || Number.isInteger((value - Number(this.min || 0)) / Number(this.step));
   }
   get validity() { return { valid: this.checkValidity() }; }
-  reportValidity() { return this.tag === "form" ? this.querySelectorAll("input").every((input) => input.checkValidity()) : this.checkValidity(); }
+  reportValidity() {
+    this.validityReports = (this.validityReports || 0) + 1;
+    return this.tag === "form" ? this.querySelectorAll("input").every((input) => input.checkValidity()) : this.checkValidity();
+  }
+  scrollTo() {}
 }
 
 function installDocument(t) {
@@ -182,6 +193,140 @@ test("general settings keep their existing number controls", (t) => {
   const { number, range } = harness.add("interval", 60, 1, 3600);
   assert.equal(range, undefined);
   assert.equal(number.value, "60");
+});
+
+function nightSettingsHarness(t, mode = "rgb_color", omitted = []) {
+  const harness = panelHarness(t, "init");
+  const { panel } = harness;
+  const defaults = { sleep_rgb_or_color_temp: mode, sleep_color_temp: 2200, sleep_rgb_color: [255, 56, 0] };
+  const fields = [
+    { name: "sleep_rgb_or_color_temp", selector: { select: { options: ["rgb_color", "color_temp"] } } },
+    { name: "sleep_color_temp", selector: { number: { min: 1000, max: 10000, step: 1 } } },
+    { name: "sleep_rgb_color", selector: { color_rgb: {} } },
+  ].filter((field) => !omitted.includes(field.name)).map((field) => ({ ...field, default: defaults[field.name] }));
+  panel.flow = { current: { type: "form", step_id: "init", data_schema: fields }, index: 0, drafts: {} };
+  Object.assign(panel, { totalSteps: 4, entry: { title: "Office" }, error: "", initialized: true });
+  Object.assign(panel.copy, { next: "Next", back: "Back", groups: { night: "Sleep mode", other: "Other settings" } });
+  panel.field = CircadianCalibrationPanel.prototype.field.bind(panel);
+  panel.render = CircadianCalibrationPanel.prototype.render.bind(panel);
+  panel.showStep = CircadianCalibrationPanel.prototype.showStep.bind(panel);
+  panel.navigate = CircadianCalibrationPanel.prototype.navigate.bind(panel);
+  panel.action = async (callback) => { await callback(); panel.render(); };
+  panel.updateControls = () => {};
+  panel.showStep(panel.flow.current);
+  panel.render();
+  const input = (name) => panel.shadowRoot.querySelectorAll("[data-field]").find((node) => node.dataset.field === name);
+  const edit = (name, value) => {
+    const control = input(name);
+    assert.ok(control, `${name} must be editable`);
+    control.value = value;
+    control.dispatchEvent(new Event("input"));
+    return control;
+  };
+  return { ...harness, fields, input, edit };
+}
+
+test("sleep color initially exposes only the selected color control while retaining both saved values", async (t) => {
+  for (const mode of ["rgb_color", "color_temp"]) {
+    await t.test(mode, (t) => {
+      const { panel, input } = nightSettingsHarness(t, mode);
+      const active = mode === "rgb_color" ? "sleep_rgb_color" : "sleep_color_temp";
+      const inactive = mode === "rgb_color" ? "sleep_color_temp" : "sleep_rgb_color";
+      assert.equal(input("sleep_rgb_or_color_temp").value, mode);
+      assert.ok(input(active));
+      assert.equal(input(inactive), undefined);
+      assert.deepEqual(panel.readValues(), {
+        sleep_rgb_or_color_temp: mode, sleep_color_temp: 2200, sleep_rgb_color: [255, 56, 0],
+      });
+    });
+  }
+});
+
+test("switching sleep color modes captures the outgoing edit and restores both independent drafts", (t) => {
+  const { panel, input, edit } = nightSettingsHarness(t, "color_temp");
+  // Leave the value in the DOM without a prior input event: changing mode must
+  // capture that outgoing control before replacing it.
+  input("sleep_color_temp").value = "3123";
+  edit("sleep_rgb_or_color_temp", "rgb_color");
+  assert.equal(input("sleep_color_temp"), undefined);
+  assert.equal(panel.values.sleep_color_temp, 3123);
+  edit("sleep_rgb_color", "#d13f08");
+  edit("sleep_rgb_or_color_temp", "color_temp");
+  assert.equal(input("sleep_color_temp").value, "3123");
+  assert.equal(input("sleep_rgb_color"), undefined);
+  edit("sleep_rgb_or_color_temp", "rgb_color");
+  assert.equal(input("sleep_rgb_color").value, "#d13f08");
+  assert.deepEqual(panel.readValues(), {
+    sleep_rgb_or_color_temp: "rgb_color", sleep_color_temp: 3123, sleep_rgb_color: [209, 63, 8],
+  });
+});
+
+test("invalid sleep Kelvin stays visible when changing modes and can be corrected before continuing", async (t) => {
+  for (const value of ["", "999", "10001", "2200.5"]) {
+    await t.test(value || "empty", (t) => {
+      const { panel, input, edit } = nightSettingsHarness(t, "color_temp");
+      const kelvin = edit("sleep_color_temp", value);
+      edit("sleep_rgb_or_color_temp", "rgb_color");
+      assert.equal(input("sleep_rgb_or_color_temp").value, "color_temp");
+      assert.equal(panel.values.sleep_rgb_or_color_temp, "color_temp");
+      assert.equal(panel.settings.sleep_rgb_or_color_temp, "color_temp");
+      assert.equal(input("sleep_color_temp"), kelvin);
+      assert.equal(kelvin.value, value);
+      assert.equal(input("sleep_rgb_color"), undefined);
+      assert.ok(kelvin.validityReports > 0, "the invalid visible field should explain why the switch was refused");
+      assert.throws(() => panel.readValues(), /Invalid value/);
+      edit("sleep_color_temp", "2700");
+      edit("sleep_rgb_or_color_temp", "rgb_color");
+      assert.ok(input("sleep_rgb_color"));
+      assert.equal(input("sleep_color_temp"), undefined);
+      assert.equal(panel.readValues().sleep_color_temp, 2700);
+    });
+  }
+});
+
+test("sleep color drafts are submitted together and restored when navigating back", async (t) => {
+  const harness = nightSettingsHarness(t, "color_temp");
+  const { panel, fields, input, edit } = harness;
+  const path = "config/config_entries/options/flow";
+  const submitted = [];
+  let sequence = 0;
+  const callApi = async (method, url, data) => {
+    if (method === "DELETE") return {};
+    if (url === path) return { type: "form", flow_id: `night-${++sequence}`, step_id: "init", data_schema: fields };
+    submitted.push(structuredClone(data));
+    return { type: "form", flow_id: `night-${sequence}`, step_id: "cal_neutral", data_schema: [] };
+  };
+  const flow = new CalibrationFlow(callApi, { async setEnabled() {} }, "office");
+  panel.flow = flow;
+  panel.showStep(await flow.start());
+  panel.render();
+  edit("sleep_color_temp", "2900");
+  edit("sleep_rgb_or_color_temp", "rgb_color");
+  edit("sleep_rgb_color", "#c83504");
+  await panel.navigate();
+  assert.deepEqual(submitted, [{
+    sleep_rgb_or_color_temp: "rgb_color", sleep_color_temp: 2900, sleep_rgb_color: [200, 53, 4],
+  }]);
+  assert.equal(flow.current.step_id, "cal_neutral");
+  await panel.navigate(true);
+  assert.equal(flow.current.step_id, "init");
+  assert.equal(input("sleep_rgb_or_color_temp").value, "rgb_color");
+  assert.equal(input("sleep_rgb_color").value, "#c83504");
+  edit("sleep_rgb_or_color_temp", "color_temp");
+  assert.equal(input("sleep_color_temp").value, "2900");
+  assert.equal(submitted.length, 1, "Back must not submit or save another settings change");
+});
+
+test("partial sleep schemas keep every available setting editable", async (t) => {
+  for (const omitted of ["sleep_rgb_or_color_temp", "sleep_color_temp", "sleep_rgb_color"]) {
+    await t.test(`without ${omitted}`, (t) => {
+      const { panel, fields, input } = nightSettingsHarness(t, "rgb_color", [omitted]);
+      const available = fields.map((field) => field.name).sort();
+      assert.deepEqual(panel.shadowRoot.querySelectorAll("[data-field]").map((node) => node.dataset.field).sort(), available);
+      assert.equal(input(omitted), undefined);
+      assert.deepEqual(Object.keys(panel.readValues()).sort(), available);
+    });
+  }
 });
 
 test("sliders stay discreet by default and active preview coalesces slider and number edits", async (t) => {

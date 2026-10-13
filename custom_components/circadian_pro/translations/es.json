@@ -67,14 +67,14 @@
           "sleep_schedule_start": "Inicio horario modo noche",
           "sleep_schedule_end": "Fin horario modo noche",
           "brightness_mode": "Modo de brillo",
-          "brightness_mode_time_light": "Tiempo transición brillo (luz) (s)",
-          "brightness_mode_time_dark": "Tiempo transición brillo (oscuro) (s)",
+          "brightness_mode_time_light": "Transición de brillo: tramo diurno (s)",
+          "brightness_mode_time_dark": "Transición de brillo: tramo nocturno (s)",
           "sleep_activation_mode": "Activación automática del modo noche"
         },
         "data_description": {
-          "lights": "Lista de luces que controlará esta instancia (puede estar vacía).",
+          "lights": "Luces que controlará este perfil. Puedes dejar la lista vacía.",
           "interval": "Frecuencia con la que se recalculan y aplican ajustes.",
-          "transition": "Duración de la transición cuando las luces se adaptan y también al activar/desactivar el modo noche.",
+          "transition": "Duración de las transiciones durante la adaptación habitual. El modo noche tiene su propio ajuste de transición.",
           "initial_transition": "Duración de la primera transición al pasar de apagado a encendido.",
           "min_brightness": "Brillo mínimo permitido.",
           "max_brightness": "Brillo máximo permitido.",
@@ -85,11 +85,11 @@
           "sleep_color_temp": "Temperatura de color en modo noche (si eliges “temperatura de color”).",
           "sleep_rgb_color": "Color RGB en modo noche (si eliges “RGB”). En este modo el canal W se fuerza a 0.",
           "sleep_transition": "Duración de la transición al activar/desactivar modo noche.",
-          "sleep_schedule_start": "Hora de inicio de la franja del modo noche. Solo se usa si “Activación automática del modo noche” está en “Por franja horaria”. Formato HH:MM:SS. Ejemplo: 23:00:00.",
-          "sleep_schedule_end": "Hora de fin de la franja del modo noche. Solo se usa si “Activación automática del modo noche” está en “Por franja horaria”. Si el fin es menor que el inicio, se asume que cruza medianoche. Ejemplo: inicio 23:00:00 y fin 05:00:00.",
+          "sleep_schedule_start": "Inicio de la franja automática. Solo se usa con «Por franja horaria».\nFormato HH:MM:SS; por ejemplo, 23:00:00.",
+          "sleep_schedule_end": "Fin de la franja automática. Solo se usa con «Por franja horaria».\nPuede cruzar medianoche; por ejemplo, de 23:00:00 a 05:00:00.",
           "take_over_control": "Si está activo, detiene adaptaciones cuando detecta un ajuste manual.",
           "detect_non_ha_changes": "Si está activo, detecta cambios de estado que no provienen de Home Assistant. Requiere “Ceder control ante cambios manuales” para funcionar.",
-          "autoreset_control_seconds": "Tiempo en segundos para devolver el control a Circadian Pro tras un ajuste manual. 0 desactiva.",
+          "autoreset_control_seconds": "Tiempo para devolver el control a Circadian Pro tras un ajuste manual. Usa 0 para desactivar la recuperación automática.",
           "only_once": "Si está activo, adapta las luces solo al encenderse. Si está desactivado, las mantiene adaptadas de forma continua.",
           "separate_turn_on_commands": "Usa llamadas separadas a light.turn_on para color y brillo. Útil para ciertas luces que no soportan ambos a la vez.",
           "send_split_delay": "Retraso (ms) entre los comandos separados cuando “Separar comandos turn_on” está activo.",
@@ -99,16 +99,16 @@
           "multi_light_intercept": "Si “Interceptar light.turn_on” está activo, también intercepta llamadas que apuntan a varias luces, pudiendo dividir una llamada en varias.",
           "sunrise_offset": "Ajusta la hora del amanecer sumando o restando segundos. Valores positivos lo retrasan y valores negativos lo adelantan.",
           "sunset_offset": "Ajusta la hora del atardecer sumando o restando segundos. Valores positivos lo retrasan y valores negativos lo adelantan.",
-          "sunrise_time": "Fuerza una hora de amanecer constante cada día en lugar de usar la hora real calculada por el sol de Home Assistant y si está en None se usa el amanecer real según tu ubicación y la fecha.",
-          "min_sunrise_time": "Pone un límite para que el amanecer virtual no ocurra antes de esa hora aunque el amanecer real sea antes y si está en None no se aplica ningún límite.",
-          "max_sunrise_time": "Pone un límite para que el amanecer virtual no ocurra después de esa hora aunque el amanecer real sea después y si está en None no se aplica ningún límite.",
-          "sunset_time": "Fuerza una hora de atardecer constante cada día en lugar de usar la hora real calculada por el sol de Home Assistant y si está en None se usa el atardecer real según tu ubicación y la fecha.",
-          "min_sunset_time": "Pone un límite para que el atardecer virtual no ocurra antes de esa hora aunque el atardecer real sea antes y si está en None no se aplica ningún límite.",
-          "max_sunset_time": "Pone un límite para que el atardecer virtual no ocurra después de esa hora aunque el atardecer real sea después y si está en None no se aplica ningún límite.",
-          "brightness_mode": "Natural: Transición gradual y distribuida en ventana larga pre y post-evento solar\nLineal: Transición uniforme y distribuida linealmente en ventana fija alrededor del evento solar\nSigmoide: Transición rápida y concentrada en ventana corta alrededor del evento solar",
-          "brightness_mode_time_dark": "Define cuántos segundos dura la transición de brillo hacia el modo de noche alrededor del atardecer cuanto más alto más suave y lento será el cambio y solo se aplica si brightness_mode está en linear o tanh porque con default se ignora o casi no tiene efecto.",
-          "brightness_mode_time_light": "Define cuántos segundos dura la transición de brillo hacia el modo de día alrededor del amanecer cuanto más alto más suave y lento será el cambio y solo se aplica si brightness_mode está en linear o tanh porque con default se ignora o casi no tiene efecto.",
-          "sleep_activation_mode": "Define cuándo se activa automáticamente el modo noche. Desactivado: solo se activa si enciendes el switch de Modo noche manualmente. Por amanecer y atardecer: se activa desde el atardecer hasta el amanecer. Por franja horaria: se activa únicamente dentro de la franja que indiques más abajo."
+          "sunrise_time": "Usa esta hora de amanecer todos los días. Déjala vacía para calcular el amanecer según tu ubicación y la fecha.",
+          "min_sunrise_time": "Impide que el amanecer del perfil ocurra antes de esta hora. Déjala vacía para no aplicar este límite.",
+          "max_sunrise_time": "Impide que el amanecer del perfil ocurra después de esta hora. Déjala vacía para no aplicar este límite.",
+          "sunset_time": "Usa esta hora de atardecer todos los días. Déjala vacía para calcular el atardecer según tu ubicación y la fecha.",
+          "min_sunset_time": "Impide que el atardecer del perfil ocurra antes de esta hora. Déjala vacía para no aplicar este límite.",
+          "max_sunset_time": "Impide que el atardecer del perfil ocurra después de esta hora. Déjala vacía para no aplicar este límite.",
+          "brightness_mode": "Natural: mantiene el brillo máximo durante el día; por la noche, baja gradualmente y vuelve a subir hacia el amanecer.\nLineal: cambia el brillo a ritmo constante alrededor del amanecer y el atardecer.\nSigmoide: usa una curva en S, suave en los extremos y más rápida en el centro.",
+          "brightness_mode_time_dark": "Duración del tramo nocturno de la transición: antes del amanecer y después del atardecer.\nSolo se usa en los modos Lineal y Sigmoide. Un valor mayor alarga ese tramo; Natural lo ignora.",
+          "brightness_mode_time_light": "Duración del tramo diurno de la transición: después del amanecer y antes del atardecer.\nSolo se usa en los modos Lineal y Sigmoide. Un valor mayor alarga ese tramo; Natural lo ignora.",
+          "sleep_activation_mode": "Desactivado: el modo noche solo se activa con su interruptor manual.\nPor amanecer y atardecer: se activa entre el atardecer y el amanecer del perfil.\nPor franja horaria: se activa durante el horario indicado abajo.\nEl interruptor manual permite activar el modo noche en cualquier momento."
         }
       },
       "white_w_kelvin": {
@@ -147,7 +147,7 @@
           "cal_white_kelvin_neutral": "Temperatura de la mezcla blanca (K)"
         },
         "data_description": {
-          "cal_white_intensity_neutral": "RGBW: intensidad del canal W. RGB+CCT: intensidad total de blanco cálido y frío, con la mezcla definida por separado.",
+          "cal_white_intensity_neutral": "RGBW: intensidad del canal W.\nRGB+CCT: intensidad total de blanco cálido y frío, con la mezcla definida por separado.",
           "cal_white_kelvin_neutral": "Temperatura de la mezcla blanca en la referencia visual de 4000K, entre las temperaturas físicas WW y CW. Los canales RGB se ajustan de forma independiente."
         }
       },
