@@ -19,7 +19,7 @@ It supports multiple independent instances, manual-control detection, automatic 
 
 **Development version:** `0.21.4`, with the full-code audit fixes. It is not yet a published stable release.
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits. The development branch passes 219 Python and 73 frontend regressions.
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits. The development branch passes 222 Python and 73 frontend regressions.
 
 ## Features
 

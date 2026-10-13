@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, timedelta
 from enum import Enum
 from functools import cached_property, partial
+from traceback import walk_tb
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from homeassistant.util.color import (
@@ -47,12 +48,32 @@ class SunEventUnavailable(ValueError):
     """Astral could not calculate a sunrise or sunset at this location."""
 
 
-# Astral 2.2 reports these two physical conditions as ValueError. Restrict the
-# adapter to those messages so bad configuration and unexpected failures escape.
+# Astral 2.2 reports these two physical conditions as ValueError.
 _ABSENT_SUN_EVENT_MESSAGES = {
     f"Sun is always {direction} the horizon on this day, at this location."
     for direction in ("above", "below")
 }
+
+
+def _is_absent_sun_event(error: ValueError) -> bool:
+    """Recognize a horizon crossing failure without hiding unrelated errors."""
+    if str(error) in _ABSENT_SUN_EVENT_MESSAGES:
+        return True
+    # Astral 2.2 rewrites only the old "math domain error" message. Python 3.14
+    # changed acos's message, leaving the original exception unclassified.
+    # The actual hour_angle frame and a finite cosine outside [-1, 1] establish
+    # that the sun cannot reach the horizon, independently of that wording.
+    for frame, _lineno in walk_tb(error.__traceback__):
+        if frame.f_globals.get("__name__") != "astral.sun" or frame.f_code.co_name != "hour_angle":
+            continue
+        hour_angle_cosine = frame.f_locals.get("h")
+        if (
+            isinstance(hour_angle_cosine, (float, int))
+            and math.isfinite(hour_angle_cosine)
+            and not -1 <= hour_angle_cosine <= 1
+        ):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -75,7 +96,7 @@ class SunEvents:
         try:
             return getattr(self.astral_location, event)(dt, local=False)
         except ValueError as err:
-            if str(err) not in _ABSENT_SUN_EVENT_MESSAGES:
+            if not _is_absent_sun_event(err):
                 raise
             raise SunEventUnavailable(str(err)) from err
 

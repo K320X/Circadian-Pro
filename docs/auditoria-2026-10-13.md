@@ -31,7 +31,7 @@ Esta auditoría no modifica la instalación de Home Assistant ni sus perfiles. L
 | Media | Los perfiles heredados podían perder su modo sueño por aplicar valores nuevos antes de inferir la configuración anterior. Duplicar un perfil YAML podía perder datos efectivos. | Normalización previa, migración persistida una vez y copia de datos/opciones efectivos con serialización de horarios. |
 | Media | El formulario de opciones YAML repetía indefinidamente la primera pantalla. | Salida informativa traducida que indica editar YAML, sin crear overrides. |
 | Media | La interpolación nocturna era incorrecta cuando el Kelvin de sueño superaba el mínimo del perfil. Horarios solares coincidentes podían producir divisiones por cero. | Interpolación con diferencia firmada y validación de coincidencias después de offsets. |
-| Media | Astral no produce amanecer/atardecer durante día o noche polar y el cálculo podía fallar por completo. | Fallback limitado a esos errores físicos, basado en elevación solar y extremos configurados; los errores inesperados siguen visibles. Astral real en Tromsø, verano/invierno, con las tres curvas. `test_audit_solar.py`. |
+| Media | Astral no produce amanecer/atardecer durante día o noche polar y el cálculo podía fallar por completo. Python 3.14 también cambia el mensaje matemático que Astral 2.2 utiliza para reconocer esa situación. | Fallback limitado a esos errores físicos, basado en elevación solar y extremos configurados; reconocimiento del origen y argumento matemático sin ocultar errores inesperados. Astral real en Tromsø, verano/invierno, con las tres curvas. `test_audit_solar.py`. |
 | Baja | Valores cero se eliminaban al dividir órdenes; grupos anidados no se resolvían bien; formatos nuevos de eventos y objetivos no se reconocían completamente. | Preservación de cero, expansión con detección de ciclos, lectura de `params` y resolución HA de entidad/área/dispositivo/planta/etiqueta. |
 | Baja | El hash corto de nombres solo codificaba su prefijo; el historial de estados externos podía crecer indefinidamente. | Hash SHA-256 abreviado y retención de los informes propios necesarios con límite de ocho por orden. |
 | Baja | Un proxy de servicios podía perder respuesta, metadatos, tipo de trabajo o cambios anidados al fallar una interceptación. | Copia profunda, preservación del contrato de servicios y retirada idempotente sin sustituir wrappers posteriores. `test_audit_lighting.py`. |
@@ -58,7 +58,7 @@ La calibración mantiene sus referencias visuales y no redefine las temperaturas
 
 ## Verificación y límites
 
-Validación local final: **219 pruebas Python y 73 pruebas JavaScript pasan: 292 en total, sin skips**. Pasan también la comprobación de los once módulos Python y cuatro documentos JSON, todas las claves de traducción requeridas, Ruff `E9,F,B` y `git diff --check`. Entorno local: Python 3.12.14, Node.js 24 y Astral 2.2.
+Validación local final: **222 pruebas Python y 73 pruebas JavaScript pasan: 295 en total, sin skips**. Pasan también la comprobación de los once módulos Python y cuatro documentos JSON, todas las claves de traducción requeridas, Ruff `E9,F,B` y `git diff --check`. Entorno local: Python 3.12.14, Node.js 24 y Astral 2.2.
 
 GitHub Actions incorpora esas comprobaciones en Python 3.12 y 3.14. El resultado remoto debe comprobarse sobre el commit publicado; las pruebas locales no equivalen a un resultado CI confirmado.
 

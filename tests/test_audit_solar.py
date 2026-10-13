@@ -8,11 +8,14 @@ errors remain visible and fixed schedules continue to override astronomy.
 from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
+import math
 import sys
 import unittest
+from unittest.mock import patch
 
 from astral import LocationInfo
 from astral.location import Location
+import astral.sun
 
 import test_audit_lighting as lighting_fixtures
 
@@ -39,12 +42,12 @@ class SolarAuditTests(unittest.TestCase):
         values.update(overrides)
         return self.color.SunLightSettings(**values)
 
-    def test_real_polar_sunrise_and_sunset_failures_use_exact_bounded_endpoints_in_every_mode(self):
+    def assert_polar_endpoints(self):
         for month, expected_position, brightness, kelvin in ((6, 1, 91, 6503), (12, -1, 7, 2001)):
             for hour in (0, 12):
                 sample = datetime(2026, month, 21, hour, tzinfo=UTC)
                 for event in (self.tromso.sunrise, self.tromso.sunset):
-                    with self.assertRaisesRegex(ValueError, "Sun is always (above|below) the horizon"):
+                    with self.assertRaises(ValueError):
                         event(sample, local=False)
                 self.assertEqual(self.tromso.solar_elevation(sample) > 0, expected_position > 0)
                 for mode in ("default", "linear", "tanh"):
@@ -60,6 +63,64 @@ class SolarAuditTests(unittest.TestCase):
                             self.assertLessEqual(settings.min_color_temp, result["color_temp_kelvin"])
                             self.assertLessEqual(result["color_temp_kelvin"], settings.max_color_temp)
                             self.assertFalse(result["force_rgb_color"])
+
+    def test_real_polar_sunrise_and_sunset_failures_use_exact_bounded_endpoints_in_every_mode(self):
+        self.assert_polar_endpoints()
+
+    def test_python_314_acos_error_wording_preserves_real_polar_modes_and_manual_sleep(self):
+        actual_acos = astral.sun.acos
+        absent_cosines = []
+
+        def python_314_acos(value):
+            if not -1 <= value <= 1:
+                absent_cosines.append(value)
+                raise ValueError(f"expected a number in range from -1 up to 1, got {value}")
+            return actual_acos(value)
+
+        with patch("astral.sun.acos", python_314_acos):
+            self.assert_polar_endpoints()
+            for month in (6, 12):
+                settings = self.settings(brightness_mode="linear")
+                result = settings.brightness_and_color(datetime(2026, month, 21, 12, tzinfo=UTC), True)
+                self.assertEqual(result["brightness_pct"], 3)
+                self.assertEqual(result["color_temp_kelvin"], 1100)
+                self.assertEqual(result["rgb_color"], (255, 56, 0))
+        self.assertTrue(any(value < -1 for value in absent_cosines))
+        self.assertTrue(any(value > 1 for value in absent_cosines))
+
+    def test_python_314_error_message_from_another_module_is_not_classified_as_a_polar_event(self):
+        failure = ValueError("expected a number in range from -1 up to 1, got 2.0")
+
+        def hour_angle():
+            h = 2.0
+            self.assertGreater(h, 1)
+            raise failure
+
+        class BrokenAstral:
+            def sunrise(self, _day, local=False):
+                hour_angle()
+
+        settings = self.settings(astral_location=BrokenAstral())
+        with self.assertRaises(ValueError) as caught:
+            settings.brightness_and_color(datetime(2026, 12, 21, 12, tzinfo=UTC), False)
+        self.assertIs(caught.exception, failure)
+
+    def test_astral_hour_angle_frame_alone_does_not_hide_valid_or_nonfinite_argument_errors(self):
+        for latitude in (0.0, math.nan):
+            with self.subTest(latitude=latitude):
+                failure = ValueError("unexpected acos failure")
+
+                def broken_acos(_value):
+                    raise failure
+
+                class BrokenAstral:
+                    def sunrise(self, _day, local=False):
+                        return astral.sun.hour_angle(latitude, 23.0, 90.0, astral.sun.SunDirection.RISING)
+
+                settings = self.settings(astral_location=BrokenAstral())
+                with patch("astral.sun.acos", broken_acos), self.assertRaises(ValueError) as caught:
+                    settings.brightness_and_color(datetime(2026, 12, 21, 12, tzinfo=UTC), False)
+                self.assertIs(caught.exception, failure)
 
     def test_manual_sleep_targets_work_during_real_polar_day_and_night(self):
         for month in (6, 12):
