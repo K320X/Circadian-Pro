@@ -17,7 +17,7 @@ It supports multiple independent instances, manual-control detection, automatic 
 
 **Current stable version:** `0.20.3`
 
-**Local development version:** `0.21.1` (RGB+CCT correction and a unified profile creation and calibration panel; not yet released).
+**Local development version:** `0.21.2` (RGB+CCT correction and a unified profile creation and calibration panel with live profile updates; not yet released).
 
 ## Features
 
@@ -89,7 +89,9 @@ At the 4000 K reference, RGB+CCT has three independent adjustments: RGB channels
 
 The extra cold-white and mixture controls appear only when a selected light supports `rgbww`. RGBW keeps one white channel; profiles containing only RGB lights skip physical-white settings and show only RGB calibration. Existing hidden white values are preserved. Pixel-addressable (IC) control is independent of whether an entity exposes RGB, RGBW, or RGBWW.
 
-Open the **Circadian Pro** sidebar panel to create profiles or configure and calibrate existing ones. **New profile** asks for a name and creates an empty profile before opening its configuration wizard. Creating an empty profile does not control any lights. If you close the configuration wizard, the created profile remains available so you can finish configuring it later. The panel refreshes the profile list after creation. **Refresh list** also picks up profiles created from Home Assistant's integration page.
+Open the **Circadian Pro** sidebar panel to create profiles or configure and calibrate existing ones. **New profile**, in the header, asks for a name and creates an empty profile before opening its configuration wizard. Creating an empty profile does not control any lights. If you close the configuration wizard, the created profile remains available so you can finish configuring it later. The profile list updates automatically when profiles are added, removed, renamed, configured or loaded, including changes made from Home Assistant's integration page. Updates preserve your current selection and any configuration draft.
+
+The sidebar uses a sun-and-moon icon. On narrow screens, the panel header provides a button to open Home Assistant's sidebar; it stays hidden on desktop. Primary buttons use the theme's background color for readable text in both light and dark themes.
 
 The preview checkbox is disabled by default. Checking it applies the draft immediately; adjusting RGB or white controls while it is checked updates the lights without saving. Unchecking it stops the preview and restores the previous state.
 

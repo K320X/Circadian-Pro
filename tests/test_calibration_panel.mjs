@@ -16,7 +16,7 @@ globalThis.customElements = {
   get: (name) => registered.get(name),
   define: (name, constructor) => registered.set(name, constructor),
 };
-const { PreviewSession, CalibrationFlow, NewProfileFlow, waitForLoadedEntry, CircadianCalibrationPanel, selectedEntityValues } = await import(
+const { PreviewSession, CalibrationFlow, NewProfileFlow, EntryCatalog, waitForLoadedEntry, CircadianCalibrationPanel, selectedEntityValues } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
 );
 if (originalHTMLElement === undefined) delete globalThis.HTMLElement;
@@ -672,6 +672,8 @@ test("recovering HA's menu reuses its existing flow; abandoning an unsupported r
       close: async () => { assert.equal(panel.newProfileOpen, true); events.push("close-flow"); },
     },
     action: async (job) => job(), newProfileOpen: true, copy: { uncertainList: "Check existing profiles" },
+    readEntries: async () => { events.push("entries"); return []; },
+    applyEntries: () => {},
   };
   await CircadianCalibrationPanel.prototype.reconcileCreation.call(panel);
   assert.deepEqual(events, ["entries", "recover", "close-flow"]);
@@ -724,7 +726,7 @@ test("creating in the panel opens the options wizard only after loaded confirmat
     copy: { created: "Profile created", createdKept: "Created profile kept", notLoaded: "Retry loading", error: "Error" },
     updateControls: () => {}, render: () => {}, readValues: () => ({}),
   };
-  for (const name of ["action", "createNewProfile", "loadCreatedEntry", "openEntry", "showStep", "closeWizard"]) {
+  for (const name of ["action", "createNewProfile", "loadCreatedEntry", "openEntry", "showStep", "closeWizard", "readEntries", "applyEntries"]) {
     panel[name] = CircadianCalibrationPanel.prototype[name].bind(panel);
   }
   await panel.createNewProfile();
@@ -744,4 +746,336 @@ test("creating in the panel opens the options wizard only after loaded confirmat
   assert.equal(backend.calls.at(-1).path, FLOW + "/server-options-flow");
   assert.equal(backend.calls.at(-1).method, "DELETE");
   assert.ok(backend.calls.every((call) => !call.path?.startsWith("config/config_entries/entry/")));
+});
+
+function metadataConnection() {
+  const state = { callback: null, unsubscribes: 0, subscriptions: 0, readyListeners: new Set() };
+  state.connection = {
+    addEventListener(event, callback) {
+      assert.equal(event, "ready");
+      state.readyListeners.add(callback);
+    },
+    removeEventListener(event, callback) {
+      assert.equal(event, "ready");
+      state.readyListeners.delete(callback);
+    },
+    async subscribeMessage(callback, request, options) {
+      assert.deepEqual(request, { type: "config_entries/subscribe" });
+      assert.deepEqual(options, { resubscribe: false });
+      state.subscriptions++;
+      state.callback = callback;
+      callback([]); // HA's initial snapshot is separate from the initial read.
+      return async () => { state.unsubscribes++; };
+    },
+  };
+  state.ready = () => { for (const callback of state.readyListeners) callback(); };
+  return state;
+}
+
+test("native metadata subscription filters other domains and coalesces changes without polling", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  let reads = 0;
+  const catalog = new EntryCatalog(async () => { reads++; return [{ entry_id: "one", title: "Office" }]; }, () => {});
+  t.after(() => catalog.stop());
+  assert.equal(await catalog.connect(metadata.connection), true);
+  assert.equal(catalog.subscribed, true);
+  await catalog.read();
+  metadata.callback([{ type: "updated", entry: { domain: "hue" } }]);
+  t.mock.timers.tick(1000);
+  await flushMicrotasks();
+  assert.equal(reads, 1);
+  for (let index = 0; index < 30; index++) metadata.callback([{ type: "updated", entry: { domain: "circadian_pro", entry_id: "one" } }]);
+  t.mock.timers.tick(149);
+  assert.equal(reads, 1);
+  t.mock.timers.tick(1);
+  await catalog.inFlight;
+  assert.equal(reads, 2);
+  t.mock.timers.tick(60000);
+  await flushMicrotasks();
+  assert.equal(reads, 2);
+});
+
+test("shared in-flight reads and a burst during a request cause one serial follow-up", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const first = deferred();
+  const metadata = metadataConnection();
+  let reads = 0;
+  let activeReads = 0;
+  let peakReads = 0;
+  const catalog = new EntryCatalog(async () => {
+    reads++; activeReads++; peakReads = Math.max(peakReads, activeReads);
+    const result = reads === 1 ? await first.promise : [];
+    activeReads--;
+    return result;
+  }, () => {});
+  t.after(() => catalog.stop());
+  await catalog.connect(metadata.connection);
+  const pending = catalog.read();
+  assert.equal(catalog.read(), pending);
+  await flushMicrotasks();
+  for (let index = 0; index < 20; index++) metadata.callback([{ type: "updated", entry: { domain: "circadian_pro" } }]);
+  t.mock.timers.tick(1000);
+  assert.equal(reads, 1);
+  first.resolve([]);
+  await pending;
+  t.mock.timers.tick(149);
+  assert.equal(reads, 1);
+  t.mock.timers.tick(1);
+  await catalog.inFlight;
+  assert.equal(reads, 2);
+  assert.equal(peakReads, 1);
+});
+
+test("reconnect snapshots refresh metadata even when the snapshot contains no profiles", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  let reads = 0;
+  let displayed = [{ entry_id: "one" }];
+  const catalog = new EntryCatalog(async () => { reads++; return []; }, (entries) => { displayed = entries; }, displayed);
+  t.after(() => catalog.stop());
+  await catalog.connect(metadata.connection);
+  assert.equal(reads, 0);
+  metadata.callback([]); // A second snapshot follows an automatic reconnect.
+  t.mock.timers.tick(150);
+  await catalog.inFlight;
+  assert.equal(reads, 1);
+  assert.deepEqual(displayed, []);
+});
+
+test("temporary refresh errors preserve the last good catalog", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  const good = [{ entry_id: "one", title: "Office" }];
+  const errors = [];
+  let fail = false;
+  let displayed;
+  const catalog = new EntryCatalog(async () => {
+    if (fail) throw new Error("Temporary connection failure");
+    return good;
+  }, (entries) => { displayed = entries; }, [], (error) => errors.push(error));
+  t.after(() => catalog.stop());
+  await catalog.connect(metadata.connection);
+  await catalog.read();
+  fail = true;
+  metadata.callback([{ type: "updated", entry: { domain: "circadian_pro" } }]);
+  t.mock.timers.tick(150);
+  await flushMicrotasks();
+  assert.equal(displayed, good);
+  assert.equal(catalog.entries, good);
+  assert.equal(errors.length, 1);
+});
+
+test("disconnect cancels debounce, unsubscribes and ignores late callbacks and responses", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  const response = deferred();
+  const good = [{ entry_id: "last-good" }];
+  const applied = [];
+  let reads = 0;
+  const catalog = new EntryCatalog(() => { reads++; return response.promise; }, (entries) => applied.push(entries), good);
+  await catalog.connect(metadata.connection);
+  const pending = catalog.read();
+  await flushMicrotasks();
+  metadata.callback([{ type: "updated", entry: { domain: "circadian_pro" } }]);
+  catalog.stop();
+  metadata.callback([{ type: "added", entry: { domain: "circadian_pro" } }]);
+  response.resolve([{ entry_id: "stale" }]);
+  assert.equal(await pending, good);
+  t.mock.timers.tick(1000);
+  await flushMicrotasks();
+  assert.equal(metadata.unsubscribes, 1);
+  assert.equal(metadata.readyListeners.size, 0);
+  assert.equal(catalog.subscribed, false);
+  assert.equal(reads, 1);
+  assert.deepEqual(applied, []);
+});
+
+test("a subscription that resolves after detachment is immediately unsubscribed", async () => {
+  const reply = deferred();
+  let callback;
+  let unsubscribes = 0;
+  const catalog = new EntryCatalog(async () => { throw new Error("Unexpected fetch"); }, () => {});
+  const connecting = catalog.connect({ subscribeMessage: (handler) => { callback = handler; return reply.promise; } });
+  catalog.stop();
+  callback([{ type: "updated", entry: { domain: "circadian_pro" } }]);
+  reply.resolve(async () => { unsubscribes++; });
+  assert.equal(await connecting, false);
+  assert.equal(unsubscribes, 1);
+  assert.equal(catalog.subscribed, false);
+});
+
+test("catalog updates preserve the chosen profile and never replace or save edited drafts", () => {
+  let renders = 0;
+  const values = { lights: ["light.draft"], interval: 99 };
+  const settings = { lights: ["light.saved"], interval: 60 };
+  const flow = { current: { step_id: "init" }, drafts: { init: { interval: 99 } } };
+  const panel = { selectedEntryId: "chosen", selectedEntryTitle: "Old name", values, settings, flow, render: () => { renders++; }, updateControls: () => {} };
+  CircadianCalibrationPanel.prototype.applyEntries.call(panel, [{ entry_id: "other" }, { entry_id: "chosen", title: "Renamed" }]);
+  assert.equal(panel.selectedEntryId, "chosen");
+  assert.equal(panel.selectedEntryTitle, "Renamed");
+  assert.equal(panel.values, values);
+  assert.equal(panel.settings, settings);
+  assert.equal(panel.flow, flow);
+  assert.equal(renders, 0);
+  panel.flow = null;
+  CircadianCalibrationPanel.prototype.applyEntries.call(panel, [{ entry_id: "other" }]);
+  assert.equal(panel.selectedEntryId, "chosen");
+  assert.equal(renders, 1);
+});
+
+test("ordinary hass property updates do not re-read the profile registry", () => {
+  let initializations = 0;
+  const panel = { initialized: true, isConnected: true, initialize: () => { initializations++; } };
+  const setter = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "hass").set;
+  for (let index = 0; index < 50; index++) setter.call(panel, { states: { changing: index } });
+  assert.equal(initializations, 0);
+});
+
+test("unavailable native subscription remains a recoverable manual-refresh mode", async () => {
+  let reads = 0;
+  const catalog = new EntryCatalog(async () => { reads++; return []; }, () => {});
+  assert.equal(await catalog.connect({ subscribeMessage: async () => { throw new Error("Unsupported command"); } }), false);
+  assert.equal(catalog.subscribed, false);
+  await catalog.read();
+  assert.equal(reads, 1);
+  catalog.stop();
+});
+
+test("ready reconnects with a single explicit subscription and refreshes the catalog", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  let reads = 0;
+  const catalog = new EntryCatalog(async () => { reads++; return []; }, () => {});
+  t.after(() => catalog.stop());
+  await catalog.connect(metadata.connection);
+  await catalog.read();
+  const oldCallback = metadata.callback;
+  metadata.ready();
+  await flushMicrotasks();
+  assert.equal(metadata.subscriptions, 2);
+  assert.equal(metadata.unsubscribes, 1);
+  assert.equal(catalog.subscribed, true);
+  t.mock.timers.tick(150);
+  await catalog.inFlight;
+  assert.equal(reads, 2);
+  oldCallback([{ type: "updated", entry: { domain: "circadian_pro" } }]);
+  t.mock.timers.tick(500);
+  await flushMicrotasks();
+  assert.equal(reads, 2);
+});
+
+test("leaving while offline removes ready listeners and cannot reopen a subscription", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const metadata = metadataConnection();
+  const autoResubscriptions = [];
+  const subscribe = metadata.connection.subscribeMessage;
+  metadata.connection.subscribeMessage = async (callback, request, options) => {
+    if (options?.resubscribe !== false) autoResubscriptions.push(callback);
+    return subscribe(callback, request, options);
+  };
+  let reads = 0;
+  const catalog = new EntryCatalog(async () => { reads++; return []; }, () => {});
+  await catalog.connect(metadata.connection);
+  catalog.stop(); // Unsubscribe can occur while HA's socket is disconnected.
+  await flushMicrotasks();
+  metadata.ready();
+  for (const callback of autoResubscriptions) callback([]);
+  t.mock.timers.tick(1000);
+  await flushMicrotasks();
+  assert.equal(metadata.readyListeners.size, 0);
+  assert.equal(autoResubscriptions.length, 0);
+  assert.equal(metadata.subscriptions, 1);
+  assert.equal(metadata.unsubscribes, 1);
+  assert.equal(reads, 0);
+});
+
+test("catalog refresh failure is visible without replacing draft inputs and clears after recovery", () => {
+  const warningText = { textContent: "" };
+  const warning = { hidden: true, querySelector: () => warningText };
+  const draft = { lights: ["light.unsaved"] };
+  const panel = {
+    copy: { catalogError: "Could not refresh profiles" },
+    shadowRoot: { querySelector: (selector) => selector === "#catalog-warning" ? warning : null, querySelectorAll: () => [] },
+    flow: { current: { step_id: "init" } }, values: draft, settings: draft,
+    entries: [{ entry_id: "chosen" }], selectedEntryId: "chosen",
+    updateControls() { CircadianCalibrationPanel.prototype.updateControls.call(this); },
+    render: () => { throw new Error("Do not rebuild draft inputs"); },
+  };
+  CircadianCalibrationPanel.prototype.catalogFailure.call(panel);
+  assert.equal(warning.hidden, false);
+  assert.equal(warningText.textContent, "Could not refresh profiles");
+  assert.equal(panel.values, draft);
+  CircadianCalibrationPanel.prototype.applyEntries.call(panel, [{ entry_id: "chosen", title: "Office" }]);
+  assert.equal(warning.hidden, true);
+  assert.equal(panel.catalogError, "");
+  assert.equal(panel.values, draft);
+  assert.equal(panel.selectedEntryId, "chosen");
+});
+
+test("detaching clears closed flow references before the same panel reconnects", async (t) => {
+  const previousWindow = globalThis.window;
+  const events = [];
+  globalThis.window = { removeEventListener: (event) => events.push(event), addEventListener: () => {} };
+  t.after(() => { if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow; });
+  const flow = { current: { step_id: "cal_warm" }, close: async () => { events.push("close-options"); flow.current = null; } };
+  const panel = {
+    flow, session: { enabled: true }, creator: { close: async () => { events.push("close-create"); } },
+    creationRevision: 0, newProfileOpen: true, initialized: true,
+    catalog: { stop: () => events.push("unsubscribe") },
+    _hass: {}, initialize: () => { events.push("initialize"); assert.equal(panel.flow, null); },
+  };
+  CircadianCalibrationPanel.prototype.disconnectedCallback.call(panel);
+  assert.equal(panel.flow, null);
+  assert.equal(panel.session, null);
+  assert.equal(panel.creator, null);
+  assert.equal(panel.newProfileOpen, false);
+  assert.equal(panel.initialized, false);
+  CircadianCalibrationPanel.prototype.connectedCallback.call(panel);
+  await flushMicrotasks();
+  assert.deepEqual(events, ["pagehide", "close-options", "close-create", "unsubscribe", "initialize"]);
+});
+
+test("header keeps New profile outside the card and provides an accessible menu only through mobile CSS", (t) => {
+  class Node {
+    constructor(tag) { this.tag = tag; this.children = []; this.attributes = {}; this.listeners = {}; this.dataset = {}; }
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
+    setAttribute(name, value) { this.attributes[name] = value; }
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+    descendants() { return this.children.flatMap((child) => [child, ...child.descendants()]); }
+    matches(selector) {
+      return selector.startsWith("#") ? this.id === selector.slice(1) : selector.startsWith(".")
+        ? this.className?.split(" ").includes(selector.slice(1)) : this.tag === selector;
+    }
+    querySelector(selector) { return this.descendants().find((node) => node.matches(selector)); }
+    querySelectorAll(selector) { return this.descendants().filter((node) => node.matches(selector)); }
+  }
+  const previousDocument = globalThis.document;
+  globalThis.document = { createElement: (tag) => new Node(tag) };
+  t.after(() => { if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument; });
+  const events = [];
+  const panel = {
+    shadowRoot: new Node("shadow"), entries: [{ entry_id: "one", title: "Office" }], selectedEntryId: "one",
+    catalog: { subscribed: true }, catalogError: "", translations: {},
+    copy: { title: "Circadian Pro", menu: "Open menu", newProfile: "New profile", start: "Configure and calibrate", retry: "Retry" },
+    _hass: { user: { is_admin: true } }, error: "",
+    dispatchEvent: (event) => events.push(event),
+    updateControls() { CircadianCalibrationPanel.prototype.updateControls.call(this); },
+  };
+  CircadianCalibrationPanel.prototype.render.call(panel);
+  const header = panel.shadowRoot.querySelector("header");
+  const mobileMenu = header.querySelector(".mobile-menu");
+  assert.equal(mobileMenu.attributes["aria-label"], "Open menu");
+  mobileMenu.listeners.click();
+  assert.equal(events[0].type, "hass-toggle-menu");
+  assert.equal(events[0].bubbles, true);
+  assert.equal(events[0].composed, true);
+  assert.equal(header.children.at(-1).textContent, "New profile");
+  const article = panel.shadowRoot.querySelector("article");
+  assert.deepEqual(article.querySelector(".actions").children.map((button) => button.textContent), ["Configure and calibrate"]);
+  const css = panel.shadowRoot.querySelector("style").textContent;
+  assert.match(css, /\.mobile-menu \{ display:none;/);
+  assert.match(css, /@media\(max-width:870px\) \{ \.mobile-menu \{ display:block;/);
+  assert.match(css, /button\.primary \{[^}]*color:var\(--primary-background-color,#081018\)/);
 });

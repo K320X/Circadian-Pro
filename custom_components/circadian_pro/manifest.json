@@ -7,6 +7,6 @@
   "documentation": "https://www.home-assistant.io/",
   "iot_class": "calculated",
   "requirements": [],
-  "version": "0.21.1",
+  "version": "0.21.2",
   "icon": "mdi:weather-night"
 }

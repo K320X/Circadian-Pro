@@ -214,6 +214,7 @@ export async function waitForLoadedEntry(callWS, entryId, {
     if (delay) await wait(delay);
     if (cancelled()) return null;
     const entries = await callWS({ type: API + "entries" });
+    if (cancelled()) return null;
     onEntries(entries);
     const entry = entries.find((item) => item.entry_id === entryId);
     if (entry) return entry;
@@ -221,18 +222,136 @@ export async function waitForLoadedEntry(callWS, entryId, {
   return null;
 }
 
+export class EntryCatalog {
+  constructor(fetchEntries, onEntries, initial = [], onError = () => {}) {
+    this.fetchEntries = fetchEntries;
+    this.onEntries = onEntries;
+    this.onError = onError;
+    this.entries = initial;
+    this.active = true;
+    this.subscribed = false;
+    this.generation = 0;
+    this.inFlight = null;
+    this.timer = null;
+    this.dirty = false;
+    this.unsubscribe = null;
+    this.connection = null;
+    this.readyListener = null;
+    this.subscriptionRevision = 0;
+  }
+
+  async connect(connection) {
+    if (typeof connection?.subscribeMessage !== "function") return false;
+    this.connection = connection;
+    this.readyListener = () => {
+      if (this.active && this.connection === connection) this.subscribe(false);
+    };
+    connection.addEventListener?.("ready", this.readyListener);
+    return this.subscribe(true);
+  }
+
+  async subscribe(initial) {
+    const connection = this.connection;
+    const generation = this.generation;
+    const revision = ++this.subscriptionRevision;
+    const previous = this.unsubscribe;
+    this.unsubscribe = null;
+    this.subscribed = false;
+    if (previous) Promise.resolve().then(previous).catch(() => {});
+    let firstSnapshot = true;
+    const current = () => this.active && generation === this.generation
+      && revision === this.subscriptionRevision && this.connection === connection;
+    try {
+      const unsubscribe = await connection.subscribeMessage((changes) => {
+        if (!current() || !Array.isArray(changes)) return;
+        if (!changes.length || changes.every((change) => change.type === null)) {
+          // Initial data is read after subscribing. Subsequent snapshots are
+          // reconnects, whose settings must be read again even if IDs match.
+          if (firstSnapshot && initial) { firstSnapshot = false; return; }
+          firstSnapshot = false;
+          this.schedule();
+        } else if (changes.some((change) => change.entry?.domain === "circadian_pro")) {
+          this.schedule();
+        }
+      }, { type: "config_entries/subscribe" }, { resubscribe: false });
+      if (!current()) {
+        await unsubscribe();
+        return false;
+      }
+      this.unsubscribe = unsubscribe;
+      this.subscribed = true;
+      if (!initial) this.schedule();
+      return true;
+    } catch (error) {
+      if (current()) this.onError(error);
+      return false;
+    }
+  }
+
+  schedule() {
+    if (!this.active) return;
+    if (this.inFlight) { this.dirty = true; return; }
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.read().catch(() => {});
+    }, 150);
+  }
+
+  read() {
+    if (!this.active) return Promise.resolve(this.entries);
+    if (this.inFlight) return this.inFlight;
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.dirty = false;
+    const generation = this.generation;
+    const request = Promise.resolve().then(() => this.fetchEntries()).then((entries) => {
+      if (!this.active || generation !== this.generation) return this.entries;
+      this.entries = entries;
+      this.onEntries(entries);
+      return entries;
+    }).catch((error) => {
+      if (this.active && generation === this.generation) this.onError(error);
+      throw error;
+    }).finally(() => {
+      if (this.inFlight !== request) return;
+      this.inFlight = null;
+      if (this.dirty && this.active) { this.dirty = false; this.schedule(); }
+    });
+    this.inFlight = request;
+    return request;
+  }
+
+  stop() {
+    this.active = false;
+    this.subscribed = false;
+    this.generation++;
+    this.subscriptionRevision++;
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.dirty = false;
+    const unsubscribe = this.unsubscribe;
+    this.unsubscribe = null;
+    this.connection?.removeEventListener?.("ready", this.readyListener);
+    this.connection = this.readyListener = null;
+    if (unsubscribe) Promise.resolve().then(unsubscribe).catch(() => {});
+  }
+}
+
 const COPY = {
   es: {
-    title: "Circadian Pro", profile: "Perfil", start: "Configurar y calibrar",
+    title: "Circadian Pro", profile: "Perfil", start: "Configurar y calibrar", menu: "Abrir menú",
     newProfile: "Nuevo perfil", profileName: "Nombre del perfil", createProfile: "Crear perfil", cancel: "Cancelar",
     newHint: "Crea un perfil sin luces seleccionadas. Después podrás elegir sus luces, configurarlo y calibrarlo.",
     created: "Perfil creado. Selecciona sus luces y termina la configuración.",
     createdKept: "El perfil creado se conserva. Los ajustes que no hayas terminado no se han guardado.",
     notLoaded: "El perfil se ha creado, pero aún no está listo para configurar. Puedes reintentar la carga sin crear otro perfil.",
     retryLoading: "Reintentar carga", name_required: "Escribe un nombre para el perfil.",
+    profileUnavailable: "Perfil no disponible",
     unique_name: "Ya existe un perfil con ese nombre. Elige otro nombre.",
     creation_uncertain: "No se pudo confirmar la creación. Comprueba el estado antes de volver a crear el perfil.",
     checkCreation: "Comprobar estado", refreshProfiles: "Actualizar lista",
+    catalogError: "No se pudo actualizar la lista de perfiles. Se conserva la última lista disponible.", retry: "Reintentar",
     recoveredForm: "El perfil aún no se ha creado. Puedes volver a pulsar Crear perfil.",
     uncertainList: "La creación no se pudo confirmar. Revisa los perfiles de la lista antes de crear otro con el mismo nombre.",
     choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
@@ -247,16 +366,18 @@ const COPY = {
     fallback: "Este formulario contiene un campo que todavía no admite este panel. Usa Configurar en la integración.",
   },
   en: {
-    title: "Circadian Pro", profile: "Profile", start: "Configure and calibrate",
+    title: "Circadian Pro", profile: "Profile", start: "Configure and calibrate", menu: "Open menu",
     newProfile: "New profile", profileName: "Profile name", createProfile: "Create profile", cancel: "Cancel",
     newHint: "Create a profile with no lights selected. Then choose its lights, configure it and calibrate it.",
     created: "Profile created. Choose its lights and finish the configuration.",
     createdKept: "The created profile is kept. Settings you did not finish have not been saved.",
     notLoaded: "The profile was created but is not ready to configure yet. You can retry loading without creating another profile.",
     retryLoading: "Retry loading", name_required: "Enter a name for the profile.",
+    profileUnavailable: "Profile unavailable",
     unique_name: "A profile with that name already exists. Choose another name.",
     creation_uncertain: "Creation could not be confirmed. Check its status before trying to create the profile again.",
     checkCreation: "Check status", refreshProfiles: "Refresh list",
+    catalogError: "The profile list could not be updated. The last available list is kept.", retry: "Retry",
     recoveredForm: "The profile has not been created yet. You can click Create profile again.",
     uncertainList: "Creation could not be confirmed. Check the profiles in the list before creating another with the same name.",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
@@ -353,6 +474,10 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.createdProfile = null;
     this.pendingCreated = null;
     this.creationRevision = 0;
+    this.catalog = null;
+    this.catalogError = "";
+    this.selectedEntryId = null;
+    this.selectedEntryTitle = "";
     this.onLeave = () => {
       this.session?.setEnabled(false).catch(() => {});
     };
@@ -379,21 +504,66 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   disconnectedCallback() {
     window.removeEventListener("pagehide", this.onLeave);
-    this.flow?.close().catch(() => {});
+    const flow = this.flow;
+    this.flow = this.session = null;
+    flow?.close().catch(() => {});
     this.creationRevision++;
-    this.creator?.close().catch(() => {});
+    const creator = this.creator;
+    this.creator = null;
+    this.newProfileOpen = false;
+    creator?.close().catch(() => {});
+    this.catalog?.stop();
     this.initialized = false;
   }
 
   async initialize() {
+    if (this.initialized || this.busy) return;
     this.initialized = true;
     if (!this._hass.user?.is_admin) { this.error = this.copy.admin; this.render(); return; }
+    this.catalog?.stop();
+    const catalog = new EntryCatalog(
+      () => this._hass.callWS({ type: API + "entries" }),
+      (entries) => {
+        if (this.catalog === catalog && this.isConnected) this.applyEntries(entries);
+      }, this.entries, () => {
+        if (this.catalog === catalog && this.isConnected) this.catalogFailure();
+      },
+    );
+    this.catalog = catalog;
     await this.action(async () => {
-      [this.entries, this.translations] = await Promise.all([
-        this._hass.callWS({ type: API + "entries" }),
+      await catalog.connect(this._hass.connection);
+      if (this.catalog !== catalog || !this.isConnected) return;
+      const [entries, translations] = await Promise.all([
+        catalog.read(),
         this._hass.callWS({ type: API + "translations", language: this.language }),
       ]);
+      if (this.catalog !== catalog || !this.isConnected) return;
+      this.applyEntries(entries);
+      this.translations = translations;
     });
+  }
+
+  applyEntries(entries) {
+    this.entries = entries;
+    this.catalogError = "";
+    if (!this.selectedEntryId && entries.length) this.selectedEntryId = entries[0].entry_id;
+    const selected = entries.find((entry) => entry.entry_id === this.selectedEntryId);
+    if (selected) this.selectedEntryTitle = selected.title;
+    // Metadata must never replace an unsaved form or its focused inputs.
+    if (!this.busy && !this.flow && !this.newProfileOpen) this.render();
+    else this.updateControls();
+  }
+
+  catalogFailure() {
+    this.catalogError = this.copy.catalogError;
+    this.updateControls();
+  }
+
+  async readEntries() {
+    const catalog = this.catalog;
+    if (!catalog) return this._hass.callWS({ type: API + "entries" });
+    const entries = await catalog.read();
+    return this.catalog === catalog && this.isConnected ? entries : this.entries;
   }
 
   async action(job) {
@@ -403,7 +573,11 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.updateControls();
     try { await job(); }
     catch (error) { this.error = error?.message || this.copy.error; }
-    finally { this.busy = false; this.render(); }
+    finally {
+      this.busy = false;
+      if (this.isConnected !== false) this.render();
+      if (!this.initialized && this.isConnected) this.initialize();
+    }
   }
 
   async start(entryId) {
@@ -414,6 +588,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
     const entry = this.entries.find((item) => item.entry_id === entryId);
     if (!entry) return;
       this.entry = entry;
+      this.selectedEntryId = entry.entry_id;
+      this.selectedEntryTitle = entry.title;
       this.createdProfile = created ? entry : null;
       this.settings = { ...entry.settings };
       this.values = {};
@@ -426,9 +602,15 @@ export class CircadianCalibrationPanel extends HTMLElement {
           this.updateControls();
         },
       );
-      this.flow = new CalibrationFlow((...args) => this._hass.callApi(...args), this.session, entryId);
-      try { this.showStep(await this.flow.start()); }
+      const flow = new CalibrationFlow((...args) => this._hass.callApi(...args), this.session, entryId);
+      this.flow = flow;
+      try {
+        const result = await flow.start();
+        if (this.flow !== flow) { await flow.close(); return; }
+        this.showStep(result);
+      }
       catch (error) {
+        if (this.flow !== flow) return;
         this.flow = this.session = null;
         if (created) {
           this.pendingCreated = { entry_id: entry.entry_id, title: entry.title };
@@ -456,11 +638,13 @@ export class CircadianCalibrationPanel extends HTMLElement {
   async createNewProfile() {
     await this.action(async () => {
       const revision = this.creationRevision;
+      const creator = this.creator;
       let result;
-      try { result = await this.creator.create(this.newProfileName); }
+      try { result = await creator.create(this.newProfileName); }
       catch (error) { throw new Error(this.copy[error.reason] || error.message || this.copy.error); }
+      if (revision !== this.creationRevision || this.creator !== creator) { await creator.close(); return; }
       if (result.type !== "create_entry") { this.error = this.creationError(result); return; }
-      this.pendingCreated = { entry_id: this.creator.createdEntryId, title: this.creator.name };
+      this.pendingCreated = { entry_id: creator.createdEntryId, title: creator.name };
       this.newProfileOpen = false;
       this.message = this.copy.created;
       if (revision !== this.creationRevision) return;
@@ -472,8 +656,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
   async loadCreatedEntry(revision = this.creationRevision) {
     const pending = this.pendingCreated;
     if (!pending) return;
-    const entry = await waitForLoadedEntry((message) => this._hass.callWS(message), pending.entry_id, {
-      onEntries: (entries) => { this.entries = entries; },
+    const entry = await waitForLoadedEntry(() => this.readEntries(), pending.entry_id, {
+      onEntries: (entries) => { this.applyEntries(entries); },
       cancelled: () => revision !== this.creationRevision,
     });
     if (revision !== this.creationRevision) return;
@@ -484,7 +668,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   async reconcileCreation() {
     await this.action(async () => {
-      this.entries = await this._hass.callWS({ type: API + "entries" });
+      this.applyEntries(await this.readEntries());
       const result = await this.creator.recover();
       if (result?.type === "form") this.error = this.copy.recoveredForm;
       else {
@@ -510,7 +694,6 @@ export class CircadianCalibrationPanel extends HTMLElement {
       this.createdProfile = null;
       // Saving reloads the profile. Retain the last displayed values until a
       // fresh entries request, rather than starting another flow from old data.
-      this.entries = [];
       this.initialized = false;
       return;
     }
@@ -554,7 +737,9 @@ export class CircadianCalibrationPanel extends HTMLElement {
     await this.action(async () => {
       const data = this.readValues(!back);
       Object.assign(this.settings, data);
-      const result = back ? await this.flow.back(data) : await this.flow.next(data);
+      const flow = this.flow;
+      const result = back ? await flow.back(data) : await flow.next(data);
+      if (this.flow !== flow) return;
       this.showStep(result);
       this.shadowRoot.querySelector("main")?.scrollTo(0, 0);
     });
@@ -629,9 +814,16 @@ export class CircadianCalibrationPanel extends HTMLElement {
     if (status) status.textContent = this.session?.enabled ? this.copy.active : this.copy.idle;
     const error = this.shadowRoot.querySelector("#error");
     if (error) { error.textContent = this.error; error.hidden = !this.error; }
+    const catalogWarning = this.shadowRoot.querySelector("#catalog-warning");
+    if (catalogWarning) {
+      catalogWarning.hidden = !this.catalogError;
+      catalogWarning.querySelector("p").textContent = this.catalogError;
+    }
     for (const button of this.shadowRoot.querySelectorAll("button")) button.disabled = this.busy;
     const create = this.shadowRoot.querySelector("#create-profile");
     if (create && this.creator?.uncertain) create.disabled = true;
+    const start = this.shadowRoot.querySelector("#start-profile");
+    if (start && !this.entries.some((entry) => entry.entry_id === this.selectedEntryId)) start.disabled = true;
   }
 
   render() {
@@ -656,22 +848,38 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .entity-choice-text { display:grid; gap:3px; min-width:0; overflow-wrap:anywhere; } .entity-choice small { font-size:12px; }
       .preview-box { padding:18px; margin:24px 0; border-radius:10px; background:var(--secondary-background-color,#f1f4f7); } .preview-box p { margin:8px 0 0; }
       .actions { display:flex; justify-content:flex-end; gap:12px; margin-top:28px; } button { font:inherit; font-weight:600; border-radius:8px; padding:10px 18px; border:1px solid var(--divider-color,#ddd); cursor:pointer; background:var(--card-background-color,#fff); color:var(--primary-color,#0077ab); }
-      button.primary { background:var(--primary-color,#0077ab); color:var(--text-primary-color,#fff); border-color:transparent; } button:disabled { opacity:.55; cursor:wait; } .close { margin-left:auto; font-size:13px; }
+      button.primary { background:var(--primary-color,#0077ab); color:var(--primary-background-color,#081018); border-color:transparent; } button:disabled { opacity:.55; cursor:wait; } .close { margin-left:auto; font-size:13px; }
+      .mobile-menu { display:none; padding:8px 10px; font-size:22px; line-height:1; } @media(max-width:870px) { .mobile-menu { display:block; } }
+      #catalog-warning { margin-bottom:20px; padding:12px; border:1px solid var(--warning-color,#e69500); border-radius:8px; } #catalog-warning p { margin:0 0 10px; }
       #error { background:#b3261e; color:white; padding:12px; border-radius:8px; white-space:pre-line; } .step { margin:0 0 10px; font-size:13px; } .saved { color:var(--success-color,#16814b); } [hidden] { display:none !important; }
       @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; } header strong { font-size:16px; } .close { padding:8px; } }
     `;
     const header = element("header");
-    const menu = element("button", "☰");
-    menu.setAttribute("aria-label", this.language === "es" ? "Abrir menú" : "Open menu");
+    const menu = element("button", "☰", "mobile-menu");
+    menu.type = "button";
+    menu.setAttribute("aria-label", this.copy.menu);
     menu.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true })));
-    header.append(menu, element("strong", this.copy.title));
+    header.append(menu);
+    header.append(element("strong", this.copy.title));
     if (this.flow) {
       const close = element("button", this.copy.close, "close");
       close.addEventListener("click", () => this.action(() => this.closeWizard()));
       header.append(close);
+    } else if (!this.newProfileOpen && !this.pendingCreated && this._hass?.user?.is_admin) {
+      const create = element("button", this.copy.newProfile, "close");
+      create.addEventListener("click", () => this.openNewProfile());
+      header.append(create);
     }
     const main = element("main");
     const article = element("article");
+    const catalogWarning = element("section");
+    catalogWarning.id = "catalog-warning";
+    catalogWarning.setAttribute("role", "alert");
+    const catalogRetry = element("button", this.copy.retry);
+    catalogRetry.type = "button";
+    catalogRetry.addEventListener("click", () => this.action(async () => { this.applyEntries(await this.readEntries()); }));
+    catalogWarning.append(element("p", this.catalogError), catalogRetry);
+    article.append(catalogWarning);
     const error = element("p", this.error);
     error.id = "error";
     error.setAttribute("role", "alert");
@@ -767,24 +975,36 @@ export class CircadianCalibrationPanel extends HTMLElement {
         const label = element("label", undefined, "field");
         label.append(element("span", this.copy.profile, "label"));
         const select = element("select");
-        for (const entry of this.entries) { const option = element("option", entry.title); option.value = entry.entry_id; select.append(option); }
+        if (this.selectedEntryId && !this.entries.some((entry) => entry.entry_id === this.selectedEntryId)) {
+          const missing = element("option", `${this.selectedEntryTitle} · ${this.copy.profileUnavailable}`);
+          missing.value = this.selectedEntryId;
+          missing.disabled = missing.selected = true;
+          select.append(missing);
+        }
+        for (const entry of this.entries) {
+          const option = element("option", entry.title);
+          option.value = entry.entry_id;
+          option.selected = entry.entry_id === this.selectedEntryId;
+          select.append(option);
+        }
+        select.addEventListener("change", () => {
+          this.selectedEntryId = select.value;
+          this.selectedEntryTitle = this.entries.find((entry) => entry.entry_id === select.value)?.title || "";
+          this.updateControls();
+        });
         label.append(select);
         const actions = element("div", undefined, "actions");
         const start = element("button", this.copy.start, "primary");
+        start.id = "start-profile";
         start.addEventListener("click", () => this.start(select.value));
         actions.append(start);
-        const refresh = element("button", this.copy.refreshProfiles);
-        refresh.addEventListener("click", () => this.action(async () => { this.entries = await this._hass.callWS({ type: API + "entries" }); }));
-        actions.append(refresh);
+        if (!this.catalog?.subscribed) {
+          const refresh = element("button", this.copy.refreshProfiles);
+          refresh.addEventListener("click", () => this.action(async () => { this.applyEntries(await this.readEntries()); }));
+          actions.append(refresh);
+        }
         article.append(label, actions);
       } else if (!this.error) article.append(element("p", this.busy ? this.copy.loading : this.copy.empty, "muted"));
-      if (this._hass?.user?.is_admin && !this.pendingCreated) {
-        const actions = element("div", undefined, "actions");
-        const create = element("button", this.copy.newProfile);
-        create.addEventListener("click", () => this.openNewProfile());
-        actions.append(create);
-        article.append(actions);
-      }
       article.append(error);
     }
     main.append(article);

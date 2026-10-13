@@ -165,7 +165,7 @@ async def async_setup_frontend(hass: Any) -> None:
             else:
                 await panel_custom.async_register_panel(
                     hass, frontend_url_path=PANEL_PATH, webcomponent_name=PANEL_PATH,
-                    sidebar_title="Circadian Pro", sidebar_icon="mdi:tune",
+                    sidebar_title="Circadian Pro", sidebar_icon="mdi:theme-light-dark",
                     module_url=PANEL_URL, require_admin=True,
                 )
             data["panel_registered"] = True

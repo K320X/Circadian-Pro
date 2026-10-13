@@ -4,11 +4,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Prueba local de calibración Circadian Pro</title>
 <style>
-  body { margin:0; height:100vh; background:#f5f7fa; font-family:system-ui; --primary-color:#0077ab; }
-  .notice { height:38px; box-sizing:border-box; padding:9px 20px; background:#e8f0fe; color:#204779; font-size:13px; }
+  body { margin:0; height:100vh; background:#f5f7fa; font-family:system-ui; --primary-color:#0077ab; --primary-background-color:#fafafa; }
+  body.dark { --primary-color:#70c5fa; --primary-background-color:#081018; --primary-text-color:#e1e9f1; --secondary-text-color:#a6b3c2; --card-background-color:#141e29; --secondary-background-color:#202d3b; --divider-color:#344355; }
+  .notice { height:38px; box-sizing:border-box; padding:6px 20px; background:#e8f0fe; color:#204779; font-size:13px; display:flex; align-items:center; gap:8px; }
+  .notice button { margin-left:auto; }
   circadian-pro-calibration { height:calc(100vh - 38px); display:block; }
 </style>
-<div class="notice">Prueba local · No controla tus luces. <span id="demo-status">Vista simulada detenida.</span></div>
+<div class="notice">Prueba local · No controla tus luces. <span id="demo-status">Vista simulada detenida.</span><button id="theme-toggle" type="button">Tema oscuro</button></div>
 <circadian-pro-calibration></circadian-pro-calibration>
 <script type="module">
   import '../../custom_components/circadian_pro/frontend/calibration-panel.js';
@@ -32,6 +34,12 @@
   const flows = new Map();
   const configFlows = new Map();
   const profiles = new Map([['local-profile-a',{entry_id:'local-profile-a',title:'Profile A',settings:original}]]);
+  const metadataListeners = new Set();
+  const connectionListeners = new Map();
+  const metadata = (profile) => ({entry_id:profile.entry_id,title:profile.title,domain:'circadian_pro',state:'loaded'});
+  const notifyMetadata = (profile, type = 'updated') => {
+    for(const callback of metadataListeners) callback([{type,entry:metadata(profile)}]);
+  };
   let sequence = 0;
   const commands = [];
   const form = (id, index, errors = {}, defaults = original) => ({
@@ -47,6 +55,17 @@
   const panel = document.querySelector('circadian-pro-calibration');
   panel.hass = {
     language:'es',user:{is_admin:true},
+    connection:{
+      addEventListener:(event,callback) => {connectionListeners.set(event,callback);},
+      removeEventListener:(event,callback) => {if(connectionListeners.get(event) === callback) connectionListeners.delete(event);},
+      subscribeMessage:async(callback,message,options) => {
+        if(message.type !== 'config_entries/subscribe') throw Error('Suscripción no admitida en la prueba.');
+        if(options.resubscribe !== false) throw Error('La suscripción debe cerrarse incluso sin conexión.');
+        metadataListeners.add(callback);
+        queueMicrotask(() => callback([...profiles.values()].map((profile) => ({type:null,entry:metadata(profile)}))));
+        return async() => {metadataListeners.delete(callback);};
+      },
+    },
     states:{
       'light.example_a':{attributes:{friendly_name:'Light A',supported_color_modes:['color_temp','rgbww']}},
       'light.example_b':{attributes:{friendly_name:'Light B',supported_color_modes:['rgbw']}},
@@ -89,6 +108,7 @@
         }
         const entryId = `new-profile-${++sequence}`;
         profiles.set(entryId,{entry_id:entryId,title:name,settings:{...original,lights:[]}});
+        notifyMetadata(profiles.get(entryId),'added');
         configFlows.delete(id);
         return {type:'create_entry',flow_id:id,result:{entry_id:entryId,title:name,state:'loaded'}};
       }
@@ -105,12 +125,22 @@
       if(flow.index === 0 && (!Array.isArray(data.sleep_rgb_color) || data.sunrise_time === null)) throw Error('RGB debe conservar tres canales y el horario opcional su valor vacío.');
       Object.assign(flow.draft,data);
       if(flow.index === 1 && data.white_w_kelvin >= data.white_cw_kelvin) return form(id,1,{base:'invalid_white_channel_range'},flow.draft);
-      if(flow.index === 3) { Object.assign(flow.profile.settings,flow.draft);flows.delete(id);return {type:'create_entry'}; }
+      if(flow.index === 3) { Object.assign(flow.profile.settings,flow.draft);notifyMetadata(flow.profile);flows.delete(id);return {type:'create_entry'}; }
       flow.index++;
       return form(id,flow.index,{},flow.draft);
     },
   };
   // A read-only inspection hook for automated local UI checks.
   window.calibrationDemoCommands = commands;
+  document.querySelector('#theme-toggle').addEventListener('click', (event) => {
+    const dark = document.body.classList.toggle('dark');
+    event.currentTarget.textContent = dark ? 'Tema claro' : 'Tema oscuro';
+  });
+  window.calibrationDemoAddProfile = (name) => {
+    const id = `external-${++sequence}`;
+    const profile = {entry_id:id,title:name,settings:{...original,lights:[]}};
+    profiles.set(id,profile);
+    notifyMetadata(profile,'added');
+  };
 </script>
 </html>
