@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.8`
+**Current stable version:** `0.21.9`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.8 shows sunrise and sunset offsets in minutes while preserving existing schedules; see the [release notes](docs/release-0.21.8.md).
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.9 adds intensity and warm-to-cool gradients to the calibration sliders; see the [release notes](docs/release-0.21.9.md).
 
 ## Features
 
@@ -89,7 +89,7 @@ Each panel script and its custom element now have identities based on the script
 
 The 4000 K and 1000 K calibration points are visual references. Adjust RGB and white intensity at each point to get the appearance you want. They are separate from the physical temperatures of the white LEDs.
 
-Each calibration channel has a colored slider and an editable number that stay in sync. The RGB+CCT white-mixture slider runs from the configured warm white temperature (left) to the cold white temperature (right). You can go back from the final 1000 K step without saving; only **Finish** saves the configuration. Light previews remain opt-in.
+Each calibration channel has a colored slider and an editable number that stay in sync. RGB tracks run from black at 0 to the full channel color at 255; white intensity runs from black to white. The RGB+CCT white-mixture slider runs from the configured warm white temperature (left) to the cold white temperature (right), with a warm, neutral-white and cool-blue gradient as a visual guide. You can go back from the final 1000 K step without saving; only **Finish** saves the configuration. Light previews remain opt-in.
 
 For RGBW, `white_w_kelvin` remains the temperature of the single white channel, with a default of 3000 K. For RGB+CCT lights that announce `rgbww`, the same value describes the warm white (WW) LED. The extra `white_cw_kelvin` setting describes the cold white (CW) LED. If omitted, Circadian Pro uses the light's maximum color temperature, or 6500 K when unavailable.
 

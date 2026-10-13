@@ -1221,12 +1221,12 @@ export class CircadianCalibrationPanel extends HTMLElement {
       input:not([type=checkbox]):not([type=range]),select { color:inherit; background:var(--card-background-color,#fff); font:inherit; width:100%; min-height:42px; padding:9px 12px; border:1px solid var(--divider-color,#aeb4bc); border-radius:8px; }
       .calibration-controls { display:grid; grid-template-columns:minmax(0,1fr) 96px; gap:18px; align-items:start; }
       .calibration-rail { min-width:0; } .calibration-controls input[type=number] { text-align:center; }
-      .calibration-r { --channel-color:#ed6363; } .calibration-g { --channel-color:#54bf79; } .calibration-b { --channel-color:#609af5; }
-      .calibration-white { --channel-color:#f3eee1; } .calibration-mixture { --channel-color:#edbb70; --channel-track:linear-gradient(to right,#efb665,#eaf5ff); }
+      .calibration-r { --channel-color:#ff0000; } .calibration-g { --channel-color:#00ff00; } .calibration-b { --channel-color:#0000ff; }
+      .calibration-white { --channel-color:#ffffff; } .calibration-mixture { --channel-color:#edbb70; --channel-track:linear-gradient(to right,#efb665 0%,#ffffff 50%,#8fc7ff 100%); }
       .channel-dot { display:inline-block; width:12px; height:12px; margin-right:9px; border-radius:50%; background:var(--channel-track,var(--channel-color)); border:1px solid #808080; }
       input[type=range] { appearance:none; -webkit-appearance:none; display:block; width:100%; height:42px; margin:0; background:transparent; cursor:pointer; }
-      input[type=range]::-webkit-slider-runnable-track { height:8px; border-radius:5px; background:var(--channel-track,var(--channel-color)); border:1px solid #808080; }
-      input[type=range]::-moz-range-track { height:6px; border-radius:5px; background:var(--channel-track,var(--channel-color)); border:1px solid #808080; }
+      input[type=range]::-webkit-slider-runnable-track { height:8px; border-radius:5px; background:var(--channel-track,linear-gradient(to right,#000000 0%,var(--channel-color) 100%)); border:1px solid #808080; }
+      input[type=range]::-moz-range-track { height:6px; border-radius:5px; background:var(--channel-track,linear-gradient(to right,#000000 0%,var(--channel-color) 100%)); border:1px solid #808080; }
       input[type=range]::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:22px; height:22px; margin-top:-8px; border-radius:50%; background:var(--card-background-color,#fff); border:3px solid var(--primary-text-color,#202124); }
       input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%; background:var(--card-background-color,#fff); border:3px solid var(--primary-text-color,#202124); }
       input[type=range]:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; border-radius:6px; }
