@@ -183,6 +183,85 @@ class ConfigAuditTests(unittest.TestCase):
         self.assertEqual(fields["interval"][0], 60)
         self.assertEqual(flow.config_entry.options["interval"], 90)
 
+    def test_solar_offset_form_displays_minutes_without_changing_stored_seconds(self):
+        for seconds in (0, 3600, -3600, 90, -61):
+            with self.subTest(seconds=seconds):
+                options = {"sunrise_offset": seconds, "sunset_offset": -seconds}
+                flow = self.options_flow(options)
+                fields = flow_fixtures.form_fields(immediate(flow.async_step_init()))
+                self.assertEqual(fields["sunrise_offset_minutes"][0], seconds / 60)
+                self.assertEqual(fields["sunset_offset_minutes"][0], -seconds / 60)
+                self.assertEqual(fields["sunrise_offset_minutes"][1].step, "any")
+                self.assertEqual(fields["sunrise_offset_minutes"][1].mode, "box")
+                self.assertNotIn("sunrise_offset", fields)
+                self.assertNotIn("sunset_offset", fields)
+                self.assertEqual(flow.config_entry.options, options)
+                self.assertIsNone(flow._base_options)
+
+    def test_solar_offset_form_roundtrips_seconds_in_fresh_flows_without_mutating_replay(self):
+        for seconds in (0, 3600, -3600, 90, -61, 123):
+            with self.subTest(seconds=seconds):
+                options = {"sunrise_offset": seconds, "sunset_offset": -seconds}
+                first = self.options_flow(options)
+                fields = flow_fixtures.form_fields(immediate(first.async_step_init()))
+                draft = {name: fields[name][0] for name in ("sunrise_offset_minutes", "sunset_offset_minutes")}
+                original_draft = dict(draft)
+                # The panel's Back action replays the same UI draft in fresh flows.
+                for _ in range(3):
+                    flow = self.options_flow(options)
+                    result = immediate(flow.async_step_init(draft))
+                    self.assertEqual(result["step_id"], "cal_neutral")
+                    self.assertEqual(flow._base_options, options)
+                    self.assertEqual(flow.config_entry.options, options)
+                    self.assertEqual(draft, original_draft)
+
+    def test_invalid_general_form_keeps_submitted_minutes_without_converting_twice(self):
+        flow = self.options_flow({"sunrise_offset": 3600, "sunset_offset": -3600})
+        draft = {"sunrise_offset_minutes": 20, "sunset_offset_minutes": -1.5,
+                 "min_brightness": 90, "max_brightness": 20}
+        form = immediate(flow.async_step_init(draft))
+        self.assertEqual(form["errors"], {"base": "invalid_brightness_range"})
+        fields = flow_fixtures.form_fields(form)
+        self.assertEqual(fields["sunrise_offset_minutes"][0], 20)
+        self.assertEqual(fields["sunset_offset_minutes"][0], -1.5)
+        self.assertIsNone(flow._base_options)
+        corrected = {**draft, "max_brightness": 100}
+        self.assertEqual(immediate(flow.async_step_init(corrected))["step_id"], "cal_neutral")
+        self.assertEqual(flow._base_options["sunrise_offset"], 1200)
+        self.assertEqual(flow._base_options["sunset_offset"], -90)
+        self.assertEqual(draft["sunrise_offset_minutes"], 20)
+
+    def test_solar_offset_conversion_precedes_fixed_event_validation(self):
+        flow = self.options_flow({})
+        draft = {"sunrise_time": "08:00:00", "sunset_time": "09:00:00",
+                 "sunrise_offset_minutes": 60, "sunset_offset_minutes": 0}
+        form = immediate(flow.async_step_init(draft))
+        self.assertEqual(form["errors"], {"base": "invalid_solar_times"})
+        self.assertEqual(flow_fixtures.form_fields(form)["sunrise_offset_minutes"][0], 60)
+        self.assertIsNone(flow._base_options)
+
+    def test_invalid_minute_offsets_return_a_recoverable_error_without_saving(self):
+        for value in (None, True, False, "60", "invalid", [], {}, float("inf"),
+                      float("-inf"), float("nan"), 1e100, 10 ** 400):
+            with self.subTest(value=value):
+                flow = self.options_flow({"sunrise_offset": 3600})
+                draft = {"sunrise_offset_minutes": value}
+                form = immediate(flow.async_step_init(draft))
+                self.assertEqual(form["errors"], {"base": "option_error"})
+                self.assertIs(flow_fixtures.form_fields(form)["sunrise_offset_minutes"][0], value)
+                self.assertEqual(flow.config_entry.options, {"sunrise_offset": 3600})
+                self.assertIsNone(flow._base_options)
+
+    def test_minutes_override_corresponding_seconds_but_leave_canonical_inputs_unchanged(self):
+        convert = self.namespace["options_from_form"]
+        canonical = {"sunrise_offset": 3600, "sunset_offset": -61, "interval": 60}
+        self.assertEqual(convert(canonical), canonical)
+        self.assertIsNot(convert(canonical), canonical)
+        draft = {**canonical, "sunrise_offset_minutes": 20}
+        self.assertEqual(convert(draft), {**canonical, "sunrise_offset": 1200})
+        self.assertEqual(draft["sunrise_offset"], 3600)
+        self.assertEqual(draft["sunrise_offset_minutes"], 20)
+
     def test_yaml_schema_infers_legacy_before_new_defaults_and_keeps_explicit_mode(self):
         undefined = object()
 

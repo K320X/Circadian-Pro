@@ -13,6 +13,7 @@ from datetime import time, timedelta
 from enum import Enum
 import logging
 import json
+from math import isfinite
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -73,6 +74,7 @@ def production_namespace():
         "__package__": "calibration_flow_tests",
         "time": time,
         "timedelta": timedelta,
+        "isfinite": isfinite,
         "Enum": Enum,
         "deepcopy": deepcopy,
         "_LOGGER": logging.getLogger("circadian_pro.flow_tests"),
@@ -129,7 +131,7 @@ def production_namespace():
     namespace["EntitySelector"] = lambda config: config
     namespace["EntitySelectorConfig"] = lambda **config: SimpleNamespace(**config)
     load_nodes(namespace, "const.py", {"box_int", "replace_none_str", "_duration_seconds", "_time_value", "validate_cross_options"})
-    load_nodes(namespace, "config_flow.py", {"validate_entry", "validate_options"})
+    load_nodes(namespace, "config_flow.py", {"options_from_form", "validate_entry", "validate_options"})
 
     tree = ast.parse((COMPONENT / "config_flow.py").read_text(encoding="utf-8"))
     handler = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "OptionsFlowHandler")
@@ -381,6 +383,22 @@ class CalibrationFlowTests(unittest.TestCase):
         self.assertEqual(result["data"]["cal_white_kelvin_neutral"], 4500)
         self.assertEqual(result["data"]["cal_rgb_warm_r"], 244)
         self.assertNotIn("preview_light", result["data"])
+
+    def test_final_save_keeps_solar_offsets_in_seconds_without_form_aliases(self):
+        flow = self.flow(mode="rgb", sunrise_offset=3600, sunset_offset=-3600)
+        original = deepcopy(flow.config_entry.options)
+        draft = {"lights": ["light.strip"], "sunrise_offset_minutes": 20,
+                 "sunset_offset_minutes": -61 / 60}
+        self.assertEqual(immediate(flow.async_step_init(draft))["step_id"], "cal_neutral")
+        immediate(flow.async_step_cal_neutral(self.neutral()))
+        result = immediate(flow.async_step_cal_warm(self.warm()))
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(result["data"]["sunrise_offset"], 1200)
+        self.assertEqual(result["data"]["sunset_offset"], -61)
+        self.assertNotIn("sunrise_offset_minutes", result["data"])
+        self.assertNotIn("sunset_offset_minutes", result["data"])
+        self.assertEqual(flow.config_entry.options, original)
+        self.assertEqual(draft["sunrise_offset_minutes"], 20)
 
     def test_standard_form_does_not_require_preview_module(self):
         flow = self.flow()

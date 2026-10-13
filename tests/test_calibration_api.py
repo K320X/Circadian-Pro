@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta, timezone
 from enum import Enum
 from functools import wraps
 import importlib.util
+from math import isfinite
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -83,7 +84,7 @@ def load_api_module():
 
     def domain_schema(data):
         const.schema_calls.append(deepcopy(data))
-        allowed = {"lights", "min_brightness", "max_brightness", "min_color_temp", "max_color_temp", "interval", "sunrise_time", "cal_rgb_neutral_r"}
+        allowed = {"lights", "min_brightness", "max_brightness", "min_color_temp", "max_color_temp", "interval", "sunrise_time", "sunrise_offset", "sunset_offset", "cal_rgb_neutral_r"}
         if set(data) - allowed:
             raise Invalid("Unexpected option")
         if "cal_rgb_neutral_r" in data and (not isinstance(data["cal_rgb_neutral_r"], int) or not 0 <= data["cal_rgb_neutral_r"] <= 255):
@@ -109,6 +110,12 @@ def load_api_module():
     const.validate_cross_options = namespace["validate_cross_options"]
     config_flow = ModuleType("calibration_api_tests_package.config_flow")
     config_flow.validate_entry = lambda entry: deepcopy(entry.options)
+    flow_tree = ast.parse((COMPONENT / "config_flow.py").read_text(encoding="utf-8"))
+    converter = next(node for node in flow_tree.body if getattr(node, "name", None) == "options_from_form")
+    converter_namespace = {"vol": SimpleNamespace(Invalid=Invalid), "timedelta": timedelta, "isfinite": isfinite}
+    converter_module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), converter], type_ignores=[])
+    exec(compile(ast.fix_missing_locations(converter_module), "<real form unit conversion>", "exec"), converter_namespace)
+    config_flow.options_from_form = converter_namespace["options_from_form"]
     calibration = ModuleType("calibration_api_tests_package.calibration")
     calibration.PREVIEW_SECONDS = 60
     calibration.calls = []
@@ -302,6 +309,36 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("preview_light", settings)
         self.assertEqual(self.entry.options, original)
         self.assertEqual(self.results[-1][1], {"active": True, "expires_in": 60})
+
+    def test_preview_converts_minute_drafts_once_and_keeps_stored_seconds_unchanged(self):
+        self.entry.options.update(sunrise_offset=3600, sunset_offset=-3600)
+        original = deepcopy(self.entry.options)
+        draft = {"sunrise_offset": 3600, "sunrise_offset_minutes": 20,
+                 "sunset_offset_minutes": -61 / 60}
+        original_draft = deepcopy(draft)
+        for _ in range(2):
+            self.invoke(self.api.websocket_preview, entry_id="loaded", settings=draft, kelvin=4000)
+            settings = self.calibration.calls[-1][1]
+            self.assertEqual(settings["sunrise_offset"], 1200)
+            self.assertEqual(settings["sunset_offset"], -61)
+            self.assertNotIn("sunrise_offset_minutes", settings)
+            self.assertNotIn("sunset_offset_minutes", self.const.schema_calls[-1])
+        self.assertEqual(self.entry.options, original)
+        self.assertEqual(draft, original_draft)
+
+    def test_preview_without_minute_aliases_preserves_second_units(self):
+        self.entry.options.update(sunrise_offset=3600, sunset_offset=-61)
+        self.invoke(self.api.websocket_preview, entry_id="loaded", settings={}, kelvin=1000)
+        self.assertEqual(self.calibration.calls[-1][1]["sunrise_offset"], 3600)
+        self.assertEqual(self.calibration.calls[-1][1]["sunset_offset"], -61)
+
+    def test_invalid_minute_offset_cannot_start_a_preview(self):
+        for value in (True, None, "60", float("inf"), float("nan"), 1e100):
+            with self.subTest(value=value):
+                self.invoke(self.api.websocket_preview, entry_id="loaded",
+                            settings={"sunrise_offset_minutes": value}, kelvin=1000)
+                self.assertEqual(self.errors[-1][1], "invalid_options")
+        self.assertEqual(self.calibration.calls, [])
 
     def test_invalid_channel_or_unknown_option_never_starts_preview(self):
         for draft in ({"cal_rgb_neutral_r": 999}, {"cal_rgb_neutral_r": "bad"}, {"unknown_option": 1}):

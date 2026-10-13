@@ -65,11 +65,11 @@ def _serializable_settings(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validated_draft(entry: Any, draft: dict[str, Any]) -> dict[str, Any]:
-    from .config_flow import validate_entry
+    from .config_flow import options_from_form, validate_entry
 
     merged = _serializable_settings(validate_entry(entry))
     ignored_legacy = _LEGACY_CALIBRATION_OPTIONS.intersection(merged)
-    merged.update(deepcopy(draft))
+    merged.update(options_from_form(deepcopy(draft)))
     merged.pop("preview_light", None)
     # Old profiles retain these inactive options for compatibility. They must
     # not make a temporary preview fail the current strict schema; newly

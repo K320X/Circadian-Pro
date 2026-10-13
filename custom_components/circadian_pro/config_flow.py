@@ -3,6 +3,8 @@
 
 import logging
 from copy import deepcopy
+from datetime import timedelta
+from math import isfinite
 from typing import Any
 
 import voluptuous as vol
@@ -45,6 +47,30 @@ from .const import (  # pylint: disable=unused-import
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def options_from_form(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Convert UI-only minute offsets to stored seconds without altering a draft."""
+    options = dict(user_input)
+    for name in ("sunrise_offset", "sunset_offset"):
+        form_name = f"{name}_minutes"
+        if form_name not in options:
+            continue
+        minutes = options.pop(form_name)
+        try:
+            if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
+                raise ValueError("A numeric offset is required")
+            seconds = float(minutes) * 60
+            if not isfinite(seconds):
+                raise ValueError("A finite offset is required")
+            # Legacy offsets may contain individual seconds. Round only after
+            # converting back, so displaying 61 / 60 minutes preserves 61 s.
+            seconds = round(seconds)
+            timedelta(seconds=seconds)  # Reject durations the runtime cannot use.
+        except (ValueError, TypeError, OverflowError) as err:
+            raise vol.Invalid("option_error") from err
+        options[name] = seconds
+    return options
 
 
 def validate_entry(config_entry: config_entries.ConfigEntry) -> dict[str, Any]:
@@ -237,10 +263,15 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         errors: dict[str, str] = {}
         if user_input is not None:
-            validate_options(user_input, errors)
+            try:
+                submitted_options = options_from_form(user_input)
+            except vol.Invalid:
+                errors["base"] = "option_error"
+            else:
+                validate_options(submitted_options, errors)
             if not errors:
                 self._base_options = dict(conf.options)
-                self._base_options.update(user_input)
+                self._base_options.update(submitted_options)
                 if self._uses_rgbww():
                     return await self.async_step_white_channels()
                 if self._uses_white():
@@ -339,6 +370,21 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
         options_schema: dict[Any, Any] = {}
         for name, default, validation in VALIDATION_TUPLES:
             if name in calibration_keys or name not in allowed_init_keys:
+                continue
+            if name in ("sunrise_offset", "sunset_offset"):
+                form_name = f"{name}_minutes"
+                if user_input is not None and form_name in user_input:
+                    selected_default = user_input[form_name]
+                else:
+                    persisted = data.get(name, default)
+                    if isinstance(persisted, timedelta):
+                        persisted = persisted.total_seconds()
+                    selected_default = persisted / 60
+                options_schema[vol.Optional(form_name, default=selected_default)] = (
+                    selector.NumberSelector(selector.NumberSelectorConfig(
+                        mode=selector.NumberSelectorMode.BOX, step="any",
+                    ))
+                )
                 continue
             selected_default = (user_input or {}).get(name, data.get(name, default))
             if name in EXTRA_VALIDATION and selected_default not in (None, NONE_STR):
