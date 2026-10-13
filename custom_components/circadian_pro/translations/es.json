@@ -4,18 +4,25 @@
     "step": {
       "user": {
         "title": "Elige un nombre",
-        "description": "Crea una instancia de Circadian Pro. Cada instancia puede controlar varias luces.",
+        "description": "Crea un perfil de Circadian Pro. Selecciona sus luces en el siguiente paso.",
         "data": {
           "name": "Nombre"
         }
       },
       "menu": {
         "title": "Crear o duplicar",
-        "description": "Crea una nueva instancia o duplica una existente.",
+        "description": "Crea un nuevo perfil o duplica uno existente.",
         "data": {
           "action": "Acción"
         }
       }
+    },
+    "error": {
+      "unique_name": "Ya existe un perfil con este nombre o se está creando. Elige otro nombre.",
+      "name_required": "Escribe un nombre para este perfil."
+    },
+    "abort": {
+      "already_configured": "Ya existe un perfil con este nombre."
     }
   },
   "options": {
@@ -23,7 +30,7 @@
       "init": {
         "title": "Ajustes generales",
         "submit": "Siguiente",
-        "description": "Configura el comportamiento general y después las referencias visuales de 4000K y 1000K. Los ajustes de canales blancos aparecen automáticamente para las luces RGBW o RGB+CCT seleccionadas. Para previsualizar las luces al instante mientras editas, abre el panel Calibración Circadian Pro.",
+        "description": "Configura el comportamiento general y después las referencias visuales de 4000K y 1000K. Los ajustes de canales blancos aparecen automáticamente para las luces RGBW o RGB+CCT seleccionadas. Para previsualizar las luces al instante mientras editas, abre el panel Circadian Pro.",
         "data": {
           "lights": "Luces",
           "interval": "Frecuencia de adaptación (s)",
@@ -130,7 +137,7 @@
       "cal_neutral": {
         "title": "Calibración 4000K",
         "submit": "Siguiente",
-        "description": "Ajusta RGB para tu referencia visual de 4000K. Las luces RGBW añaden un control de intensidad blanca; las RGB+CCT añaden también la temperatura de mezcla entre blanco cálido y frío. El panel Calibración Circadian Pro permite previsualizar los cambios al instante mientras editas.",
+        "description": "Ajusta RGB para tu referencia visual de 4000K. Las luces RGBW añaden un control de intensidad blanca; las RGB+CCT añaden también la temperatura de mezcla entre blanco cálido y frío. El panel Circadian Pro permite previsualizar los cambios al instante mientras editas.",
         "data": {
           "cal_rgb_neutral_r": "Intensidad rojo (0–255)",
           "cal_rgb_neutral_g": "Intensidad verde (0–255)",
@@ -146,7 +153,7 @@
       "cal_warm": {
         "title": "Calibración 1000K",
         "submit": "Terminar",
-        "description": "Ajusta RGB para tu referencia visual de 1000K. La intensidad blanca aparece solo si alguna luz seleccionada admite RGBW o RGB+CCT; con poco blanco, RGB puede producir un tono cálido o naranja. El panel Calibración Circadian Pro permite previsualizar los cambios al instante mientras editas.",
+        "description": "Ajusta RGB para tu referencia visual de 1000K. La intensidad blanca aparece solo si alguna luz seleccionada admite RGBW o RGB+CCT; con poco blanco, RGB puede producir un tono cálido o naranja. El panel Circadian Pro permite previsualizar los cambios al instante mientras editas.",
         "data": {
           "cal_rgb_warm_r": "Intensidad rojo (0–255)",
           "cal_rgb_warm_g": "Intensidad verde (0–255)",

@@ -30,11 +30,13 @@
     ['cal_rgb_warm_r','cal_rgb_warm_g','cal_rgb_warm_b','cal_white_intensity_warm'],
   ];
   const flows = new Map();
+  const configFlows = new Map();
+  const profiles = new Map([['local-profile-a',{entry_id:'local-profile-a',title:'Profile A',settings:original}]]);
   let sequence = 0;
   const commands = [];
-  const form = (id, index, errors = {}) => ({
+  const form = (id, index, errors = {}, defaults = original) => ({
     flow_id:id, type:'form', step_id:steps[index], last_step:index === 3, errors,
-    data_schema:names[index].map((name) => ({ name, default:original[name],
+    data_schema:names[index].map((name) => ({ name, default:defaults[name],
       ...(name === 'lights' ? {selector:{entity:{domain:'light',multiple:true}}}
         : name === 'sleep_rgb_color' ? {selector:{color_rgb:{}}}
         : name === 'sunrise_time' ? {type:'string'}
@@ -55,7 +57,7 @@
     },
     callWS:async(message) => {
       commands.push(message);
-      if(message.type.endsWith('/entries')) return [{entry_id:'local-profile-a',title:'Profile A',settings:{...original}}];
+      if(message.type.endsWith('/entries')) return [...profiles.values()].map((profile) => ({...profile,settings:{...profile.settings}}));
       if(message.type.endsWith('/translations')) return translations;
       if(message.type.endsWith('/preview')) {
         if(message.settings.white_w_kelvin >= message.settings.white_cw_kelvin) throw Error('El blanco frío debe superar la temperatura del blanco cálido.');
@@ -68,16 +70,44 @@
     callApi:async(method,path,data) => {
       commands.push({method,path,data});
       const id = path.split('/').at(-1);
+      if(path === 'config/config_entries/flow') {
+        const key = `create-${++sequence}`;
+        configFlows.set(key,{step:'menu'});
+        return {type:'form',flow_id:key,step_id:'menu',data_schema:[]};
+      }
+      if(path.startsWith('config/config_entries/flow/')) {
+        if(method === 'DELETE') {configFlows.delete(id);return {};}
+        const creating = configFlows.get(id);
+        if(creating.step === 'menu') {
+          if(data.action !== 'new') throw Error('La prueba crea perfiles nuevos sin duplicar luces existentes.');
+          creating.step = 'user';
+          return {type:'form',flow_id:id,step_id:'user',data_schema:[{name:'name',required:true,type:'string'}]};
+        }
+        const name = data.name.trim();
+        if(!name || [...profiles.values()].some((profile) => profile.title === name)) {
+          return {type:'form',flow_id:id,step_id:'user',errors:{name:name?'unique_name':'name_required'},data_schema:[]};
+        }
+        const entryId = `new-profile-${++sequence}`;
+        profiles.set(entryId,{entry_id:entryId,title:name,settings:{...original,lights:[]}});
+        configFlows.delete(id);
+        return {type:'create_entry',flow_id:id,result:{entry_id:entryId,title:name,state:'loaded'}};
+      }
       if(method === 'DELETE') { flows.delete(id); return {}; }
-      if(path.endsWith('/flow')) { const key = String(++sequence);flows.set(key,{index:0,draft:{...original}});return form(key,0); }
+      if(path.endsWith('/flow')) {
+        const profile = profiles.get(data.handler);
+        if(!profile) throw Error('Perfil inexistente.');
+        const key = String(++sequence);
+        flows.set(key,{index:0,profile,draft:{...profile.settings}});
+        return form(key,0,{},profile.settings);
+      }
       const flow = flows.get(id);
       if(flow.index === 0 && !Array.isArray(data.lights)) throw Error('La selección de luces debe conservar una lista, aunque solo haya una luz elegida.');
       if(flow.index === 0 && (!Array.isArray(data.sleep_rgb_color) || data.sunrise_time === null)) throw Error('RGB debe conservar tres canales y el horario opcional su valor vacío.');
       Object.assign(flow.draft,data);
-      if(flow.index === 1 && data.white_w_kelvin >= data.white_cw_kelvin) return form(id,1,{base:'invalid_white_channel_range'});
-      if(flow.index === 3) { Object.assign(original,flow.draft);flows.delete(id);return {type:'create_entry'}; }
+      if(flow.index === 1 && data.white_w_kelvin >= data.white_cw_kelvin) return form(id,1,{base:'invalid_white_channel_range'},flow.draft);
+      if(flow.index === 3) { Object.assign(flow.profile.settings,flow.draft);flows.delete(id);return {type:'create_entry'}; }
       flow.index++;
-      return form(id,flow.index);
+      return form(id,flow.index,{},flow.draft);
     },
   };
   // A read-only inspection hook for automated local UI checks.

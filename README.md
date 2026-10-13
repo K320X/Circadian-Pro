@@ -17,7 +17,7 @@ It supports multiple independent instances, manual-control detection, automatic 
 
 **Current stable version:** `0.20.3`
 
-**Local development version:** `0.21.0` (RGB+CCT correction and live calibration wizard; not yet released).
+**Local development version:** `0.21.1` (RGB+CCT correction and a unified profile creation and calibration panel; not yet released).
 
 ## Features
 
@@ -89,7 +89,9 @@ At the 4000 K reference, RGB+CCT has three independent adjustments: RGB channels
 
 The extra cold-white and mixture controls appear only when a selected light supports `rgbww`. RGBW keeps one white channel; profiles containing only RGB lights skip physical-white settings and show only RGB calibration. Existing hidden white values are preserved. Pixel-addressable (IC) control is independent of whether an entity exposes RGB, RGBW, or RGBWW.
 
-Open the **Calibración Circadian Pro** sidebar panel for immediate previews. The preview checkbox is disabled by default. Checking it applies the draft immediately; adjusting RGB or white controls while it is checked updates the lights without saving. Unchecking it stops the preview and restores the previous state.
+Open the **Circadian Pro** sidebar panel to create profiles or configure and calibrate existing ones. **New profile** asks for a name and creates an empty profile before opening its configuration wizard. Creating an empty profile does not control any lights. If you close the configuration wizard, the created profile remains available so you can finish configuring it later. The panel refreshes the profile list after creation. **Refresh list** also picks up profiles created from Home Assistant's integration page.
+
+The preview checkbox is disabled by default. Checking it applies the draft immediately; adjusting RGB or white controls while it is checked updates the lights without saving. Unchecking it stops the preview and restores the previous state.
 
 The panel includes general settings, physical white channels, and both calibration points. The first step has **Next**; intermediate steps have **Back** and **Next**; the final step has only **Finish**, which saves the settings. Going back preserves your draft. Navigation stops the preview, so each calibration step starts with it disabled. Canceling or closing the panel also stops the preview; the 60-second expiry stops it and clears the checkbox automatically. A light changed manually during the preview keeps the external change. The standard integration options form remains available for editing settings without immediate previews.
 

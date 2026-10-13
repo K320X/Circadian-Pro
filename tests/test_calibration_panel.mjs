@@ -16,7 +16,7 @@ globalThis.customElements = {
   get: (name) => registered.get(name),
   define: (name, constructor) => registered.set(name, constructor),
 };
-const { PreviewSession, CalibrationFlow, CircadianCalibrationPanel, selectedEntityValues } = await import(
+const { PreviewSession, CalibrationFlow, NewProfileFlow, waitForLoadedEntry, CircadianCalibrationPanel, selectedEntityValues } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
 );
 if (originalHTMLElement === undefined) delete globalThis.HTMLElement;
@@ -475,4 +475,231 @@ test("compact chooser shows friendly selections and closes after adding another 
   checkboxes[0].listeners.change();
   assert.deepEqual(selection.children.map((node) => node.textContent), ["Light B"]);
   assert.deepEqual(panel.values.lights, ["light.two"]);
+});
+
+const CONFIG_FLOW = "config/config_entries/flow";
+
+class ProfileBackend {
+  constructor({ menu = true, loseReply = false } = {}) {
+    this.menu = menu;
+    this.loseReply = loseReply;
+    this.calls = [];
+    this.profiles = [];
+    this.configActive = false;
+    this.optionsSaved = 0;
+  }
+  async callApi(method, path, data) {
+    this.calls.push({ method, path, data: data === undefined ? undefined : structuredClone(data) });
+    if (path === CONFIG_FLOW) {
+      assert.deepEqual(data, { handler: "circadian_pro", show_advanced_options: false, source: "user" });
+      this.configActive = true;
+      return { type: "form", flow_id: "server-config-flow", step_id: this.menu ? "menu" : "user" };
+    }
+    if (path === CONFIG_FLOW + "/server-config-flow") {
+      if (method === "DELETE") { this.configActive = false; return {}; }
+      if (method === "GET") {
+        if (!this.configActive) throw new Error("Flow does not exist");
+        return { type: "form", flow_id: "server-config-flow", step_id: "user" };
+      }
+      assert.equal(method, "POST");
+      if (data.action) {
+        assert.deepEqual(data, { action: "new" });
+        return { type: "form", flow_id: "server-config-flow", step_id: "user" };
+      }
+      assert.deepEqual(Object.keys(data), ["name"]);
+      if (data.name === "Taken") return { type: "form", flow_id: "server-config-flow", step_id: "user", errors: { name: "unique_name" } };
+      const profile = { entry_id: "server-returned-entry-id", title: data.name, settings: { lights: [], white_w_kelvin: 3000 } };
+      this.profiles.push(profile);
+      this.configActive = false;
+      if (this.loseReply) throw new Error("Connection lost after creation");
+      return { type: "create_entry", result: { entry_id: profile.entry_id, title: profile.title } };
+    }
+    if (path === FLOW) {
+      assert.ok(this.profiles.some((profile) => profile.entry_id === data.handler));
+      return { type: "form", flow_id: "server-options-flow", step_id: "init", data_schema: [{ name: "lights", default: [], selector: { entity: { multiple: true } } }] };
+    }
+    if (path === FLOW + "/server-options-flow" && method === "DELETE") return {};
+    throw new Error(`Unexpected request: ${method} ${path}`);
+  }
+  async callWS(message) {
+    this.calls.push({ type: message.type, entry_id: message.entry_id });
+    if (message.type === API + "entries") return structuredClone(this.profiles);
+    if (message.type === API + "stop") return { active: false };
+    throw new Error(`Unexpected WebSocket request: ${message.type}`);
+  }
+}
+
+test("opening and cancelling a local new-profile form creates no HA flow or profile", async () => {
+  const backend = new ProfileBackend();
+  const panel = { _hass: { callApi: backend.callApi.bind(backend) }, render: () => {} };
+  CircadianCalibrationPanel.prototype.openNewProfile.call(panel);
+  assert.equal(panel.newProfileOpen, true);
+  assert.equal(panel.newProfileName, "");
+  assert.deepEqual(backend.calls, []);
+  await panel.creator.close();
+  assert.deepEqual(backend.calls, []);
+  assert.equal(backend.profiles.length, 0);
+});
+
+test("Create uses the standard config flow, resolves the new action and trusts the returned ID", async () => {
+  const backend = new ProfileBackend();
+  const creation = new NewProfileFlow(backend.callApi.bind(backend));
+  const result = await creation.create("  Office  ");
+  assert.equal(result.type, "create_entry");
+  assert.equal(creation.createdEntryId, "server-returned-entry-id");
+  assert.equal(creation.name, "Office");
+  assert.deepEqual(backend.calls.map((call) => [call.method, call.path]), [
+    ["POST", CONFIG_FLOW], ["POST", CONFIG_FLOW + "/server-config-flow"], ["POST", CONFIG_FLOW + "/server-config-flow"],
+  ]);
+  assert.deepEqual(backend.calls[1].data, { action: "new" });
+  assert.deepEqual(backend.calls[2].data, { name: "Office" });
+  assert.deepEqual(backend.profiles[0].settings.lights, []);
+  assert.equal(backend.optionsSaved, 0);
+  assert.ok(backend.calls.every((call) => !call.path.startsWith(FLOW)));
+});
+
+test("a first profile skips the menu; blank names make no requests", async () => {
+  const backend = new ProfileBackend({ menu: false });
+  const creation = new NewProfileFlow(backend.callApi.bind(backend));
+  await assert.rejects(creation.create("   "), (error) => error.reason === "name_required");
+  assert.deepEqual(backend.calls, []);
+  await creation.create("Office");
+  assert.equal(backend.calls.length, 2);
+  assert.deepEqual(backend.calls[1].data, { name: "Office" });
+});
+
+test("duplicate-name errors preserve the name and reuse the unsaved name form", async () => {
+  const backend = new ProfileBackend();
+  const creation = new NewProfileFlow(backend.callApi.bind(backend));
+  const result = await creation.create("Taken");
+  assert.deepEqual(result.errors, { name: "unique_name" });
+  assert.equal(creation.name, "Taken");
+  assert.equal(creation.createdEntryId, null);
+  assert.equal(backend.profiles.length, 0);
+  await creation.create("Another office");
+  assert.equal(backend.calls.filter((call) => call.path === CONFIG_FLOW).length, 1);
+  assert.deepEqual(backend.calls.at(-1).data, { name: "Another office" });
+});
+
+test("cancelling a rejected name aborts only its config flow; closing a created profile never deletes it", async () => {
+  const backend = new ProfileBackend();
+  const creation = new NewProfileFlow(backend.callApi.bind(backend));
+  await creation.create("Taken");
+  await creation.close();
+  assert.equal(backend.calls.at(-1).method, "DELETE");
+  assert.equal(backend.calls.at(-1).path, CONFIG_FLOW + "/server-config-flow");
+  assert.equal(backend.profiles.length, 0);
+  const created = new NewProfileFlow(backend.callApi.bind(backend));
+  await created.create("Office");
+  const callCount = backend.calls.length;
+  await created.close();
+  assert.equal(backend.calls.length, callCount);
+  assert.equal(backend.profiles.length, 1);
+  await assert.rejects(created.create("Office"), /already been created/);
+  assert.equal(backend.calls.length, callCount);
+});
+
+test("a lost create reply prevents another POST and reconciles via GET without adopting a profile", async () => {
+  const backend = new ProfileBackend({ loseReply: true });
+  const creation = new NewProfileFlow(backend.callApi.bind(backend));
+  await assert.rejects(creation.create("Office"), (error) => error.reason === "creation_uncertain");
+  assert.equal(creation.uncertain, true);
+  assert.equal(creation.name, "Office");
+  assert.equal(backend.profiles.length, 1);
+  const callCount = backend.calls.length;
+  await assert.rejects(creation.create("Office"), (error) => error.reason === "creation_uncertain");
+  assert.equal(backend.calls.length, callCount);
+  const recovered = await creation.recover();
+  assert.equal(recovered, null);
+  assert.equal(backend.calls.at(-1).method, "GET");
+  assert.equal(creation.createdEntryId, null);
+  assert.equal(backend.profiles.length, 1);
+});
+
+test("read recovery of a still-active name form permits only a later explicit create", async () => {
+  const backend = new ProfileBackend();
+  let disconnect = true;
+  const creation = new NewProfileFlow(async (...args) => {
+    if (args[1].endsWith("/server-config-flow") && args[2]?.name && disconnect) {
+      disconnect = false;
+      throw new Error("Disconnected before saving");
+    }
+    return backend.callApi(...args);
+  });
+  await assert.rejects(creation.create("Office"));
+  assert.equal(backend.profiles.length, 0);
+  const recovered = await creation.recover();
+  assert.equal(recovered.step_id, "user");
+  assert.equal(creation.uncertain, false);
+  assert.equal(backend.calls.at(-1).method, "GET");
+  assert.equal(backend.profiles.length, 0);
+  await creation.create("Office");
+  assert.equal(backend.profiles.length, 1);
+});
+
+test("loaded-entry polling is serial, bounded and does not claim readiness from creation alone", async () => {
+  const delays = [];
+  let reads = 0;
+  let active = false;
+  const result = await waitForLoadedEntry(async (message) => {
+    assert.equal(message.type, API + "entries");
+    assert.equal(active, false);
+    active = true;
+    await Promise.resolve();
+    active = false;
+    reads++;
+    return [];
+  }, "server-returned-entry-id", { wait: async (delay) => { delays.push(delay); } });
+  assert.equal(result, null);
+  assert.equal(reads, 8);
+  assert.deepEqual(delays, [250, 500, 1000, 2000, 3000, 4000, 4000]);
+  assert.equal(delays.reduce((total, delay) => total + delay, 0), 14750);
+});
+
+test("retrying load reads the same known ID without recreating; cancellation stops further polling", async () => {
+  const entry = { entry_id: "server-returned-entry-id", title: "Office", settings: { lights: [] } };
+  let ready = false;
+  let reads = 0;
+  const callWS = async () => { reads++; return ready ? [entry] : []; };
+  assert.equal(await waitForLoadedEntry(callWS, entry.entry_id, { delays: [0] }), null);
+  ready = true;
+  assert.equal(await waitForLoadedEntry(callWS, entry.entry_id, { delays: [0] }), entry);
+  assert.equal(reads, 2);
+  let cancelled = false;
+  ready = false;
+  assert.equal(await waitForLoadedEntry(callWS, entry.entry_id, {
+    delays: [0, 250], wait: async () => { cancelled = true; }, cancelled: () => cancelled,
+  }), null);
+  assert.equal(reads, 3);
+});
+
+test("creating in the panel opens the options wizard only after loaded confirmation; cancelling keeps the profile", async () => {
+  const backend = new ProfileBackend();
+  const panel = {
+    _hass: { callApi: backend.callApi.bind(backend), callWS: backend.callWS.bind(backend) },
+    creator: new NewProfileFlow(backend.callApi.bind(backend)),
+    newProfileName: "Office", newProfileOpen: true, creationRevision: 0, entries: [], translations: {},
+    copy: { created: "Profile created", createdKept: "Created profile kept", notLoaded: "Retry loading", error: "Error" },
+    updateControls: () => {}, render: () => {}, readValues: () => ({}),
+  };
+  for (const name of ["action", "createNewProfile", "loadCreatedEntry", "openEntry", "showStep", "closeWizard"]) {
+    panel[name] = CircadianCalibrationPanel.prototype[name].bind(panel);
+  }
+  await panel.createNewProfile();
+  assert.equal(panel.error, "");
+  assert.equal(panel.newProfileOpen, false);
+  assert.equal(panel.flow.current.step_id, "init");
+  assert.deepEqual(panel.values.lights, []);
+  assert.equal(panel.createdProfile.entry_id, "server-returned-entry-id");
+  const loadedRead = backend.calls.findIndex((call) => call.type === API + "entries");
+  const optionsStart = backend.calls.findIndex((call) => call.path === FLOW);
+  assert.ok(loadedRead >= 0 && optionsStart > loadedRead);
+  assert.equal(backend.optionsSaved, 0);
+  await panel.closeWizard();
+  assert.equal(panel.flow, null);
+  assert.equal(panel.message, "Created profile kept");
+  assert.equal(backend.profiles.length, 1);
+  assert.equal(backend.calls.at(-1).path, FLOW + "/server-options-flow");
+  assert.equal(backend.calls.at(-1).method, "DELETE");
+  assert.ok(backend.calls.every((call) => !call.path?.startsWith("config/config_entries/entry/")));
 });

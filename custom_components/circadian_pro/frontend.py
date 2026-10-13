@@ -1,4 +1,4 @@
-"""Admin-only calibration panel and its temporary-preview WebSocket API."""
+"""Admin-only Circadian Pro panel and its temporary-preview WebSocket API."""
 
 from __future__ import annotations
 
@@ -127,7 +127,8 @@ async def websocket_stop(hass: Any, connection: Any, msg: dict[str, Any]) -> Non
 
 def _read_translations(language: str) -> dict[str, Any]:
     path = Path(__file__).parent / "translations" / f"{language}.json"
-    return json.loads(path.read_text(encoding="utf-8")).get("options", {})
+    translations = json.loads(path.read_text(encoding="utf-8"))
+    return {**translations.get("options", {}), "config": translations.get("config", {})}
 
 
 @websocket_api.websocket_command({
@@ -164,7 +165,7 @@ async def async_setup_frontend(hass: Any) -> None:
             else:
                 await panel_custom.async_register_panel(
                     hass, frontend_url_path=PANEL_PATH, webcomponent_name=PANEL_PATH,
-                    sidebar_title="Calibración Circadian Pro", sidebar_icon="mdi:tune",
+                    sidebar_title="Circadian Pro", sidebar_icon="mdi:tune",
                     module_url=PANEL_URL, require_admin=True,
                 )
             data["panel_registered"] = True

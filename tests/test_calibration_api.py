@@ -328,9 +328,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.calibration.stops, ["loaded", "loaded"])
         self.assertEqual(self.results[-1][1], {"active": False})
 
-    def test_translations_are_local_cached_options_data(self):
+    def test_translations_are_local_cached_options_and_creation_data(self):
         self.invoke(self.api.websocket_translations, language="es-ES")
         self.assertIn("step", self.results[-1][1])
+        self.assertEqual(self.results[-1][1]["config"]["step"]["user"]["data"]["name"], "Nombre")
+        self.assertIn("unique_name", self.results[-1][1]["config"]["error"])
+        self.assertIn("name_required", self.results[-1][1]["config"]["error"])
         self.invoke(self.api.websocket_translations, language="es")
         self.assertEqual(self.executor_calls, [("es",)])
         self.invoke(self.api.websocket_translations, language="../../other")
@@ -347,6 +350,7 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(self.static_paths[0].cache_headers)
         self.assertEqual(len(self.panel_custom.calls), 1)
         self.assertEqual(self.panel_custom.calls[0]["frontend_url_path"], "circadian-pro-calibration")
+        self.assertEqual(self.panel_custom.calls[0]["sidebar_title"], "Circadian Pro")
         self.assertTrue(self.panel_custom.calls[0]["require_admin"])
         self.assertIs(self.hass.data["frontend_panels"]["circadian-pro"], dashboard)
         self.assertEqual(set(self.hass.data["circadian_pro"]), {"loaded"})

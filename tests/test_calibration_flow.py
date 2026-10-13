@@ -131,6 +131,108 @@ def form_fields(form):
     return {marker.name: (marker.default, selector) for marker, selector in form["data_schema"].schema.items()}
 
 
+class ConfigCreationTests(unittest.TestCase):
+    """Exercise the real user/menu/name steps without any light services."""
+
+    def setUp(self):
+        self.namespace = production_namespace()
+
+        class AbortFlow(Exception):
+            def __init__(self, reason):
+                self.reason = reason
+
+        self.namespace["AbortFlow"] = AbortFlow
+        self.namespace["vol"].Required = Optional
+        self.namespace["vol"].In = lambda values: values
+        names = {"async_step_user", "async_step_menu", "async_step_wait_for_name"}
+        load_nodes(self.namespace, "config_flow.py", names, class_name="ConfigFlow")
+
+        class FakeConfigFlow:
+            def __init__(self, entries=(), in_progress=()):
+                self.entries = list(entries)
+                self.in_progress = set(in_progress)
+                self.source_options = None
+                self.unique_id = None
+                self.created_entries = []
+                self.hass = SimpleNamespace(config_entries=SimpleNamespace(async_get_entry=lambda entry_id: next((entry for entry in self.entries if entry.entry_id == entry_id), None)))
+
+            def _async_current_entries(self):
+                return self.entries
+
+            async def async_set_unique_id(self, name):
+                if name in self.in_progress:
+                    raise AbortFlow("already_in_progress")
+                self.unique_id = name
+
+            def _abort_if_unique_id_configured(self):
+                if any(entry.unique_id == self.unique_id for entry in self.entries):
+                    raise AbortFlow("already_configured")
+
+            def async_show_form(self, **kwargs):
+                return {"type": "form", **kwargs}
+
+            def async_create_entry(self, **kwargs):
+                self.created_entries.append(kwargs)
+                return {"type": "create_entry", **kwargs}
+
+        for name in names:
+            setattr(FakeConfigFlow, name, self.namespace[name])
+        self.Flow = FakeConfigFlow
+
+    def test_new_profile_uses_empty_lights_default_until_options_select_lights(self):
+        flow = self.Flow()
+        form = immediate(flow.async_step_user())
+        self.assertEqual(form["step_id"], "user")
+        result = immediate(flow.async_step_user({"name": " Bedroom "}))
+        self.assertEqual(result, {"type": "create_entry", "title": "Bedroom", "data": {"name": "Bedroom"}, "options": {}})
+        entry = SimpleNamespace(data=result["data"], options=result["options"])
+        self.assertEqual(self.namespace["validate_entry"](entry)["lights"], [])
+        # Store lights in options, not creation data, so later selection wins.
+        entry.options = {"lights": ["light.bedroom"]}
+        self.assertEqual(self.namespace["validate_entry"](entry)["lights"], ["light.bedroom"])
+
+    def test_existing_and_concurrent_names_return_recoverable_field_errors(self):
+        entry = SimpleNamespace(entry_id="existing", title="Bedroom", unique_id="Bedroom", options={})
+        for flow in (self.Flow([entry]), self.Flow(in_progress=["Bedroom"])):
+            with self.subTest(flow=flow):
+                form = immediate(flow.async_step_wait_for_name({"name": "Bedroom"}))
+                self.assertEqual(form["type"], "form")
+                self.assertEqual(form["step_id"], "user")
+                self.assertEqual(form["errors"], {"name": "unique_name"})
+                self.assertEqual(form_fields(form)["name"][0], "Bedroom")
+                self.assertEqual(flow.created_entries, [])
+                result = immediate(flow.async_step_user({"name": "Desk"}))
+                self.assertEqual(result["type"], "create_entry")
+                self.assertEqual(result["title"], "Desk")
+
+    def test_blank_name_does_not_create_an_entry(self):
+        flow = self.Flow()
+        for name in ("", "  "):
+            form = immediate(flow.async_step_user({"name": name}))
+            self.assertEqual(form["errors"], {"name": "name_required"})
+        self.assertIsNone(flow.unique_id)
+        self.assertEqual(flow.created_entries, [])
+
+    def test_existing_profile_menu_new_selection_clears_duplicate_options(self):
+        entry = SimpleNamespace(entry_id="existing", title="Bedroom", unique_id="Bedroom", options={"lights": ["light.existing"]})
+        flow = self.Flow([entry])
+        self.assertEqual(immediate(flow.async_step_user())["step_id"], "menu")
+        immediate(flow.async_step_menu({"action": "existing"}))
+        self.assertEqual(flow.source_options, entry.options)
+        form = immediate(flow.async_step_menu({"action": "new"}))
+        self.assertEqual(form["step_id"], "user")
+        result = immediate(flow.async_step_user({"name": "Desk"}))
+        self.assertEqual(result["options"], {})
+        self.assertEqual(entry.options, {"lights": ["light.existing"]})
+
+    def test_creation_errors_have_labels_in_both_languages_and_base_strings(self):
+        for filename in ("strings.json", "translations/en.json", "translations/es.json"):
+            strings = json.loads((COMPONENT / filename).read_text(encoding="utf-8"))
+            self.assertEqual(set(strings["config"]["error"]), {"unique_name", "name_required"})
+            self.assertIn("already_configured", strings["config"]["abort"])
+            self.assertIn("name", strings["config"]["step"]["user"]["data"])
+
+
 class CalibrationFlowTests(unittest.TestCase):
     def setUp(self):
         self.namespace = production_namespace()

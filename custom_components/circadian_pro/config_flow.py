@@ -7,6 +7,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers import selector
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
 
@@ -91,7 +92,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_menu(self, user_input: dict[str, Any] | None = None):
         """Handle the menu step."""
         if user_input is not None:
-            if user_input["action"] != "new":
+            if user_input["action"] == "new":
+                self.source_options = None
+            else:
                 entry_id = user_input["action"]
                 entry = self.hass.config_entries.async_get_entry(entry_id)
                 if entry:
@@ -115,18 +118,28 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            await self.async_set_unique_id(user_input[CONF_NAME])
-            self._abort_if_unique_id_configured()
-            options = self.source_options
-            return self.async_create_entry(
-                title=user_input[CONF_NAME],
-                data=user_input,
-                options=options,
-            )
+            name = user_input[CONF_NAME].strip()
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            else:
+                try:
+                    await self.async_set_unique_id(name)
+                    self._abort_if_unique_id_configured()
+                except AbortFlow as err:
+                    if err.reason not in {"already_configured", "already_in_progress"}:
+                        raise
+                    errors[CONF_NAME] = "unique_name"
+                else:
+                    return self.async_create_entry(
+                        title=name,
+                        data={CONF_NAME: name},
+                        options=dict(self.source_options or {}),
+                    )
 
+        name_default = user_input.get(CONF_NAME, "") if user_input else ""
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required(CONF_NAME): str}),
+            data_schema=vol.Schema({vol.Required(CONF_NAME, default=name_default): str}),
             errors=errors,
         )
 
