@@ -33,7 +33,11 @@
   ];
   const flows = new Map();
   const configFlows = new Map();
-  const profiles = new Map([['local-profile-a',{entry_id:'local-profile-a',title:'Profile A',settings:original}]]);
+  const profiles = new Map([
+    ['local-profile-a',{entry_id:'local-profile-a',title:'Profile A',modified_at:'2026-10-13T12:00:00Z',settings:original}],
+    ['local-profile-b',{entry_id:'local-profile-b',title:'Profile B',modified_at:'2026-10-12T12:00:00Z',settings:{...original,lights:['light.example_b']}}],
+    ['local-profile-c',{entry_id:'local-profile-c',title:'Profile C',modified_at:'2026-10-11T12:00:00Z',settings:{...original,lights:['light.example_c']}}],
+  ]);
   const metadataListeners = new Set();
   const connectionListeners = new Map();
   const metadata = (profile) => ({entry_id:profile.entry_id,title:profile.title,domain:'circadian_pro',state:'loaded'});
@@ -48,8 +52,8 @@
       ...(name === 'lights' ? {selector:{entity:{domain:'light',multiple:true}}}
         : name === 'sleep_rgb_color' ? {selector:{color_rgb:{}}}
         : name === 'sunrise_time' ? {type:'string'}
-        : {selector:{number:{min:name.startsWith('cal_rgb') || name.startsWith('cal_white_intensity') ? 0 : 0,
-          max:name.startsWith('cal_rgb') ? 255 : name.startsWith('cal_white_intensity') ? 100 : 10000,step:1}}}),
+        : {selector:{number:{min:name === 'cal_white_kelvin_neutral' ? defaults.white_w_kelvin : 0,
+          max:name === 'cal_white_kelvin_neutral' ? defaults.white_cw_kelvin : name.startsWith('cal_rgb') ? 255 : name.startsWith('cal_white_intensity') ? 100 : 10000,step:1}}}),
     })),
   });
   const panel = document.querySelector('circadian-pro-calibration');
@@ -107,7 +111,7 @@
           return {type:'form',flow_id:id,step_id:'user',errors:{name:name?'unique_name':'name_required'},data_schema:[]};
         }
         const entryId = `new-profile-${++sequence}`;
-        profiles.set(entryId,{entry_id:entryId,title:name,settings:{...original,lights:[]}});
+        profiles.set(entryId,{entry_id:entryId,title:name,created_at:new Date().toISOString(),modified_at:new Date().toISOString(),settings:{...original,lights:[]}});
         notifyMetadata(profiles.get(entryId),'added');
         configFlows.delete(id);
         return {type:'create_entry',flow_id:id,result:{entry_id:entryId,title:name,state:'loaded'}};
@@ -125,7 +129,7 @@
       if(flow.index === 0 && (!Array.isArray(data.sleep_rgb_color) || data.sunrise_time === null)) throw Error('RGB debe conservar tres canales y el horario opcional su valor vacío.');
       Object.assign(flow.draft,data);
       if(flow.index === 1 && data.white_w_kelvin >= data.white_cw_kelvin) return form(id,1,{base:'invalid_white_channel_range'},flow.draft);
-      if(flow.index === 3) { Object.assign(flow.profile.settings,flow.draft);notifyMetadata(flow.profile);flows.delete(id);return {type:'create_entry'}; }
+      if(flow.index === 3) { Object.assign(flow.profile.settings,flow.draft);flow.profile.modified_at=new Date().toISOString();notifyMetadata(flow.profile);flows.delete(id);return {type:'create_entry'}; }
       flow.index++;
       return form(id,flow.index,{},flow.draft);
     },

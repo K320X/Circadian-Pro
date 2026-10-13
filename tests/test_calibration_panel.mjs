@@ -1041,7 +1041,7 @@ test("detaching clears closed flow references before the same panel reconnects",
   assert.deepEqual(events, ["pagehide", "close-options", "close-create", "unsubscribe", "initialize"]);
 });
 
-test("header keeps New profile outside the card and provides an accessible menu only through mobile CSS", (t) => {
+test("header keeps the mobile menu while New profile appears below the profile table", (t) => {
   class Node {
     constructor(tag) { this.tag = tag; this.children = []; this.attributes = {}; this.listeners = {}; this.dataset = {}; }
     append(...children) { this.children.push(...children); }
@@ -1076,9 +1076,14 @@ test("header keeps New profile outside the card and provides an accessible menu 
   assert.equal(events[0].type, "hass-toggle-menu");
   assert.equal(events[0].bubbles, true);
   assert.equal(events[0].composed, true);
-  assert.equal(header.children.at(-1).textContent, "New profile");
+  assert.equal(header.children.at(-1).textContent, "Circadian Pro");
   const article = panel.shadowRoot.querySelector("article");
-  assert.deepEqual(article.querySelector(".actions").children.map((button) => button.textContent), ["Configure and calibrate"]);
+  const table = article.querySelector(".profile-table");
+  const create = article.querySelector(".profile-create");
+  assert.equal(table.querySelector(".profile-settings").attributes["aria-label"], "Configure and calibrate: Office");
+  assert.equal(create.children[0].textContent, "New profile");
+  assert.ok(article.children.indexOf(create) > article.children.indexOf(table));
+  assert.equal(article.querySelector(".actions"), undefined);
   const css = panel.shadowRoot.querySelector("style").textContent;
   assert.match(css, /\.mobile-menu \{ display:none;/);
   assert.match(css, /@media\(max-width:870px\) \{ \.mobile-menu \{ display:block;/);

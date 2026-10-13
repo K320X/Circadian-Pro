@@ -502,7 +502,8 @@ export class EntryCatalog {
 
 const COPY = {
   es: {
-    title: "Circadian Pro", profile: "Perfil", start: "Configurar y calibrar", menu: "Abrir menú",
+    title: "Circadian Pro", profile: "Perfil", profiles: "Perfiles", actions: "Acciones", start: "Configurar y calibrar", menu: "Abrir menú",
+    sortProfiles: "Ordenar por", sortRecent: "Modificados recientemente", sortNameAsc: "Nombre: A–Z", sortNameDesc: "Nombre: Z–A",
     newProfile: "Nuevo perfil", profileName: "Nombre del perfil", createProfile: "Crear perfil", cancel: "Cancelar",
     newHint: "Crea un perfil sin luces seleccionadas. Después podrás elegir sus luces, configurarlo y calibrarlo.",
     created: "Perfil creado. Selecciona sus luces y termina la configuración.",
@@ -521,6 +522,7 @@ const COPY = {
     save_uncertain: "No se pudo confirmar el guardado. Comprueba la configuración actual del perfil antes de repetir los cambios.",
     checkStep: "Comprobar estado",
     choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
+    warmWhite: "Cálido", coldWhite: "Frío",
     selectEntities: "Seleccionar luces",
     close: "Cerrar sin guardar", preview: "Previsualizar luz", active: "Vista previa activa",
     idle: "Puedes ajustar los valores sin cambiar las luces.",
@@ -532,7 +534,8 @@ const COPY = {
     fallback: "Este formulario contiene un campo que todavía no admite este panel. Usa Configurar en la integración.",
   },
   en: {
-    title: "Circadian Pro", profile: "Profile", start: "Configure and calibrate", menu: "Open menu",
+    title: "Circadian Pro", profile: "Profile", profiles: "Profiles", actions: "Actions", start: "Configure and calibrate", menu: "Open menu",
+    sortProfiles: "Sort by", sortRecent: "Recently modified", sortNameAsc: "Name: A–Z", sortNameDesc: "Name: Z–A",
     newProfile: "New profile", profileName: "Profile name", createProfile: "Create profile", cancel: "Cancel",
     newHint: "Create a profile with no lights selected. Then choose its lights, configure it and calibrate it.",
     created: "Profile created. Choose its lights and finish the configuration.",
@@ -551,6 +554,7 @@ const COPY = {
     save_uncertain: "The save could not be confirmed. Check the profile's current configuration before repeating the changes.",
     checkStep: "Check status",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
+    warmWhite: "Warm", coldWhite: "Cold",
     selectEntities: "Select lights",
     close: "Close without saving", preview: "Preview light", active: "Preview active",
     idle: "You can adjust the values without changing the lights.",
@@ -568,6 +572,31 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+
+export function sortedProfileEntries(entries, order = "recent", language = "en") {
+  const compareNames = (left, right) => String(left.title ?? "").localeCompare(String(right.title ?? ""), language, { sensitivity: "base", numeric: true });
+  const modified = (entry) => {
+    for (const value of [entry.modified_at, entry.created_at]) {
+      if (typeof value !== "string" || !value.trim()) continue;
+      const timestamp = Date.parse(value);
+      if (Number.isFinite(timestamp)) return timestamp;
+    }
+    return -Infinity;
+  };
+  return [...entries].sort((left, right) => {
+    if (order === "name_asc" || order === "name_desc") {
+      const comparison = compareNames(left, right);
+      if (comparison) return order === "name_desc" ? -comparison : comparison;
+    } else {
+      const leftTime = modified(left);
+      const rightTime = modified(right);
+      if (leftTime !== rightTime) return leftTime > rightTime ? -1 : 1;
+      const comparison = compareNames(left, right);
+      if (comparison) return comparison;
+    }
+    return String(left.entry_id).localeCompare(String(right.entry_id));
+  });
 }
 
 export function selectedEntityValues(picker) {
@@ -649,6 +678,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.catalogError = "";
     this.selectedEntryId = null;
     this.selectedEntryTitle = "";
+    this.profileSort = "recent";
     this.onLeave = () => {
       this.session?.setEnabled(false).catch(() => {});
     };
@@ -966,7 +996,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
     const text = this.translations.step?.[step] || {};
     const selector = field.selector || {};
     const entityField = Boolean(selector.entity || field.type === "multi_select");
-    const wrapper = element(entityField ? "div" : "label", undefined, "field");
+    const calibration = ["cal_neutral", "cal_warm"].includes(step);
+    const wrapper = element(entityField || calibration ? "div" : "label", undefined, "field");
     const label = element("span", text.data?.[name] || name.replaceAll("_", " "), "label");
     label.id = `field-${name}-label`;
     wrapper.append(label);
@@ -1011,12 +1042,55 @@ export class CircadianCalibrationPanel extends HTMLElement {
     }
     input.dataset.field = name;
     input.required = Boolean(field.required) || input.type === "number";
-    input.addEventListener("input", () => {
+    const changed = () => {
       this.values = this.readValues(false);
       Object.assign(this.settings, this.values);
       this.session.refresh();
-    });
-    wrapper.append(input);
+    };
+    if (calibration && input.type === "number" && input.min !== "" && input.max !== ""
+      && Number.isFinite(Number(input.min)) && Number.isFinite(Number(input.max))) {
+      // The number remains the only submitted field. The slider is another
+      // way to edit it, never a second source of settings or preview requests.
+      const mixture = name === "cal_white_kelvin_neutral";
+      const channel = name.match(/^cal_rgb_(?:neutral|warm)_([rgb])$/)?.[1] || (mixture ? "mixture" : "white");
+      wrapper.className += ` calibration-${channel}`;
+      wrapper.setAttribute("role", "group");
+      wrapper.setAttribute("aria-labelledby", label.id);
+      input.setAttribute("aria-labelledby", label.id);
+      const dot = element("span", undefined, "channel-dot");
+      dot.setAttribute("aria-hidden", "true");
+      label.prepend(dot);
+      const controls = element("div", undefined, "calibration-controls");
+      const rail = element("div", undefined, "calibration-rail");
+      const slider = element("input");
+      slider.type = "range";
+      slider.min = input.min;
+      slider.max = input.max;
+      slider.step = input.step;
+      slider.value = input.value;
+      slider.setAttribute("aria-labelledby", label.id);
+      const endpoints = element("div", undefined, "range-endpoints");
+      endpoints.setAttribute("aria-hidden", "true");
+      endpoints.append(
+        element("span", mixture ? `${this.copy.warmWhite} · ${input.min} K` : input.min),
+        element("span", mixture ? `${this.copy.coldWhite} · ${input.max} K` : input.max),
+      );
+      const syncSlider = () => {
+        // Keep invalid/empty drafts visible for native validation; do not
+        // replace them with the range control's automatic clamped value.
+        if (input.value !== "" && input.validity.valid) slider.value = input.value;
+        if (mixture) slider.setAttribute("aria-valuetext", `${slider.value} K`);
+      };
+      syncSlider();
+      slider.addEventListener("input", () => { input.value = slider.value; syncSlider(); changed(); });
+      input.addEventListener("input", () => { syncSlider(); changed(); });
+      rail.append(slider, endpoints);
+      controls.append(rail, input);
+      wrapper.append(controls);
+    } else {
+      input.addEventListener("input", changed);
+      wrapper.append(input);
+    }
     if (text.data_description?.[name]) wrapper.append(element("small", text.data_description[name]));
     return wrapper;
   }
@@ -1042,8 +1116,6 @@ export class CircadianCalibrationPanel extends HTMLElement {
     }
     const create = this.shadowRoot.querySelector("#create-profile");
     if (create && this.creator?.uncertain) create.disabled = true;
-    const start = this.shadowRoot.querySelector("#start-profile");
-    if (start && !this.entries.some((entry) => entry.entry_id === this.selectedEntryId)) start.disabled = true;
   }
 
   render() {
@@ -1056,7 +1128,19 @@ export class CircadianCalibrationPanel extends HTMLElement {
       article { max-width:850px; margin:auto; padding:28px; border:1px solid var(--divider-color,#ddd); border-radius:14px; background:var(--card-background-color,#fff); }
       h1 { margin:0 0 12px; font-size:24px; } p { line-height:1.55; white-space:pre-line; } .muted,small { color:var(--secondary-text-color,#606770); }
       form { display:grid; gap:22px; margin-top:24px; } .field { display:grid; gap:8px; } .label { font-weight:600; } small { line-height:1.45; }
-      input:not([type=checkbox]),select { color:inherit; background:var(--card-background-color,#fff); font:inherit; width:100%; min-height:42px; padding:9px 12px; border:1px solid var(--divider-color,#aeb4bc); border-radius:8px; }
+      input:not([type=checkbox]):not([type=range]),select { color:inherit; background:var(--card-background-color,#fff); font:inherit; width:100%; min-height:42px; padding:9px 12px; border:1px solid var(--divider-color,#aeb4bc); border-radius:8px; }
+      .calibration-controls { display:grid; grid-template-columns:minmax(0,1fr) 96px; gap:18px; align-items:start; }
+      .calibration-rail { min-width:0; } .calibration-controls input[type=number] { text-align:center; }
+      .calibration-r { --channel-color:#ed6363; } .calibration-g { --channel-color:#54bf79; } .calibration-b { --channel-color:#609af5; }
+      .calibration-white { --channel-color:#f3eee1; } .calibration-mixture { --channel-color:#edbb70; --channel-track:linear-gradient(to right,#efb665,#eaf5ff); }
+      .channel-dot { display:inline-block; width:12px; height:12px; margin-right:9px; border-radius:50%; background:var(--channel-track,var(--channel-color)); border:1px solid #808080; }
+      input[type=range] { appearance:none; -webkit-appearance:none; display:block; width:100%; height:42px; margin:0; background:transparent; cursor:pointer; }
+      input[type=range]::-webkit-slider-runnable-track { height:8px; border-radius:5px; background:var(--channel-track,var(--channel-color)); border:1px solid #808080; }
+      input[type=range]::-moz-range-track { height:6px; border-radius:5px; background:var(--channel-track,var(--channel-color)); border:1px solid #808080; }
+      input[type=range]::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:22px; height:22px; margin-top:-8px; border-radius:50%; background:var(--card-background-color,#fff); border:3px solid var(--primary-text-color,#202124); }
+      input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%; background:var(--card-background-color,#fff); border:3px solid var(--primary-text-color,#202124); }
+      input[type=range]:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; border-radius:6px; }
+      input[type=range]:disabled { opacity:.55; cursor:wait; } .range-endpoints { display:flex; justify-content:space-between; gap:8px; color:var(--secondary-text-color,#606770); font-size:12px; }
       input[type=checkbox] { width:20px; height:20px; accent-color:var(--primary-color,#03a9f4); margin:0; } label.preview { display:flex; align-items:center; gap:10px; font-weight:600; }
       .entity-picker { border:1px solid var(--divider-color,#aeb4bc); border-radius:8px; background:var(--card-background-color,#fff); }
       .entity-picker summary { display:flex; align-items:center; gap:12px; min-height:42px; padding:8px 12px; cursor:pointer; list-style:none; }
@@ -1068,6 +1152,19 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .entity-choice-text { display:grid; gap:3px; min-width:0; overflow-wrap:anywhere; } .entity-choice small { font-size:12px; }
       .preview-box { padding:18px; margin:24px 0; border-radius:10px; background:var(--secondary-background-color,#f1f4f7); } .preview-box p { margin:8px 0 0; }
       .actions { display:flex; justify-content:flex-end; gap:12px; margin-top:28px; } button { font:inherit; font-weight:600; border-radius:8px; padding:10px 18px; border:1px solid var(--divider-color,#ddd); cursor:pointer; background:var(--card-background-color,#fff); color:var(--primary-color,#0077ab); }
+      .profiles-toolbar { display:flex; align-items:end; justify-content:space-between; flex-wrap:wrap; gap:12px; margin:24px 0 18px; }
+      .profile-sort { display:grid; gap:7px; max-width:100%; } .profile-sort select { width:auto; max-width:100%; }
+      .profile-table { width:100%; border-collapse:collapse; table-layout:fixed; } .profile-table th { text-align:left; font-weight:600; }
+      .profile-table thead th { padding:0 12px 12px; color:var(--secondary-text-color,#606770); font-size:13px; }
+      .profile-table thead th:last-child { width:72px; } .profile-table tbody th { padding:16px 12px; overflow-wrap:anywhere; }
+      .profile-table td { padding:10px 0 10px 12px; text-align:right; } .profile-table tbody tr { border-top:1px solid var(--divider-color,#ddd); }
+      .profile-settings { width:44px; height:44px; display:inline-flex; align-items:center; justify-content:center; padding:9px; }
+      .tune-icon { display:grid; grid-template-columns:repeat(3,2px); justify-content:space-around; width:22px; height:22px; }
+      .tune-icon span { position:relative; width:2px; border-radius:1px; background:currentColor; }
+      .tune-icon span::after { content:""; position:absolute; left:-3px; top:4px; width:8px; height:5px; border:2px solid currentColor; border-radius:2px; background:var(--card-background-color,#fff); }
+      .tune-icon span:nth-child(2)::after { top:13px; } .tune-icon span:nth-child(3)::after { top:8px; }
+      .profile-settings:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; }
+      .profile-create { display:flex; justify-content:center; margin-top:28px; } .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
       button.primary { background:var(--primary-color,#0077ab); color:var(--primary-background-color,#081018); border-color:transparent; } button:disabled { opacity:.55; cursor:wait; } .close { margin-left:auto; font-size:13px; }
       .mobile-menu { display:none; padding:8px 10px; font-size:22px; line-height:1; } @media(max-width:870px) { .mobile-menu { display:block; } }
       #catalog-warning { margin-bottom:20px; padding:12px; border:1px solid var(--warning-color,#e69500); border-radius:8px; } #catalog-warning p { margin:0 0 10px; }
@@ -1085,10 +1182,6 @@ export class CircadianCalibrationPanel extends HTMLElement {
       const close = element("button", this.copy.close, "close");
       close.addEventListener("click", () => this.action(() => this.closeWizard()));
       header.append(close);
-    } else if (!this.newProfileOpen && !this.pendingCreated && this._hass?.user?.is_admin) {
-      const create = element("button", this.copy.newProfile, "close");
-      create.addEventListener("click", () => this.openNewProfile());
-      header.append(create);
     }
     const main = element("main");
     const article = element("article");
@@ -1173,7 +1266,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       }
       const actions = element("div", undefined, "actions");
       const last = step.step_id === "cal_warm";
-      if (this.flow.index > 0 && !last) {
+      if (this.flow.index > 0) {
         const back = element("button", this.copy.back);
         back.addEventListener("click", () => this.navigate(true));
         actions.append(back);
@@ -1192,39 +1285,70 @@ export class CircadianCalibrationPanel extends HTMLElement {
         article.append(retry);
       }
       if (this.entries.length) {
-        const label = element("label", undefined, "field");
-        label.append(element("span", this.copy.profile, "label"));
-        const select = element("select");
-        if (this.selectedEntryId && !this.entries.some((entry) => entry.entry_id === this.selectedEntryId)) {
-          const missing = element("option", `${this.selectedEntryTitle} · ${this.copy.profileUnavailable}`);
-          missing.value = this.selectedEntryId;
-          missing.disabled = missing.selected = true;
-          select.append(missing);
+        const toolbar = element("div", undefined, "profiles-toolbar");
+        const sortLabel = element("label", undefined, "profile-sort");
+        sortLabel.append(element("span", this.copy.sortProfiles, "label"));
+        const sort = element("select");
+        sort.id = "profile-sort";
+        for (const [value, label] of [["recent", this.copy.sortRecent], ["name_asc", this.copy.sortNameAsc], ["name_desc", this.copy.sortNameDesc]]) {
+          const option = element("option", label);
+          option.value = value;
+          sort.append(option);
         }
-        for (const entry of this.entries) {
-          const option = element("option", entry.title);
-          option.value = entry.entry_id;
-          option.selected = entry.entry_id === this.selectedEntryId;
-          select.append(option);
-        }
-        select.addEventListener("change", () => {
-          this.selectedEntryId = select.value;
-          this.selectedEntryTitle = this.entries.find((entry) => entry.entry_id === select.value)?.title || "";
-          this.updateControls();
+        sort.value = this.profileSort || "recent";
+        sort.addEventListener("change", () => {
+          this.profileSort = sort.value;
+          this.render();
+          this.shadowRoot.querySelector("#profile-sort")?.focus?.();
         });
-        label.append(select);
-        const actions = element("div", undefined, "actions");
-        const start = element("button", this.copy.start, "primary");
-        start.id = "start-profile";
-        start.addEventListener("click", () => this.start(select.value));
-        actions.append(start);
+        sortLabel.append(sort);
+        toolbar.append(sortLabel);
         if (!this.catalog?.subscribed) {
           const refresh = element("button", this.copy.refreshProfiles);
           refresh.addEventListener("click", () => this.action(async () => { this.applyEntries(await this.readEntries()); }));
-          actions.append(refresh);
+          toolbar.append(refresh);
         }
-        article.append(label, actions);
+        const table = element("table", undefined, "profile-table");
+        table.append(element("caption", this.copy.profiles, "visually-hidden"));
+        const headings = element("tr");
+        const nameHeading = element("th", this.copy.profile);
+        nameHeading.setAttribute("scope", "col");
+        const actionHeading = element("th");
+        actionHeading.setAttribute("scope", "col");
+        actionHeading.append(element("span", this.copy.actions, "visually-hidden"));
+        headings.append(nameHeading, actionHeading);
+        const head = element("thead");
+        head.append(headings);
+        const body = element("tbody");
+        for (const entry of sortedProfileEntries(this.entries, this.profileSort, this.language)) {
+          const row = element("tr");
+          const name = element("th", entry.title);
+          name.setAttribute("scope", "row");
+          const actions = element("td");
+          const configure = element("button", undefined, "profile-settings");
+          configure.type = "button";
+          configure.title = `${this.copy.start}: ${entry.title}`;
+          configure.setAttribute("aria-label", configure.title);
+          const icon = element("span", undefined, "tune-icon");
+          icon.setAttribute("aria-hidden", "true");
+          icon.append(element("span"), element("span"), element("span"));
+          configure.append(icon);
+          configure.addEventListener("click", () => this.start(entry.entry_id));
+          actions.append(configure);
+          row.append(name, actions);
+          body.append(row);
+        }
+        table.append(head, body);
+        article.append(toolbar, table);
       } else if (!this.error) article.append(element("p", this.busy ? this.copy.loading : this.copy.empty, "muted"));
+      if (!this.pendingCreated && this._hass?.user?.is_admin) {
+        const actions = element("div", undefined, "profile-create");
+        const create = element("button", this.copy.newProfile, "primary");
+        create.type = "button";
+        create.addEventListener("click", () => this.openNewProfile());
+        actions.append(create);
+        article.append(actions);
+      }
       article.append(error);
     }
     main.append(article);

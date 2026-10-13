@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from copy import deepcopy
-from datetime import time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from enum import Enum
 from functools import wraps
 import importlib.util
@@ -274,6 +274,22 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(entry["settings"]["interval"], 60)
         self.assertEqual(entry["settings"]["sunrise_time"], "07:30:00")
         self.assertEqual(len(self.results[-1][1]), 1)
+
+    def test_entries_expose_stored_dates_for_profile_sorting_without_changing_settings(self):
+        self.entry.created_at = datetime(2026, 1, 10, tzinfo=timezone.utc)
+        self.entry.modified_at = datetime(2026, 10, 13, 21, 30, tzinfo=timezone.utc)
+        original = deepcopy(self.entry.options)
+        self.invoke(self.api.websocket_entries)
+        entry = self.results[-1][1][0]
+        self.assertEqual(entry["created_at"], "2026-01-10T00:00:00+00:00")
+        self.assertEqual(entry["modified_at"], "2026-10-13T21:30:00+00:00")
+        self.assertEqual(self.entry.options, original)
+
+    def test_entries_without_dates_remain_available(self):
+        self.invoke(self.api.websocket_entries)
+        entry = self.results[-1][1][0]
+        self.assertIsNone(entry["created_at"])
+        self.assertIsNone(entry["modified_at"])
 
     def test_preview_validates_and_merges_the_draft_without_saving_options(self):
         original = deepcopy(self.entry.options)

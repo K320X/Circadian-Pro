@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.4`
+**Current stable version:** `0.21.5`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits. Version 0.21.4 passes 222 Python and 73 frontend regressions, plus installation and configuration checks on Home Assistant 2026.10.1.
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.5 adds a profile table and synchronized calibration sliders; see the [release notes](docs/release-0.21.5.md).
 
 ## Features
 
@@ -68,6 +68,8 @@ Settings → Devices & services → Add integration
 
 Once the integration loads, it automatically adds the **Circadian Pro** sidebar panel for administrator users. No manual dashboard or sidebar configuration is required. The panel lets you create additional profiles and configure or calibrate existing ones.
 
+The panel lists every loaded profile in its own row, with a settings button on the right and **New profile** centered below the table. Sort by recent modification (default), name A–Z or name Z–A. Profile changes refresh automatically. Recent ordering uses Home Assistant's stored configuration-entry dates, with creation date as a fallback; it does not track ordinary light-state changes.
+
 ## Updating
 
 1. Download the ZIP from the new release.
@@ -86,6 +88,8 @@ Each panel script and its custom element now have identities based on the script
 ## RGBW and RGB+CCT calibration
 
 The 4000 K and 1000 K calibration points are visual references. Adjust RGB and white intensity at each point to get the appearance you want. They are separate from the physical temperatures of the white LEDs.
+
+Each calibration channel has a colored slider and an editable number that stay in sync. The RGB+CCT white-mixture slider runs from the configured warm white temperature (left) to the cold white temperature (right). You can go back from the final 1000 K step without saving; only **Finish** saves the configuration. Light previews remain opt-in.
 
 For RGBW, `white_w_kelvin` remains the temperature of the single white channel, with a default of 3000 K. For RGB+CCT lights that announce `rgbww`, the same value describes the warm white (WW) LED. The extra `white_cw_kelvin` setting describes the cold white (CW) LED. If omitted, Circadian Pro uses the light's maximum color temperature, or 6500 K when unavailable.
 

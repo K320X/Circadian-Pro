@@ -97,8 +97,12 @@ async def websocket_entries(hass: Any, connection: Any, msg: dict[str, Any]) -> 
             _loaded_entry(hass, entry.entry_id)
         except HomeAssistantError:
             continue
+        created_at = getattr(entry, "created_at", None)
+        modified_at = getattr(entry, "modified_at", None)
         entries.append({
             "entry_id": entry.entry_id, "title": entry.title,
+            "created_at": created_at.isoformat() if created_at is not None else None,
+            "modified_at": modified_at.isoformat() if modified_at is not None else None,
             "settings": _serializable_settings(validate_entry(entry)),
         })
     connection.send_result(msg["id"], entries)

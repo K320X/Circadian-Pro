@@ -513,6 +513,16 @@ class CalibrationFlowTests(unittest.TestCase):
         result = immediate(flow.async_step_cal_neutral(self.neutral(cal_white_kelvin_neutral=4500)))
         self.assertEqual(result["step_id"], "cal_warm")
 
+    def test_white_mixture_selector_supports_exact_kelvin_values_and_endpoints(self):
+        flow = self.flow(cal_white_kelvin_neutral=4123)
+        immediate(flow.async_step_init({"lights": ["light.strip"]}))
+        form = immediate(flow.async_step_white_channels({"white_w_kelvin": 2723, "white_cw_kelvin": 6537}))
+        default, selector = form_fields(form)["cal_white_kelvin_neutral"]
+        self.assertEqual((default, selector.min, selector.max, selector.step), (4123, 2723, 6537, 1))
+        for mixture in (2723, 4123, 6537):
+            result = immediate(flow.async_step_cal_neutral(self.neutral(cal_white_kelvin_neutral=mixture)))
+            self.assertEqual(result["step_id"], "cal_warm")
+
     def test_first_step_is_not_last_and_translations_use_next_and_finish(self):
         form = immediate(self.flow().async_step_init())
         self.assertEqual(form["step_id"], "init")

@@ -471,7 +471,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             neutral_default = min(cold_white, max(warm_white, neutral_white or 4000))
             schema[
                 vol.Optional(CONF_CAL_WHITE_KELVIN_NEUTRAL, default=neutral_default)
-            ] = box_int(warm_white, cold_white, step=50)
+            ] = box_int(warm_white, cold_white, step=1)
         return self.async_show_form(
             step_id="cal_neutral",
             data_schema=vol.Schema(schema),
