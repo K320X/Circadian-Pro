@@ -84,6 +84,7 @@ class SolarContextApiTests(unittest.TestCase):
                 self.assertEqual(result["local_date"], day.date().isoformat())
 
     def test_timezone_extremes_use_correct_local_dates_with_real_astral_events(self):
+        # Synthetic boundary cases exercise the international date line.
         for timezone_name, latitude, longitude, expected_date in (
             ("Pacific/Kiritimati", 1.8721, -157.4278, "2026-10-15"),
             ("Etc/GMT+12", 0.0, -180.0, "2026-10-14"),
@@ -110,6 +111,7 @@ class SolarContextApiTests(unittest.TestCase):
                     self.assertEqual(local_event.strftime("%H:%M"), value["local_time"])
 
     def test_real_astral_events_include_noon_and_midnight_and_bracket_the_day(self):
+        # Synthetic test location, unrelated to any Home Assistant installation.
         location = Location(LocationInfo("Test location", "", "Europe/London", 51.0, 0.0))
         self.sun = self.api.replace(self.sun, astral_location=location)
         self.hass.data["circadian_pro"]["loaded"]["switch"]._sun_light_settings.sun = self.sun

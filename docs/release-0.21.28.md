@@ -6,6 +6,7 @@ This release prepares Circadian Pro for installation and updates through HACS as
 - Bundles the existing sun-and-moon icon in Home Assistant's `brand/` directory at normal and high resolution.
 - Declares the maintainer in the integration manifest and removes the unsupported manifest `icon` property. The sidebar keeps its existing sun-and-moon icon.
 - Adds HACS and Hassfest distribution checks alongside the existing regression tests.
+- Replaces installation-specific room names and location examples in test fixtures with clearly synthetic data. Runtime location and time zone continue to come from each user's Home Assistant configuration.
 
 The minimum declared Home Assistant version is 2026.10.0, the current tested release family. This is a conservative support floor, not a claim that earlier versions cannot work.
 

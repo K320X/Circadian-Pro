@@ -16,6 +16,7 @@
   import '../../custom_components/circadian_pro/frontend/calibration-panel.js';
   const translationDocument = await (await fetch('../../custom_components/circadian_pro/translations/es.json')).json();
   const translations = {...translationDocument.options, selector:translationDocument.selector};
+  // Synthetic profiles and lights for UI testing; no installation data.
   const original = {
     lights:['light.example_a'], interval:60, transition:5, initial_transition:0,
     min_color_temp:1200, max_color_temp:4000, min_brightness:100, max_brightness:100,
