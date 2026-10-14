@@ -43,8 +43,10 @@ _SOLAR_TIME_OPTIONS = (
     "sunset_time", "min_sunset_time", "max_sunset_time",
 )
 _SOLAR_OFFSET_OPTIONS = ("sunrise_offset", "sunset_offset")
+_SLEEP_TIME_OPTIONS = ("sleep_schedule_start", "sleep_schedule_end")
 _SOLAR_DRAFT_OPTIONS = frozenset((*_SOLAR_TIME_OPTIONS, *_SOLAR_OFFSET_OPTIONS,
-                                "sunrise_offset_minutes", "sunset_offset_minutes"))
+                                "sunrise_offset_minutes", "sunset_offset_minutes",
+                                "sleep_activation_mode", *_SLEEP_TIME_OPTIONS))
 
 
 def _panel_asset_registration(path: Path) -> tuple[str, str]:
@@ -120,7 +122,66 @@ async def websocket_entries(hass: Any, connection: Any, msg: dict[str, Any]) -> 
     connection.send_result(msg["id"], entries)
 
 
-def _solar_context(sun: Any, now: datetime, timezone_name: str) -> dict[str, Any]:
+def _schedule_sleep_windows(
+    start: float, end: float, zone: ZoneInfo, sleep_start: time, sleep_end: time,
+) -> list[dict[str, float]]:
+    """Resolve wall-clock membership, including both folds and skipped DST times.
+
+    A local start/end can occur twice or not at all on a DST change. Offset
+    changes are also boundaries: rolling the clock back can leave and re-enter
+    a window even when neither configured endpoint occurs at the change itself.
+    """
+    if sleep_start == sleep_end:
+        return [{"start": start, "end": end}]
+    boundaries = {start, end}
+    first_day = datetime.fromtimestamp(start, zone).date()
+    last_day = datetime.fromtimestamp(end, zone).date()
+    for days in range((last_day - first_day).days + 1):
+        day = first_day + timedelta(days=days)
+        for wall_time in (sleep_start, sleep_end):
+            for fold in (0, 1):
+                candidate = datetime.combine(day, wall_time, zone).replace(fold=fold)
+                timestamp = candidate.timestamp()
+                # Nonexistent local times must not be silently moved by the
+                # time-zone conversion; the real offset change handles them.
+                if (start < timestamp < end
+                        and datetime.fromtimestamp(timestamp, zone).replace(tzinfo=None)
+                        == candidate.replace(tzinfo=None)):
+                    boundaries.add(timestamp)
+
+    # This fixed five-local-day scan is bounded and runs in the executor. Locate
+    # actual offset-change seconds instead of assuming DST changes by one hour.
+    cursor = start
+    while cursor < end:
+        following = min(cursor + 3600, end)
+        offset = datetime.fromtimestamp(cursor, zone).utcoffset()
+        if offset != datetime.fromtimestamp(following, zone).utcoffset():
+            low, high = int(cursor), int(following)
+            while high - low > 1:
+                middle = (low + high) // 2
+                if datetime.fromtimestamp(middle, zone).utcoffset() == offset:
+                    low = middle
+                else:
+                    high = middle
+            boundaries.add(float(high))
+        cursor = following
+
+    windows: list[dict[str, float]] = []
+    for left, right in pairwise(sorted(boundaries)):
+        local_time = datetime.fromtimestamp((left + right) / 2, zone).time()
+        active = (sleep_start <= local_time < sleep_end if sleep_start < sleep_end
+                  else local_time >= sleep_start or local_time < sleep_end)
+        if active:
+            if windows and windows[-1]["end"] == left:
+                windows[-1]["end"] = right
+            else:
+                windows.append({"start": left, "end": right})
+    return windows
+
+
+def _solar_context(
+    sun: Any, now: datetime, timezone_name: str, sleep_settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Calculate the profile's real local day without changing its runtime state."""
     from .color_and_brightness import SunEventUnavailable
 
@@ -139,14 +200,36 @@ def _solar_context(sun: Any, now: datetime, timezone_name: str) -> dict[str, Any
             # today if the remaining real events still bracket every sample.
             continue
     events.sort(key=lambda item: item[1])
+    # Retain surrounding horizons for overnight windows and arithmetic midpoint
+    # labels. The brightness formulas receive a cropped solar-noon/midnight
+    # event sequence with enough surrounding history for a fade across midnight.
+    horizons = [(event, timestamp) for event, timestamp in events if event in ("sunrise", "sunset")]
+    midpoints = []
+    solar_sleep_windows = []
+    for left, right in pairwise(horizons):
+        if left[0] == right[0] or left[1] >= right[1]:
+            continue
+        timestamp = (left[1] + right[1]) / 2
+        if start <= timestamp < end:
+            midpoints.append({
+                "kind": "day" if left[0] == "sunrise" else "night", "timestamp": timestamp,
+                "local_time": datetime.fromtimestamp(timestamp, sun.timezone).strftime("%H:%M"),
+            })
+        if left[0] == "sunset":
+            solar_sleep_windows.append({"start": left[1], "end": right[1]})
+
     timestamps = [timestamp for _event, timestamp in events]
-    first = max(0, bisect_right(timestamps, start) - 1)
-    last = bisect_right(timestamps, end) + 1
+    # A night transition can begin before the plotted day. Its initial normal
+    # target must use that earlier solar pair, not the first in-day value. Two
+    # hours cover HA's longest supported light transition (6553 seconds).
+    curve_start, curve_end = start - 2 * 3600, end + 2 * 3600
+    first = max(0, bisect_right(timestamps, curve_start) - 1)
+    last = bisect_right(timestamps, curve_end) + 1
     events = events[first:last]
     next_event = {"sunrise": "solar_noon", "solar_noon": "sunset",
                   "sunset": "solar_midnight", "solar_midnight": "sunrise"}
     if (
-        not events or events[0][1] > start or events[-1][1] <= end
+        not events or events[0][1] > curve_start or events[-1][1] <= curve_end
         or any(right[1] <= left[1] or next_event[left[0]] != right[0]
                for left, right in pairwise(events))
     ):
@@ -164,12 +247,29 @@ def _solar_context(sun: Any, now: datetime, timezone_name: str) -> dict[str, Any
         return {"timestamp": timestamp,
                 "local_time": datetime.fromtimestamp(timestamp, sun.timezone).strftime("%H:%M")}
 
+    settings = sleep_settings or {}
+    sleep_mode = settings.get("sleep_activation_mode", "disabled")
+    sleep_all_day = False
+    sleep_windows = []
+    if sleep_mode == "sun":
+        sleep_windows = solar_sleep_windows
+    elif sleep_mode == "schedule":
+        sleep_start, sleep_end = (settings[name] for name in _SLEEP_TIME_OPTIONS)
+        sleep_all_day = sleep_start == sleep_end
+        # Keep preceding windows intact so a transition that starts just before
+        # midnight can carry into the plot. Nothing here changes runtime state.
+        window_start = datetime.combine(today - timedelta(days=2), time(), sun.timezone).timestamp()
+        window_end = datetime.combine(today + timedelta(days=3), time(), sun.timezone).timestamp()
+        sleep_windows = _schedule_sleep_windows(window_start, window_end, sun.timezone, sleep_start, sleep_end)
+
     return {
         "local_date": today.isoformat(), "timezone": timezone_name,
         "day_start": start, "day_end": end, "refresh_at": end,
         "generated_at": now.timestamp(), "refresh_after": max(1, end - now.timestamp()),
         "events": [{"event": event, "timestamp": timestamp} for event, timestamp in events],
         "sunrise": label("sunrise"), "sunset": label("sunset"),
+        "midpoints": midpoints, "sleep_mode": sleep_mode,
+        "sleep_windows": sleep_windows, "sleep_all_day": sleep_all_day,
     }
 
 
@@ -181,7 +281,7 @@ def _solar_context(sun: Any, now: datetime, timezone_name: str) -> dict[str, Any
 @websocket_api.require_admin
 @websocket_api.async_response
 async def websocket_solar(hass: Any, connection: Any, msg: dict[str, Any]) -> None:
-    """Read the effective solar schedule, including unsaved solar-only edits."""
+    """Read solar and automatic-night schedules without saving or controlling lights."""
     try:
         entry = _loaded_entry(hass, msg["entry_id"])
     except HomeAssistantError as err:
@@ -189,7 +289,7 @@ async def websocket_solar(hass: Any, connection: Any, msg: dict[str, Any]) -> No
         return
     try:
         if msg["settings"].keys() - _SOLAR_DRAFT_OPTIONS:
-            raise vol.Invalid("Only sunrise and sunset settings are accepted.")
+            raise vol.Invalid("Only solar and automatic-night schedule settings are accepted.")
         settings = _validated_draft(entry, msg["settings"])
         overrides = {}
         for name in (*_SOLAR_TIME_OPTIONS, *_SOLAR_OFFSET_OPTIONS):
@@ -197,6 +297,10 @@ async def websocket_solar(hass: Any, connection: Any, msg: dict[str, Any]) -> No
             overrides[name] = EXTRA_VALIDATION[name][0](value) if value is not None else None
         timezone_name = hass.config.time_zone
         overrides["timezone"] = ZoneInfo(timezone_name)
+        sleep_settings = {"sleep_activation_mode": settings.get("sleep_activation_mode", "disabled")}
+        if sleep_settings["sleep_activation_mode"] == "schedule":
+            for name in _SLEEP_TIME_OPTIONS:
+                sleep_settings[name] = EXTRA_VALIDATION[name][0](settings[name])
     except (vol.Invalid, ws_schema.Invalid, ValueError, TypeError, OverflowError) as err:
         connection.send_error(msg["id"], "invalid_options", str(err))
         return
@@ -206,7 +310,7 @@ async def websocket_solar(hass: Any, connection: Any, msg: dict[str, Any]) -> No
     sun = replace(switch._sun_light_settings.sun, **overrides)
     try:
         result = await hass.async_add_executor_job(
-            _solar_context, sun, datetime.now(UTC), timezone_name,
+            _solar_context, sun, datetime.now(UTC), timezone_name, sleep_settings,
         )
     except (ValueError, OverflowError) as err:
         connection.send_error(msg["id"], "solar_unavailable", str(err))

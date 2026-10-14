@@ -24,11 +24,13 @@
     cal_rgb_neutral_r:255, cal_rgb_neutral_g:255, cal_rgb_neutral_b:255,
     cal_rgb_warm_r:255, cal_rgb_warm_g:56, cal_rgb_warm_b:0,
     cal_white_intensity_neutral:100, cal_white_intensity_warm:0,
-    sleep_rgb_color:[255,56,0],sunrise_time:'None',
+    sleep_rgb_color:[255,0,0],sleep_rgb_or_color_temp:'rgb_color',sleep_color_temp:1500,sleep_brightness:80,
+    sleep_activation_mode:'schedule',sleep_schedule_start:'21:00:00',sleep_schedule_end:'06:00:00',sunrise_time:'None',
   };
   const steps = ['init','white_channels','cal_neutral','cal_warm'];
   const names = [
-    ['lights','interval','transition','min_color_temp','max_color_temp','min_brightness','max_brightness','brightness_mode','apply_temperature_curve','brightness_mode_time_light_minutes','brightness_mode_time_dark_minutes','sleep_rgb_color','sunrise_time'],
+    ['lights','interval','transition','min_color_temp','max_color_temp','min_brightness','max_brightness','brightness_mode','apply_temperature_curve','brightness_mode_time_light_minutes','brightness_mode_time_dark_minutes',
+      'sleep_activation_mode','sleep_schedule_start','sleep_schedule_end','sleep_brightness','sleep_rgb_or_color_temp','sleep_color_temp','sleep_rgb_color','sunrise_time'],
     ['white_w_kelvin','white_cw_kelvin'],
     ['cal_rgb_neutral_r','cal_rgb_neutral_g','cal_rgb_neutral_b','cal_white_intensity_neutral','cal_white_kelvin_neutral'],
     ['cal_rgb_warm_r','cal_rgb_warm_g','cal_rgb_warm_b','cal_white_intensity_warm'],
@@ -54,6 +56,9 @@
       ...(name === 'lights' ? {selector:{entity:{domain:'light',multiple:true}}}
         : name === 'sleep_rgb_color' ? {selector:{color_rgb:{}}}
         : name === 'brightness_mode' ? {selector:{select:{options:['default','linear','tanh'],translation_key:'brightness_mode'}}}
+        : name === 'sleep_activation_mode' ? {selector:{select:{options:['disabled','sun','schedule'],translation_key:'sleep_activation_mode'}}}
+        : name === 'sleep_rgb_or_color_temp' ? {selector:{select:{options:['rgb_color','color_temp'],translation_key:'sleep_rgb_or_color_temp'}}}
+        : name.startsWith('sleep_schedule_') ? {selector:{time:{}}}
         : name === 'apply_temperature_curve' ? {selector:{boolean:{}}}
         : name.startsWith('brightness_mode_time_') ? {selector:{number:{min:0,max:240,step:1}}}
         : name === 'sunrise_time' ? {type:'string'}
@@ -95,10 +100,20 @@
           ? value.split(':').reduce((total, part, index) => total + Number(part) * [60, 1, 1/60][index], 0) : fallback;
         const rise = time(message.settings.sunrise_time, 420) + (message.settings.sunrise_offset_minutes || 0);
         const set = time(message.settings.sunset_time, 1100) + (message.settings.sunset_offset_minutes || 0);
-        const clock = (minute) => `${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`;
+        const clock = (minute) => `${String(Math.floor(((minute%1440)+1440)%1440/60)).padStart(2,'0')}:${String(Math.floor(((minute%60)+60)%60)).padStart(2,'0')}`;
+        const mode = message.settings.sleep_activation_mode || 'disabled';
+        const sleepStart = mode === 'sun' ? set : time(message.settings.sleep_schedule_start, 1260);
+        const sleepEnd = mode === 'sun' ? rise : time(message.settings.sleep_schedule_end, 360);
+        const sleepAllDay = mode === 'schedule' && sleepStart === sleepEnd;
+        const windows = mode === 'disabled' ? [] : sleepAllDay ? [{start:start-172800,end:start+259200}]
+          : [-2,-1,0,1,2].map((day) => ({start:start+day*86400+sleepStart*60,end:start+day*86400+(sleepEnd+(sleepEnd<sleepStart?1440:0))*60}));
+        const nightMiddle = ((set+rise+1440)/2)%1440;
         return {
           local_date: now.toISOString().slice(0,10), timezone: 'UTC', day_start: start, day_end: start+86400,
           refresh_after: start+86400-Date.now()/1000,
+          sleep_mode:mode,sleep_windows:windows,sleep_all_day:sleepAllDay,
+          midpoints:[{kind:'day',timestamp:start+(rise+set)*30,local_time:clock((rise+set)/2)},
+            {kind:'night',timestamp:start+nightMiddle*60,local_time:clock(nightMiddle)}].sort((a,b)=>a.timestamp-b.timestamp),
           sunrise: {timestamp:start+rise*60,local_time:clock(rise)}, sunset: {timestamp:start+set*60,local_time:clock(set)},
           events: [-2,-1,0,1,2].flatMap((day) => [
             ['solar_midnight',50],['sunrise',rise],['solar_noon',770],['sunset',set],

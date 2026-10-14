@@ -549,6 +549,12 @@ const COPY = {
       independent: "La temperatura de color sigue su propia curva solar.",
       synchronized: "La temperatura de color sigue esta misma curva entre sus propios límites.",
       temperatureScale: "El fondo representa la temperatura de color: naranja en el mínimo y blanco en el máximo. Los colores son orientativos.",
+      nightScale: "El fondo muestra el color normal y el color nocturno elegido. Los colores y las transiciones son orientativos; la línea usa brillo de 0 a 100 %.",
+      transitions: "Transiciones", night: "Modo noche", nightAllDay: "Modo noche durante todo el día.",
+      nightStart: "Inicio modo noche", nightEnd: "Fin modo noche",
+      nightStartShort: "IN · Noche", nightEndShort: "OUT · Noche",
+      nightTiming: "Horario previsto. Transición general: {transition} s. La detección puede retrasarse hasta {interval} s, o más si hay otra transición en curso. La luz determina cómo suaviza el cambio.",
+      nightInvalid: "Revisa el brillo, el color nocturno y la transición general.",
       rise: "Subida: {dark} min antes + {light} min después del amanecer.",
       fall: "Bajada: {light} min antes + {dark} min después del atardecer.",
       linear: "Cada transición dura {total} min.",
@@ -602,6 +608,12 @@ const COPY = {
       independent: "Color temperature follows its own solar curve.",
       synchronized: "Color temperature follows this same curve between its own limits.",
       temperatureScale: "The background represents color temperature: orange at its minimum and white at its maximum. Colors are illustrative.",
+      nightScale: "The background shows the normal color and selected sleep color. Colors and transitions are illustrative; the line uses brightness from 0 to 100%.",
+      transitions: "Transitions", night: "Sleep mode", nightAllDay: "Sleep mode throughout the day.",
+      nightStart: "Sleep mode starts", nightEnd: "Sleep mode ends",
+      nightStartShort: "IN · Night", nightEndShort: "OUT · Night",
+      nightTiming: "Planned schedule. General transition: {transition} s. Detection may take up to {interval} s, or longer while another transition is running. The light determines how the change is smoothed.",
+      nightInvalid: "Check brightness, sleep color and the general transition.",
       rise: "Rise: {dark} min before + {light} min after sunrise.",
       fall: "Fall: {light} min before + {dark} min after sunset.",
       linear: "Each transition lasts {total} min.",
@@ -632,7 +644,8 @@ function element(tag, text, className) {
 
 // Solar context is supplied by HA in its own timezone. Plot x values are elapsed
 // minutes from that local midnight, so DST days naturally span 23 or 25 hours.
-const SOLAR_FIELDS = [...OPTIONAL_TIMES, "sunrise_offset_minutes", "sunset_offset_minutes"];
+const SOLAR_FIELDS = [...OPTIONAL_TIMES, "sunrise_offset_minutes", "sunset_offset_minutes",
+  "sleep_activation_mode", "sleep_schedule_start", "sleep_schedule_end"];
 
 export function solarDraft(values) {
   return Object.fromEntries(SOLAR_FIELDS.filter((name) => Object.hasOwn(values, name)).map((name) => [name, values[name]]));
@@ -826,6 +839,110 @@ export function temperatureTimingPoints(mode, light, dark, shared, context) {
   return [...times].sort((a, b) => a - b).map((minute) => [minute, Math.max(0, solarPosition(minute, context))]);
 }
 
+function normalGraphColor(progress) {
+  return [255, 138 + 117 * progress, 26 + 229 * progress];
+}
+
+const graphDefault = (value, fallback) => value === undefined ? fallback : value;
+
+// Approximate black-body sRGB for the sleep CCT swatch. It is not a prediction
+// of LED spectra or calibration. Normal daytime colors keep the existing key.
+export function sleepGraphColor(values) {
+  if (values.sleep_rgb_or_color_temp !== "color_temp") {
+    const rgb = graphDefault(values.sleep_rgb_color, [255, 56, 0]);
+    return Array.isArray(rgb) && rgb.length === 3 && rgb.every((channel) => Number.isInteger(channel) && channel >= 0 && channel <= 255)
+      ? [...rgb] : null;
+  }
+  const kelvin = graphDefault(values.sleep_color_temp, 1000);
+  if (!Number.isFinite(kelvin) || kelvin < 1000 || kelvin > 10000) return null;
+  const t = kelvin / 100;
+  return [t <= 66 ? 255 : 329.698727446 * (t - 60) ** -0.1332047592,
+    t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * (t - 60) ** -0.0755148492,
+    t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307]
+    .map((channel) => Math.max(0, Math.min(255, channel)));
+}
+
+function validNightContext(context) {
+  return ["sun", "schedule"].includes(context.sleep_mode) && Array.isArray(context.sleep_windows)
+    && context.sleep_windows.every((window, index, windows) => Number.isFinite(window.start) && Number.isFinite(window.end)
+      && window.end > window.start && (!index || window.start > windows[index - 1].end));
+}
+
+// Programmed automatic behavior only. The polling phase and device transition
+// implementation cannot be known here. Boundary fades are nominal linear
+// illustrations, starting from the previous fade's value if it is interrupted.
+export function nightTimingPoints(values, context) {
+  if (!validSolarContext(context) || !validNightContext(context)) return null;
+  const mode = values.brightness_mode;
+  const light = values.brightness_mode_time_light_minutes;
+  const dark = values.brightness_mode_time_dark_minutes;
+  const shared = mode !== "default" && values.apply_temperature_curve === true;
+  const brightness = brightnessTimingPoints(mode, light, dark, context);
+  const temperature = temperatureTimingPoints(mode, light, dark, shared, context);
+  const minimum = graphDefault(values.min_brightness, 50), maximum = graphDefault(values.max_brightness, 100);
+  const sleep = graphDefault(values.sleep_brightness, 25), duration = graphDefault(values.transition, 45);
+  const nightColor = sleepGraphColor(values);
+  if (!brightness || !temperature || !nightColor || [minimum, maximum, sleep].some((value) => !Number.isFinite(value) || value < 1 || value > 100)
+    || maximum < minimum || !Number.isFinite(duration) || duration < 0 || duration > 6553) return null;
+  const sleepValue = [sleep / 100, ...nightColor];
+  const start = context.day_start, end = context.day_end;
+  const normal = (timestamp, before = false) => {
+    // The server brackets the plotted day. For an unusually long fade whose
+    // endpoint falls outside those events, use the nearest available endpoint.
+    const left = before && mode !== "default" && context.events.some((event) => event.timestamp === timestamp);
+    const safe = Math.max(context.events[0].timestamp, Math.min(context.events.at(-1).timestamp - 0.0001, timestamp - (left ? 0.00001 : 0)));
+    const minute = (safe - start) / 60;
+    const progress = brightnessTimingValue(minute, mode, light, dark, context);
+    const color = shared ? progress : Math.max(0, solarPosition(minute, context));
+    return [(minimum + (maximum - minimum) * progress) / 100, ...normalGraphColor(color)];
+  };
+  const boundaries = context.sleep_all_day ? [] : context.sleep_windows.flatMap((window) => [
+    { timestamp: window.start, sleeping: true }, { timestamp: window.end, sleeping: false },
+  ]);
+  const segments = [];
+  const valueIn = (timestamp, segment, before = false) => {
+    if (!segment) return normal(timestamp, before);
+    const progress = duration === 0 ? 1 : Math.min(1, Math.max(0, (timestamp - segment.timestamp) / duration));
+    if (progress === 1) return segment.sleeping ? sleepValue : normal(timestamp, before);
+    return segment.from.map((value, index) => value + (segment.to[index] - value) * progress);
+  };
+  for (const boundary of boundaries) {
+    const from = valueIn(boundary.timestamp, segments.at(-1), true);
+    // Zero-window modes use the current goal, matching the runtime's explicit
+    // step handling; continuous curves aim for the end of the transition.
+    const targetTime = mode !== "default" && light + dark === 0 ? boundary.timestamp : boundary.timestamp + duration;
+    segments.push({ ...boundary, from, to: boundary.sleeping ? sleepValue : normal(targetTime) });
+  }
+  const at = (timestamp) => context.sleep_all_day ? sleepValue
+    : valueIn(timestamp, segments.findLast((segment) => segment.timestamp <= timestamp));
+  const times = new Set([start, end]);
+  const jumps = new Set();
+  const add = (timestamp) => { if (timestamp >= start && timestamp <= end) times.add(timestamp); };
+  for (const [minute] of [...brightness, ...temperature]) add(start + minute * 60);
+  for (const series of [brightness, temperature]) series.forEach(([minute], index) => {
+    if (index && minute === series[index - 1][0]) jumps.add(start + minute * 60);
+  });
+  for (const segment of segments) {
+    add(segment.timestamp); add(segment.timestamp + duration);
+    if (duration === 0) jumps.add(segment.timestamp);
+    else if (!segment.sleeping && segment.to.some((value, index) => Math.abs(value - normal(segment.timestamp + duration)[index]) > 1e-7)) {
+      jumps.add(segment.timestamp + duration);
+    }
+  }
+  const points = [];
+  for (const timestamp of [...times].sort((a, b) => a - b)) {
+    const value = at(timestamp);
+    if (timestamp > start && jumps.has(timestamp)) {
+      const before = at(timestamp - 0.00001);
+      if (value.some((channel, index) => Math.abs(channel - before[index]) > 0.00001)) {
+        points.push([(timestamp - start) / 60, ...before]);
+      }
+    }
+    points.push([(timestamp - start) / 60, ...value]);
+  }
+  return points;
+}
+
 let timingGradientId = 0;
 
 export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {}) {
@@ -839,13 +956,16 @@ export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {
   const heading = element("div", undefined, "timing-heading");
   const legend = element("span", undefined, "timing-legend");
   const legends = element("div", undefined, "timing-legends");
-  legends.append(legend, element("span", copy.temperature, "timing-temperature-legend"));
+  const colorLegend = element("span", copy.temperature, "timing-temperature-legend");
+  legends.append(legend, colorLegend);
   heading.append(element("strong", copy.title), legends);
   const plot = element("div", undefined, "timing-plot");
   const bounds = element("div", undefined, "timing-bounds");
   bounds.append(element("span", copy.maximum), element("span", copy.minimum));
   const area = element("div", undefined, "timing-plot-area");
   const labels = element("div", undefined, "timing-event-labels");
+  const midpointLabels = element("div", undefined, "timing-midpoint-labels");
+  const nightLabels = element("div", undefined, "timing-night-labels");
   const eventLabels = ["sunrise", "sunset"].map((name) => {
     const label = element("span", undefined, "timing-event-label");
     label.append(element("span", copy[name]), element("time"));
@@ -858,38 +978,47 @@ export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {
   const gradientId = `timing-temperature-${++timingGradientId}`;
   const gradient = svgNode("linearGradient", { id: gradientId, x1: "0%", y1: "0%", x2: "100%", y2: "0%", "color-interpolation": "sRGB" });
   const eventLines = svgNode("path", { class: "timing-event" });
+  const nightLines = svgNode("path", { class: "timing-night-event" });
   const definitions = svgNode("defs", {});
   definitions.append(gradient);
   svg.append(
     title, definitions,
     svgNode("rect", { x: 0, y: 8, width: 600, height: 160, class: "timing-temperature", fill: `url(#${gradientId})` }),
     svgNode("path", { d: "M0 8 H600 M0 168 H600", class: "timing-grid" }),
-    eventLines,
+    eventLines, nightLines,
     path,
   );
-  area.append(labels, svg);
+  area.append(labels, midpointLabels, svg, nightLabels);
   plot.append(bounds, area);
   const status = element("p", undefined, "timing-status");
   status.setAttribute("role", "status");
   const caption = element("figcaption");
+  const details = element("details", undefined, "timing-night-details");
+  const detailText = element("p");
+  details.append(element("summary", copy.transitions), detailText);
   const retry = element("button", copy.retry, "secondary timing-retry");
   retry.type = "button";
   retry.addEventListener("click", onRetry);
-  figure.append(heading, plot, status, retry, caption);
+  figure.append(heading, plot, status, retry, caption, details);
   return { figure, update(values, context, contextStatus = "loading") {
     const mode = values.brightness_mode;
     const light = values.brightness_mode_time_light_minutes;
     const dark = values.brightness_mode_time_dark_minutes;
     const validContext = validSolarContext(context);
-    const points = brightnessTimingPoints(mode, light, dark, context);
+    const night = ["sun", "schedule"].includes(values.sleep_activation_mode ?? context?.sleep_mode);
+    const nightPoints = night && context?.sleep_mode === (values.sleep_activation_mode ?? context?.sleep_mode) ? nightTimingPoints(values, context) : null;
+    const points = night ? nightPoints : brightnessTimingPoints(mode, light, dark, context);
     const shared = mode !== "default" && values.apply_temperature_curve === true;
     legend.textContent = `${copy.modes[mode] || ""} · ${copy.brightness}`;
     plot.hidden = !points;
     status.hidden = Boolean(points);
-    status.textContent = points ? "" : validContext ? copy.invalid : copy[contextStatus] || copy.unavailable;
+    status.textContent = points ? "" : validContext ? (night ? copy.nightInvalid : copy.invalid) : copy[contextStatus] || copy.unavailable;
     retry.hidden = validContext || contextStatus === "loading";
     caption.hidden = !points;
+    details.hidden = !points || !night;
     if (!points) { path.removeAttribute("d"); gradient.replaceChildren(); return; }
+    bounds.children[0].textContent = night ? "100 %" : copy.maximum;
+    bounds.children[1].textContent = night ? "0 %" : copy.minimum;
     const dayMinutes = (context.day_end - context.day_start) / 60;
     path.setAttribute("d", points.map(([minute, value], index) => `${index ? "L" : "M"}${minute / dayMinutes * 600} ${168 - value * 160}`).join(" "));
     const positions = ["sunrise", "sunset"].map((name, index) => {
@@ -903,17 +1032,58 @@ export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {
     });
     const closeLabels = Math.abs(positions[1] - positions[0]) < 0.24;
     labels.style.height = closeLabels ? "78px" : "44px";
-    bounds.style.paddingTop = closeLabels ? "78px" : "44px";
+    const midpointTimes = (context.midpoints || []).filter((point) => Number.isFinite(point.timestamp)
+      && point.timestamp >= context.day_start && point.timestamp < context.day_end && /^\d{2}:\d{2}$/.test(point.local_time || ""));
+    midpointLabels.replaceChildren(...midpointTimes.map((point) => {
+      const label = element("time", point.local_time);
+      const position = (point.timestamp - context.day_start) / (context.day_end - context.day_start);
+      label.style.left = `${position * 100}%`;
+      label.style.transform = position < 0.08 ? "none" : position > 0.92 ? "translateX(-100%)" : "translateX(-50%)";
+      return label;
+    }));
+    midpointLabels.hidden = midpointTimes.length === 0;
+    bounds.style.paddingTop = `${(closeLabels ? 78 : 44) + (midpointTimes.length ? 20 : 0)}px`;
     eventLabels[1].style.top = closeLabels ? "34px" : "0";
     eventLines.setAttribute("d", positions.filter((position) => position >= 0 && position <= 1).map((position) => `M${position * 600} 0 V176`).join(" "));
+    const clock = (timestamp) => new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: context.timezone }).format(new Date(timestamp * 1000));
+    const edges = night && context.sleep_mode === "schedule" && !context.sleep_all_day
+      ? context.sleep_windows.flatMap((window) => [{ timestamp: window.start, name: copy.nightStart, short: copy.nightStartShort },
+        { timestamp: window.end, name: copy.nightEnd, short: copy.nightEndShort }])
+        .filter((edge) => edge.timestamp >= context.day_start && edge.timestamp < context.day_end) : [];
+    const rows = [];
+    nightLabels.replaceChildren(...edges.map((edge, index) => {
+      const position = (edge.timestamp - context.day_start) / (context.day_end - context.day_start);
+      let row = rows.findIndex((previous) => position - previous >= 0.43);
+      if (row < 0) row = rows.length;
+      rows[row] = position;
+      const label = element("span", undefined, "timing-event-label");
+      label.append(element("span", edge.short), element("time", clock(edge.timestamp)));
+      label.setAttribute("aria-label", `${edge.name} ${clock(edge.timestamp)}`);
+      label.style.left = `${position * 100}%`;
+      label.style.top = `${row * 38}px`;
+      label.style.setProperty("--mobile-night-top", `${index * 38}px`);
+      label.style.transform = position < 0.22 ? "none" : position > 0.78 ? "translateX(-100%)" : "translateX(-50%)";
+      return label;
+    }));
+    nightLabels.hidden = edges.length === 0;
+    nightLabels.style.height = `${rows.length * 38}px`;
+    nightLabels.style.setProperty("--mobile-night-height", `${edges.length * 38}px`);
+    bounds.style.setProperty("--night-bottom", `${edges.length ? rows.length * 38 + 6 : 0}px`);
+    bounds.style.setProperty("--mobile-night-bottom", `${edges.length ? edges.length * 38 + 6 : 0}px`);
+    nightLines.setAttribute("d", edges.map((edge) => `M${(edge.timestamp - context.day_start) / (context.day_end - context.day_start) * 600} 0 V176`).join(" "));
     const date = new Intl.DateTimeFormat(language, { day: "numeric", month: "short", year: "numeric", timeZone: context.timezone }).format(new Date((context.day_start + context.day_end) * 500));
     caption.textContent = copy.caption.replace("{date}", date).replace("{timezone}", context.timezone);
     // Shared timing samples include repeated offsets for a true 0/0 step.
     // Explicit sRGB interpolation keeps color progress linear between stops;
     // dense samples retain the independent parabola and sigmoid's shape.
-    gradient.replaceChildren(...temperatureTimingPoints(mode, light, dark, shared, context).map(([minute, value]) =>
-      svgNode("stop", { offset: minute / dayMinutes,
-        "stop-color": `rgb(255, ${Math.round(138 + 117 * value)}, ${Math.round(26 + 229 * value)})` })));
+    const colors = night ? nightPoints.map(([minute, , ...rgb]) => [minute, rgb])
+      : temperatureTimingPoints(mode, light, dark, shared, context).map(([minute, value]) => [minute, normalGraphColor(value)]);
+    gradient.replaceChildren(...colors.map(([minute, rgb]) => svgNode("stop", { offset: minute / dayMinutes,
+      "stop-color": `rgb(${rgb.map(Math.round).join(", ")})` })));
+    colorLegend.textContent = night ? `${copy.temperature} · ${copy.night}` : copy.temperature;
+    colorLegend.style.setProperty("--night-color", night ? `rgb(${sleepGraphColor(values).map(Math.round).join(", ")})` : "#ff8a1a");
+    const nightTiming = (copy.nightTiming || "").replace("{transition}", String(values.transition ?? 45)).replace("{interval}", String(values.interval ?? 90));
+    detailText.textContent = context.sleep_all_day ? `${copy.nightAllDay} ${copy.nightScale}` : `${nightTiming} ${copy.nightScale}`;
     // Updating only the figure retains the edited input, focus and scroll.
     const format = (template) => template.replaceAll("{light}", String(light)).replaceAll("{dark}", String(dark)).replaceAll("{total}", String(light + dark));
     // Keep the detailed interpretation available to screen readers without
@@ -921,7 +1091,9 @@ export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {
     const duration = mode === "default" ? copy.natural : light + dark === 0 ? copy.step : format(copy[mode]);
     const description = [legend.textContent,
       ...(mode === "default" || light + dark === 0 ? [] : [format(copy.rise), format(copy.fall)]), duration,
-      ...(mode === "default" ? [] : [shared ? copy.synchronized : copy.independent]), copy.temperatureScale, caption.textContent, `${copy.sunrise} ${context.sunrise.local_time}. ${copy.sunset} ${context.sunset.local_time}.`].join(" ");
+      ...(mode === "default" ? [] : [shared ? copy.synchronized : copy.independent]), night ? detailText.textContent : copy.temperatureScale,
+      caption.textContent, `${copy.sunrise} ${context.sunrise.local_time}. ${copy.sunset} ${context.sunset.local_time}.`,
+      ...edges.map((edge) => `${edge.name} ${clock(edge.timestamp)}.`)].join(" ");
     title.textContent = description;
     svg.setAttribute("aria-label", description);
   } };
@@ -1517,7 +1689,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       this.values = this.readValues(false);
       Object.assign(this.settings, this.values);
       this.solarContext?.update({ ...this.settings, ...this.values });
-      this.timingChart?.update(this.values, this.chartSolarContext, this.chartSolarStatus);
+      this.timingChart?.update({ ...this.settings, ...this.values }, this.chartSolarContext, this.chartSolarStatus);
       this.session.refresh();
     };
     if ((calibration || timingPortion) && input.type === "number" && input.min !== "" && input.max !== ""
@@ -1627,20 +1799,28 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .timing-legends { display:flex; flex-wrap:wrap; gap:8px 16px; }
       .timing-legend,.timing-temperature-legend { display:flex; align-items:center; gap:7px; color:var(--secondary-text-color,#606770); font-size:12px; }
       .timing-legend::before { content:""; width:20px; height:3px; border-radius:2px; background:#063f42; box-shadow:0 0 0 1px #a9c5c7; }
-      .timing-temperature-legend::before { content:""; width:24px; height:9px; border:1px solid #808080; border-radius:2px; background:linear-gradient(to right,#ff8a1a,#fff); }
+      .timing-temperature-legend::before { content:""; width:24px; height:9px; border:1px solid #808080; border-radius:2px; background:linear-gradient(to right,var(--night-color,#ff8a1a),#fff); }
       .timing-plot { display:grid; grid-template-columns:36px minmax(0,1fr); gap:5px; }
-      .timing-bounds { display:flex; flex-direction:column; justify-content:space-between; padding:44px 0 0; color:var(--secondary-text-color,#606770); font-size:12px; line-height:16px; }
+      .timing-bounds { display:flex; flex-direction:column; justify-content:space-between; padding:44px 0 var(--night-bottom,0px); color:var(--secondary-text-color,#606770); font-size:12px; line-height:16px; }
       .timing-plot-area { min-width:0; }
       .timing-event-labels { position:relative; height:44px; font-size:12px; line-height:18px; color:var(--secondary-text-color,#606770); }
       .timing-event-label { position:absolute; display:flex; flex-direction:column; align-items:center; white-space:nowrap; }
       .timing-event-label time { font-variant-numeric:tabular-nums; font-size:11px; }
+      .timing-midpoint-labels { position:relative; height:20px; font-size:11px; line-height:16px; font-variant-numeric:tabular-nums; color:var(--secondary-text-color,#606770); }
+      .timing-midpoint-labels time { position:absolute; white-space:nowrap; }
+      .timing-night-labels { position:relative; margin-top:6px; font-size:11px; line-height:17px; color:var(--secondary-text-color,#606770); }
       .timing-diagram svg { display:block; width:100%; height:176px; overflow:visible; }
-      .timing-grid,.timing-event,.timing-curve { fill:none; vector-effect:non-scaling-stroke; }
+      .timing-grid,.timing-event,.timing-night-event,.timing-curve { fill:none; vector-effect:non-scaling-stroke; }
       .timing-grid { stroke:#34445a; stroke-opacity:.3; stroke-width:1; }
       .timing-event { stroke:#34445a; stroke-opacity:.7; stroke-width:1; stroke-dasharray:3 4; }
+      .timing-night-event { stroke:#c62828; stroke-width:1.5; stroke-dasharray:2 4; }
       .timing-curve { stroke:#063f42; stroke-width:2.5; stroke-linejoin:round; stroke-linecap:round; }
       .timing-status { font-size:13px; line-height:1.5; }
       .timing-diagram figcaption { margin-top:12px; color:var(--secondary-text-color,#606770); font-size:12px; line-height:1.45; }
+      .timing-night-details { margin-top:10px; color:var(--secondary-text-color,#606770); font-size:12px; line-height:1.5; }
+      .timing-night-details summary { cursor:pointer; width:fit-content; padding:4px 0; }
+      .timing-night-details summary:focus-visible { outline:2px solid var(--primary-color,#009f8a); outline-offset:3px; border-radius:2px; }
+      .timing-night-details p { margin:6px 0 0; }
       .timing-control { --channel-track:linear-gradient(to right,var(--divider-color,#ddd),var(--primary-color,#009f8a)); }
       .timing-control .calibration-controls { grid-template-columns:minmax(0,1fr) 82px; gap:12px; }
       .settings-row[hidden],.timing-diagram [hidden] { display:none; }
@@ -1700,7 +1880,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .mobile-menu { display:none; padding:8px 10px; font-size:22px; line-height:1; } @media(max-width:870px) { .mobile-menu { display:block; } }
       #catalog-warning { margin-bottom:20px; padding:12px; border:1px solid var(--warning-color,#e69500); border-radius:8px; } #catalog-warning p { margin:0 0 10px; }
       #error { background:#b3261e; color:white; padding:12px; border-radius:8px; white-space:pre-line; } .step { margin:0 0 10px; font-size:13px; } .saved { color:var(--success-color,#16814b); } [hidden] { display:none !important; }
-      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; gap:8px; } header strong { font-size:16px; flex-shrink:0; } .close,.integration-link { padding:8px; } .timing-diagram svg { height:117px; } }
+      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; gap:8px; } header strong { font-size:16px; flex-shrink:0; } .close,.integration-link { padding:8px; } .timing-diagram svg { height:117px; } .timing-night-labels { height:var(--mobile-night-height)!important; } .timing-night-labels .timing-event-label { top:var(--mobile-night-top)!important; } .timing-bounds { padding-bottom:var(--mobile-night-bottom,0px); } }
     `;
     const header = element("header");
     const menu = element("button", "☰", "mobile-menu");
@@ -1781,13 +1961,13 @@ export class CircadianCalibrationPanel extends HTMLElement {
           this.chartSolarContext = null;
           this.chartSolarStatus = "loading";
           this.timingChart = brightnessTimingDiagram(this.copy.timingDiagram, this.language, () => this.solarContext?.refresh());
-          this.timingChart.update(this.values, null);
+          this.timingChart.update({ ...this.settings, ...this.values }, null);
           const chart = this.timingChart;
           this.solarContext = new SolarContextSession((message) => this._hass.callWS(message), this.entry.entry_id, (context, status) => {
             if (this.timingChart !== chart) return;
             this.chartSolarContext = context;
             this.chartSolarStatus = status;
-            chart.update(this.values, context, status);
+            chart.update({ ...this.settings, ...this.values }, context, status);
           }, { connection: this._hass?.connection });
           this.solarContext.update({ ...this.settings, ...this.values });
         }

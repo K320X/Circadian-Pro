@@ -77,7 +77,7 @@
         "data_description": {
           "lights": "Luces que controlará este perfil. Puedes dejar la lista vacía.",
           "interval": "Frecuencia con la que se recalculan y aplican ajustes.",
-          "transition": "Duración de las transiciones durante la adaptación habitual. El modo noche tiene su propio ajuste de transición.",
+          "transition": "Duración de las transiciones durante la adaptación habitual, incluida la entrada y salida automática del modo noche.",
           "initial_transition": "Duración de la primera transición al pasar de apagado a encendido.",
           "min_brightness": "Brillo mínimo permitido.",
           "max_brightness": "Brillo máximo permitido.",
@@ -87,7 +87,7 @@
           "sleep_brightness": "Brillo objetivo en modo noche.",
           "sleep_color_temp": "Temperatura de color en modo noche (si eliges “temperatura de color”).",
           "sleep_rgb_color": "Color RGB en modo noche (si eliges “RGB”). En este modo el canal W se fuerza a 0.",
-          "sleep_transition": "Duración de la transición al activar/desactivar modo noche.",
+          "sleep_transition": "Duración de la transición al activar/desactivar manualmente el modo noche con su interruptor. El modo noche automático usa la transición general.",
           "sleep_schedule_start": "Inicio de la franja automática. Solo se usa con «Por franja horaria».\nFormato HH:MM:SS; por ejemplo, 23:00:00.",
           "sleep_schedule_end": "Fin de la franja automática. Solo se usa con «Por franja horaria».\nPuede cruzar medianoche; por ejemplo, de 23:00:00 a 05:00:00.",
           "take_over_control": "Si está activo, detiene adaptaciones cuando detecta un ajuste manual.",

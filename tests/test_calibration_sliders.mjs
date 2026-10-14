@@ -8,7 +8,7 @@ const previousHTMLElement = globalThis.HTMLElement;
 const previousCustomElements = globalThis.customElements;
 globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
-const { CalibrationFlow, CircadianCalibrationPanel, PreviewSession, brightnessTimingValue: rawBrightnessTimingValue, brightnessTimingPoints: rawBrightnessTimingPoints, temperatureTimingPoints: rawTemperatureTimingPoints, SolarContextSession, validSolarContext } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const { CalibrationFlow, CircadianCalibrationPanel, PreviewSession, brightnessTimingValue: rawBrightnessTimingValue, brightnessTimingPoints: rawBrightnessTimingPoints, temperatureTimingPoints: rawTemperatureTimingPoints, SolarContextSession, validSolarContext, nightTimingPoints, sleepGraphColor, brightnessTimingDiagram } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 if (previousHTMLElement === undefined) delete globalThis.HTMLElement;
 else globalThis.HTMLElement = previousHTMLElement;
 if (previousCustomElements === undefined) delete globalThis.customElements;
@@ -25,6 +25,12 @@ const REFERENCE_CONTEXT = {
 const brightnessTimingValue = (...args) => rawBrightnessTimingValue(...args, REFERENCE_CONTEXT);
 const brightnessTimingPoints = (...args) => rawBrightnessTimingPoints(...args, REFERENCE_CONTEXT);
 const temperatureTimingPoints = (...args) => rawTemperatureTimingPoints(...args, REFERENCE_CONTEXT);
+const NIGHT_VALUES = { brightness_mode: "linear", brightness_mode_time_light_minutes: 0, brightness_mode_time_dark_minutes: 0,
+  min_brightness: 100, max_brightness: 100, sleep_brightness: 80, sleep_rgb_or_color_temp: "rgb_color", sleep_rgb_color: [255, 0, 0],
+  transition: 5, interval: 60, sleep_activation_mode: "schedule", apply_temperature_curve: false };
+const nightContext = (windows = [{ start: 21 * 3600, end: 30 * 3600 }], extra = {}) => ({ ...REFERENCE_CONTEXT,
+  sleep_mode: "schedule", sleep_windows: windows, sleep_all_day: false,
+  midpoints: [{ kind: "night", timestamp: 0, local_time: "00:00" }, { kind: "day", timestamp: 43200, local_time: "12:00" }], ...extra });
 
 class Node {
   constructor(tag) {
@@ -1014,4 +1020,163 @@ test("a missing solar response times out, offers retry and ignores the eventual 
   requests[1].resolve(fresh);
   await retry;
   assert.equal(updates.at(-1).context, fresh);
+});
+
+test("night overlay preserves absolute daytime100/night80 and the exact five-second fade endpoints", () => {
+  const points = nightTimingPoints(NIGHT_VALUES, nightContext());
+  const at = (seconds) => points.filter(([minute]) => Math.abs(minute * 60 - seconds) < 1e-7).at(-1)?.slice(1);
+  assert.deepEqual(at(75600), [1, 255, 138, 26]);
+  assert.deepEqual(at(75605), [0.8, 255, 0, 0]);
+  assert.deepEqual(at(86400), [0.8, 255, 0, 0]);
+  assert.ok(points.every(([minute, brightness]) => minute >= 0 && minute <= 1440 && brightness >= 0.8 && brightness <= 1));
+});
+
+test("zero night transition creates coincident sharp color and brightness edges without broadening them", () => {
+  const points = nightTimingPoints({ ...NIGHT_VALUES, transition: 0 }, nightContext([{ start: 36000, end: 39600 }]));
+  const entering = points.filter(([minute]) => minute === 600);
+  const leaving = points.filter(([minute]) => minute === 660);
+  assert.equal(entering.length, 2);
+  assert.equal(leaving.length, 2);
+  assert.equal(entering[0][1], 1);
+  assert.deepEqual(entering[1].slice(1), [0.8, 255, 0, 0]);
+  assert.deepEqual(leaving[0].slice(1), [0.8, 255, 0, 0]);
+  assert.equal(leaving[1][1], 1);
+});
+
+test("night entry at a zero-window sunset fades from the preceding day value instead of jumping to the new normal minimum", () => {
+  for (const mode of ["linear", "tanh"]) {
+    const context = nightContext([{ start: 64800, end: 108000 }], { sleep_mode: "sun" });
+    const values = { ...NIGHT_VALUES, brightness_mode: mode, min_brightness: 20, sleep_brightness: 10,
+      apply_temperature_curve: true, transition: 60, sleep_activation_mode: "sun" };
+    const points = nightTimingPoints(values, context);
+    assert.deepEqual(points.filter(([minute]) => minute === 1080).at(-1), [1080, 1, 255, 255, 255]);
+    assert.deepEqual(points.filter(([minute]) => minute === 1081).at(-1), [1081, 0.1, 255, 0, 0]);
+  }
+});
+
+test("carry-in fade crosses midnight continuously and does not turn the previous night's tail into daytime", () => {
+  const points = nightTimingPoints({ ...NIGHT_VALUES, transition: 120 }, nightContext([{ start: -60, end: 21600 }]));
+  assert.deepEqual(points[0], [0, 0.9, 255, 69, 13]);
+  assert.deepEqual(points.find(([minute]) => minute === 1), [1, 0.8, 255, 0, 0]);
+  assert.equal(points.filter(([minute]) => minute === 362).at(-1)?.[1], 1);
+});
+
+test("long carry-in fade starts from the real previous evening curve rather than the nearest midnight", () => {
+  const context = nightContext([{ start: -89 * 60, end: 21600 }], {
+    sunrise: { timestamp: 3600, local_time: "01:00" }, sunset: { timestamp: 75600, local_time: "21:00" },
+    events: [-2, -1, 0, 1, 2].flatMap((day) => [["sunrise", 1], ["solar_noon", 11], ["sunset", 21], ["solar_midnight", 23]]
+      .map(([event, hour]) => ({ event, timestamp: (day * 24 + hour) * 3600 }))),
+  });
+  const values = { ...NIGHT_VALUES, min_brightness: 1, max_brightness: 100, sleep_brightness: 1,
+    brightness_mode_time_dark_minutes: 240, transition: 6553 };
+  const before = (1 + 99 * ((240 - 91) / 240)) / 100;
+  const expected = before + (0.01 - before) * (89 * 60 / 6553);
+  const points = nightTimingPoints(values, context);
+  assert.ok(Math.abs(points[0][1] - expected) < 1e-12);
+});
+
+test("a short night interrupted before its fade finishes resumes from the current intermediate brightness", () => {
+  const points = nightTimingPoints({ ...NIGHT_VALUES, transition: 120 }, nightContext([{ start: 36000, end: 36060 }]));
+  const boundary = points.filter(([minute]) => minute === 601).at(-1);
+  assert.ok(Math.abs(boundary[1] - 0.9) < 1e-9);
+  assert.equal(points.filter(([minute]) => minute === 603).at(-1)?.[1], 1);
+  assert.ok(points.every((point) => point.every(Number.isFinite)));
+});
+
+test("leaving night returns to the contemporaneous linear or sigmoid ramp rather than daytime maximum", () => {
+  for (const mode of ["linear", "tanh"]) {
+    const values = { ...NIGHT_VALUES, brightness_mode: mode, min_brightness: 20, max_brightness: 100,
+      brightness_mode_time_light_minutes: 60, brightness_mode_time_dark_minutes: 166, transition: 120 };
+    const context = nightContext([{ start: -10800, end: 300 * 60 }]);
+    const points = nightTimingPoints(values, context);
+    const restored = points.filter(([minute]) => minute === 302).at(-1)[1];
+    const expected = 0.2 + 0.8 * rawBrightnessTimingValue(302, mode, 60, 166, context);
+    assert.ok(Math.abs(restored - expected) < 1e-12);
+    assert.ok(restored < 0.8, `${mode} must restore the early ramp, even below sleep brightness`);
+    assert.notEqual(restored, 1);
+  }
+});
+
+test("all-day night is constant and long transitions remain finite at both daily edges", () => {
+  const allDay = nightTimingPoints(NIGHT_VALUES, nightContext([{ start: -172800, end: 259200 }], { sleep_all_day: true }));
+  assert.ok(allDay.every(([, ...value]) => JSON.stringify(value) === JSON.stringify([0.8, 255, 0, 0])));
+  for (const mode of ["default", "linear", "tanh"]) {
+    const points = nightTimingPoints({ ...NIGHT_VALUES, brightness_mode: mode, transition: 6553 }, nightContext([
+      { start: -172799, end: -86401 }, { start: -60, end: 60 }, { start: 86399, end: 86401 },
+    ]));
+    assert.ok(points.length > 1);
+    assert.ok(points.every((point) => point.every(Number.isFinite)));
+  }
+});
+
+test("night CCT uses an independent warm/cool approximation and RGB honors the selected triplet", () => {
+  assert.deepEqual(sleepGraphColor({ sleep_rgb_color: [11, 22, 33] }), [11, 22, 33]);
+  const warm = sleepGraphColor({ sleep_rgb_or_color_temp: "color_temp", sleep_color_temp: 1500, min_color_temp: 4000 });
+  const cool = sleepGraphColor({ sleep_rgb_or_color_temp: "color_temp", sleep_color_temp: 10000 });
+  assert.equal(warm[2], 0);
+  assert.ok(warm[0] > warm[1]);
+  assert.ok(cool[2] > cool[0]);
+  for (const values of [{ sleep_rgb_color: [256, 0, 0] }, { sleep_rgb_color: [255, 0] }]) {
+    assert.equal(sleepGraphColor(values), null);
+  }
+});
+
+test("invalid night targets and unmerged overlapping windows cannot render a misleading valid chart", () => {
+  for (const changes of [{ sleep_brightness: -1 }, { min_brightness: 101 }, { transition: -1 }, { transition: 6554 },
+    { transition: Infinity }, { transition: null }, { sleep_brightness: null }, { min_brightness: null }, { sleep_rgb_color: null },
+    { sleep_rgb_color: [NaN, 0, 0] }, { sleep_rgb_or_color_temp: "color_temp", sleep_color_temp: 999 }, { sleep_rgb_or_color_temp: "color_temp", sleep_color_temp: null }]) {
+    assert.equal(nightTimingPoints({ ...NIGHT_VALUES, ...changes }, nightContext()), null);
+  }
+  assert.equal(nightTimingPoints(NIGHT_VALUES, nightContext([{ start: 100, end: 300 }, { start: 200, end: 400 }])), null);
+});
+
+test("shared graph has arithmetic midpoint hours above and scheduled red boundaries with times below", (t) => {
+  installDocument(t);
+  const copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "en" }).timingDiagram;
+  const chart = brightnessTimingDiagram(copy);
+  chart.update(NIGHT_VALUES, nightContext([{ start: -10800, end: 21600 }, { start: 75600, end: 108000 }]), "ready");
+  assert.equal(chart.figure.querySelectorAll("svg").length, 1);
+  assert.deepEqual(chart.figure.querySelector(".timing-bounds").children.map((node) => node.textContent), ["100 %", "0 %"]);
+  assert.deepEqual(chart.figure.querySelector(".timing-midpoint-labels").children.map((node) => [node.textContent, node.style.left]), [["00:00", "0%"], ["12:00", "50%"]]);
+  const labels = chart.figure.querySelector(".timing-night-labels");
+  assert.deepEqual(labels.children.map((label) => [label.children[0].textContent, label.querySelector("time").textContent]), [["OUT · Night", "06:00"], ["IN · Night", "21:00"]]);
+  assert.deepEqual(labels.children.map((label) => label.getAttribute("aria-label")), ["Sleep mode ends 06:00", "Sleep mode starts 21:00"]);
+  assert.equal(chart.figure.querySelector(".timing-night-event").getAttribute("d"), "M150 0 V176 M525 0 V176");
+  assert.match(chart.figure.querySelector(".timing-night-details").querySelector("p").textContent, /General transition: 5 s.*60 s/);
+  assert.equal(chart.figure.querySelector(".timing-night-details").querySelector("summary").textContent, "Transitions");
+  assert.equal(chart.figure.querySelectorAll(".timing-curve").length, 1);
+  chart.update({ ...NIGHT_VALUES, sleep_activation_mode: "sun" }, nightContext([{ start: -21600, end: 21600 }], { sleep_mode: "sun" }), "ready");
+  assert.equal(labels.hidden, true, "solar night must not duplicate sunrise/sunset labels");
+  chart.update({ ...NIGHT_VALUES, sleep_activation_mode: "disabled" }, nightContext([], { sleep_mode: "disabled" }), "ready");
+  assert.equal(chart.figure.querySelector(".timing-night-details").hidden, true);
+  assert.deepEqual(chart.figure.querySelector(".timing-bounds").children.map((node) => node.textContent), ["Max.", "Min."]);
+});
+
+test("close scheduled edges occupy separate bottom rows and retain all repeated wall-clock boundaries", (t) => {
+  installDocument(t);
+  const copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "es" }).timingDiagram;
+  const chart = brightnessTimingDiagram(copy, "es");
+  chart.update(NIGHT_VALUES, nightContext([{ start: 3600, end: 3660 }, { start: 7200, end: 7260 }]));
+  const labels = chart.figure.querySelector(".timing-night-labels");
+  assert.equal(labels.children.length, 4);
+  assert.deepEqual(labels.children.map((label) => label.style.top), ["0px", "38px", "76px", "114px"]);
+  assert.equal(labels.children[0].children[0].textContent, "IN · Noche");
+  assert.equal(labels.children[0].getAttribute("aria-label"), "Inicio modo noche 01:00");
+  assert.equal(labels.style.height, "152px");
+});
+
+test("only automatic mode and hours trigger solar reads; night colors, brightness and transition stay local", async (t) => {
+  const { session, requests } = solarSessionHarness(t);
+  const settings = { sleep_activation_mode: "schedule", sleep_schedule_start: "21:00:00", sleep_schedule_end: "06:00:00" };
+  session.update({ ...NIGHT_VALUES, ...settings });
+  assert.deepEqual(requests[0].message.settings, settings);
+  requests[0].resolve(nightContext());
+  await settleSolar();
+  session.update({ ...NIGHT_VALUES, ...settings, sleep_brightness: 20, sleep_rgb_color: [0, 0, 255], transition: 60 });
+  t.mock.timers.tick(300);
+  assert.equal(requests.length, 1);
+  session.update({ ...NIGHT_VALUES, ...settings, sleep_schedule_start: "22:00:00" });
+  t.mock.timers.tick(300);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].message.settings.sleep_schedule_start, "22:00:00");
 });

@@ -85,11 +85,14 @@ def load_api_module():
     def domain_schema(data):
         const.schema_calls.append(deepcopy(data))
         allowed = {"lights", "min_brightness", "max_brightness", "min_color_temp", "max_color_temp", "interval", "sunrise_time", "sunrise_offset", "sunset_offset", "min_sunrise_time", "max_sunrise_time", "sunset_time", "min_sunset_time", "max_sunset_time", "cal_rgb_neutral_r",
-                   "brightness_mode", "apply_temperature_curve", "brightness_mode_time_light", "brightness_mode_time_dark"}
+                   "brightness_mode", "apply_temperature_curve", "brightness_mode_time_light", "brightness_mode_time_dark",
+                   "sleep_activation_mode", "sleep_schedule_start", "sleep_schedule_end"}
         if set(data) - allowed:
             raise Invalid("Unexpected option")
         if "cal_rgb_neutral_r" in data and (not isinstance(data["cal_rgb_neutral_r"], int) or not 0 <= data["cal_rgb_neutral_r"] <= 255):
             raise Invalid("Invalid RGB channel")
+        if data.get("sleep_activation_mode", "disabled") not in ("disabled", "sun", "schedule"):
+            raise Invalid("Invalid sleep mode")
         return deepcopy(data)
 
     const._DOMAIN_SCHEMA = domain_schema

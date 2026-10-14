@@ -47,6 +47,12 @@ class SolarContextApiTests(unittest.TestCase):
                 lambda value: value if isinstance(value, timedelta) else timedelta(seconds=value),
                 lambda value: value.total_seconds() if isinstance(value, timedelta) else value,
             )
+        self.entry.options.update(sleep_activation_mode="disabled", sleep_schedule_start="23:00:00",
+                                  sleep_schedule_end="05:00:00")
+        for name in self.api._SLEEP_TIME_OPTIONS:
+            self.const.EXTRA_VALIDATION[name] = (
+                lambda value: value if isinstance(value, time) else time.fromisoformat(value), str,
+            )
 
     def tearDown(self):
         sys.modules.pop(self.color.__name__, None)
@@ -113,8 +119,8 @@ class SolarContextApiTests(unittest.TestCase):
             for days in range(-2, 3)
             for event, timestamp in self.sun.sun_events(datetime(2026, 10, 14).date() + timedelta(days=days))
         ], key=lambda item: item["timestamp"])
-        first = max(index for index, event in enumerate(expected) if event["timestamp"] <= result["day_start"])
-        last = next(index for index, event in enumerate(expected) if event["timestamp"] > result["day_end"])
+        first = max(index for index, event in enumerate(expected) if event["timestamp"] <= result["day_start"] - 7200)
+        last = next(index for index, event in enumerate(expected) if event["timestamp"] > result["day_end"] + 7200)
         self.assertEqual(result["events"], expected[first:last + 1])
         self.assertLess(expected[0]["timestamp"], result["day_start"])
         self.assertGreater(expected[-1]["timestamp"], result["day_end"])
@@ -229,6 +235,153 @@ class SolarContextApiTests(unittest.TestCase):
         self.solar(settings={"sunrise_offset_minutes": 10 * 60})
         self.assertEqual(self.errors[-1][1], "solar_unavailable")
         self.assertEqual(self.results, [])
+
+    def test_disabled_sleep_keeps_the_normal_graph_and_adds_only_read_only_metadata(self):
+        original = deepcopy(self.entry.options)
+        result = self.solar()
+        self.assertEqual(result["sleep_mode"], "disabled")
+        self.assertEqual(result["sleep_windows"], [])
+        self.assertFalse(result["sleep_all_day"])
+        self.assertEqual(self.entry.options, original)
+        self.assertEqual(self.calibration.calls, [])
+        self.assertEqual(self.calibration.stops, [])
+
+    def test_solar_sleep_windows_follow_effective_offsets_and_include_previous_night(self):
+        result = self.solar(settings={"sleep_activation_mode": "sun", "sunset_offset_minutes": 60})
+        self.assertEqual(result["sleep_mode"], "sun")
+        self.assertFalse(result["sleep_all_day"])
+        previous = next(window for window in result["sleep_windows"]
+                        if window["start"] < result["day_start"] < window["end"])
+        self.assertEqual(previous["start"], datetime(2026, 10, 13, 19, tzinfo=UTC).timestamp())
+        self.assertEqual(previous["end"], result["sunrise"]["timestamp"])
+        tonight = next(window for window in result["sleep_windows"]
+                       if window["start"] == result["sunset"]["timestamp"])
+        self.assertEqual(tonight["end"], datetime(2026, 10, 15, 6, tzinfo=UTC).timestamp())
+
+    def test_unsaved_cross_midnight_schedule_does_not_change_profile_or_switch(self):
+        original = deepcopy(self.entry.options)
+        result = self.solar(settings={"sleep_activation_mode": "schedule",
+                                     "sleep_schedule_start": "23:30:00", "sleep_schedule_end": "07:15:00"})
+        self.assertEqual(result["sleep_mode"], "schedule")
+        relevant = [window for window in result["sleep_windows"]
+                    if window["start"] < result["day_end"] and window["end"] > result["day_start"]]
+        self.assertEqual(relevant, [
+            {"start": datetime(2026, 10, 13, 22, 30, tzinfo=UTC).timestamp(),
+             "end": datetime(2026, 10, 14, 6, 15, tzinfo=UTC).timestamp()},
+            {"start": datetime(2026, 10, 14, 22, 30, tzinfo=UTC).timestamp(),
+             "end": datetime(2026, 10, 15, 6, 15, tzinfo=UTC).timestamp()},
+        ])
+        self.assertEqual(self.entry.options, original)
+        self.assertEqual(self.calibration.calls, [])
+        self.assertEqual(self.calibration.stops, [])
+        self.assertIs(self.hass.data["circadian_pro"]["loaded"]["switch"]._sun_light_settings.sun, self.sun)
+
+    def test_curve_history_keeps_the_solar_pair_for_a_long_night_fade_across_midnight(self):
+        result = self.solar(settings={"sunrise_time": "01:00", "sunset_time": "21:00",
+                                     "sleep_activation_mode": "schedule", "sleep_schedule_start": "22:31",
+                                     "sleep_schedule_end": "07:00"})
+        window = next(value for value in result["sleep_windows"]
+                      if value["start"] < result["day_start"] < value["end"])
+        # At 00:00 a 6553-second transition starting yesterday at 22:31 is
+        # still underway. Its normal source belongs to the 21:00→23:00 pair;
+        # cropping to the day's immediate 23:00 bracket would lose that source.
+        self.assertLess(result["day_start"] - window["start"], 6553)
+        before = [event for event in result["events"] if event["timestamp"] <= window["start"]][-1]
+        after = next(event for event in result["events"] if event["timestamp"] > window["start"])
+        self.assertEqual(before["event"], "sunset")
+        self.assertEqual(after["event"], "solar_midnight")
+        self.assertEqual(before["timestamp"], datetime(2026, 10, 13, 20, tzinfo=UTC).timestamp())
+        self.assertEqual(after["timestamp"], datetime(2026, 10, 13, 22, tzinfo=UTC).timestamp())
+        self.assertLessEqual(result["events"][0]["timestamp"], result["day_start"] - 6553)
+        self.assertGreater(result["events"][-1]["timestamp"], result["day_end"] + 6553)
+
+    def test_same_day_schedule_has_exact_seconds_and_no_midnight_split(self):
+        result = self.solar(settings={"sleep_activation_mode": "schedule",
+                                     "sleep_schedule_start": "14:10:30", "sleep_schedule_end": "16:20:45"})
+        relevant = [window for window in result["sleep_windows"]
+                    if result["day_start"] <= window["start"] < result["day_end"]]
+        self.assertEqual(relevant, [{"start": datetime(2026, 10, 14, 13, 10, 30, tzinfo=UTC).timestamp(),
+                                    "end": datetime(2026, 10, 14, 15, 20, 45, tzinfo=UTC).timestamp()}])
+
+    def test_equal_schedule_endpoints_match_runtime_all_day_membership(self):
+        result = self.solar(settings={"sleep_activation_mode": "schedule",
+                                     "sleep_schedule_start": "05:00", "sleep_schedule_end": "05:00"})
+        self.assertTrue(result["sleep_all_day"])
+        self.assertEqual(len(result["sleep_windows"]), 1)
+        self.assertLess(result["sleep_windows"][0]["start"], result["day_start"] - 86400)
+        self.assertGreater(result["sleep_windows"][0]["end"], result["day_end"] + 86400)
+
+    def test_dst_fall_back_repeats_a_short_wall_clock_window_twice(self):
+        result = self.solar(now=datetime(2026, 10, 25, 12, tzinfo=UTC), settings={
+            "sleep_activation_mode": "schedule", "sleep_schedule_start": "01:15", "sleep_schedule_end": "01:45",
+        })
+        relevant = [window for window in result["sleep_windows"]
+                    if result["day_start"] <= window["start"] < result["day_end"]]
+        self.assertEqual(relevant, [
+            {"start": datetime(2026, 10, 25, 0, 15, tzinfo=UTC).timestamp(),
+             "end": datetime(2026, 10, 25, 0, 45, tzinfo=UTC).timestamp()},
+            {"start": datetime(2026, 10, 25, 1, 15, tzinfo=UTC).timestamp(),
+             "end": datetime(2026, 10, 25, 1, 45, tzinfo=UTC).timestamp()},
+        ])
+
+    def test_dst_fall_back_can_exit_a_window_at_the_clock_change(self):
+        result = self.solar(now=datetime(2026, 10, 25, 12, tzinfo=UTC), settings={
+            "sleep_activation_mode": "schedule", "sleep_schedule_start": "01:30", "sleep_schedule_end": "02:30",
+        })
+        relevant = [window for window in result["sleep_windows"]
+                    if result["day_start"] <= window["start"] < result["day_end"]]
+        self.assertEqual(relevant, [
+            {"start": datetime(2026, 10, 25, 0, 30, tzinfo=UTC).timestamp(),
+             "end": datetime(2026, 10, 25, 1, tzinfo=UTC).timestamp()},
+            {"start": datetime(2026, 10, 25, 1, 30, tzinfo=UTC).timestamp(),
+             "end": datetime(2026, 10, 25, 2, 30, tzinfo=UTC).timestamp()},
+        ])
+
+    def test_dst_spring_skips_an_absent_window_and_starts_at_jump_for_partial_gap(self):
+        for end, expected in (("01:45", []), ("02:30", [{
+            "start": datetime(2026, 3, 29, 1, tzinfo=UTC).timestamp(),
+            "end": datetime(2026, 3, 29, 1, 30, tzinfo=UTC).timestamp(),
+        }])):
+            with self.subTest(end=end):
+                result = self.solar(now=datetime(2026, 3, 29, 12, tzinfo=UTC), settings={
+                    "sleep_activation_mode": "schedule", "sleep_schedule_start": "01:15", "sleep_schedule_end": end,
+                })
+                relevant = [window for window in result["sleep_windows"]
+                            if result["day_start"] <= window["start"] < result["day_end"]]
+                self.assertEqual(relevant, expected)
+
+    def test_invalid_schedule_options_are_rejected_without_executor_or_light_calls(self):
+        for draft in ({"sleep_activation_mode": "unknown"},
+                      {"sleep_activation_mode": "schedule", "sleep_schedule_start": "garbage"},
+                      {"sleep_activation_mode": "schedule", "sleep_schedule_end": None}):
+            with self.subTest(draft=draft):
+                self.solar(settings=draft)
+                self.assertEqual(self.errors[-1][1], "invalid_options")
+        self.assertEqual(self.executor_calls, [])
+        self.assertEqual(self.calibration.calls, [])
+
+    def test_midpoints_are_arithmetic_horizon_midpoints_not_astral_noon_or_midnight(self):
+        result = self.solar(settings={"sunset_offset_minutes": 60})
+        self.assertEqual(result["midpoints"], [
+            {"kind": "night", "timestamp": datetime(2026, 10, 14, 0, 30, tzinfo=UTC).timestamp(),
+             "local_time": "01:30"},
+            {"kind": "day", "timestamp": datetime(2026, 10, 14, 12, 30, tzinfo=UTC).timestamp(),
+             "local_time": "13:30"},
+        ])
+        noon = next(event["timestamp"] for event in result["events"] if event["event"] == "solar_noon")
+        self.assertNotEqual(result["midpoints"][1]["timestamp"], noon)
+
+    def test_midpoints_use_elapsed_time_through_dst_and_stay_in_plotted_local_day(self):
+        result = self.solar(now=datetime(2026, 10, 25, 12, tzinfo=UTC), settings={
+            "sunrise_time": "07:00", "sunset_time": "19:00",
+        })
+        night = next(value for value in result["midpoints"] if value["kind"] == "night")
+        # Yesterday's 19:00 BST = 18:00 UTC, today's 07:00 GMT = 07:00 UTC.
+        self.assertEqual(night["timestamp"], datetime(2026, 10, 25, 0, 30, tzinfo=UTC).timestamp())
+        self.assertEqual(night["local_time"], "01:30")
+        for value in result["midpoints"]:
+            self.assertGreaterEqual(value["timestamp"], result["day_start"])
+            self.assertLess(value["timestamp"], result["day_end"])
 
 
 if __name__ == "__main__":

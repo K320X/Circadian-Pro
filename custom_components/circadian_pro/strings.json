@@ -77,7 +77,7 @@
         "data_description": {
           "lights": "Lights controlled by this profile. You can leave the list empty.",
           "interval": "How often settings are recalculated and applied.",
-          "transition": "Transition time during regular adaptation. Sleep mode has its own transition setting.",
+          "transition": "Transition time during regular adaptation, including automatic sleep-mode entry and exit.",
           "initial_transition": "Transition time for the first change when turning on a light.",
           "min_brightness": "Minimum allowed brightness.",
           "max_brightness": "Maximum allowed brightness.",
@@ -87,7 +87,7 @@
           "sleep_brightness": "Target brightness in sleep mode.",
           "sleep_color_temp": "Sleep color temperature (if using color temperature).",
           "sleep_rgb_color": "Sleep RGB color (if using RGB). In this mode the W channel is forced to 0.",
-          "sleep_transition": "Transition time when enabling/disabling sleep mode.",
+          "sleep_transition": "Transition time when manually enabling/disabling sleep mode with its switch. Automatic sleep mode uses the general transition.",
           "sleep_schedule_start": "Start of the automatic schedule. Only used with “By schedule”.\nUse HH:MM:SS; for example, 23:00:00.",
           "sleep_schedule_end": "End of the automatic schedule. Only used with “By schedule”.\nThe schedule can cross midnight; for example, 23:00:00 to 05:00:00.",
           "take_over_control": "If enabled, pauses adaptation when manual changes are detected.",
