@@ -1,4 +1,15 @@
-Circadian Pro - notices for inherited code
+Circadian Pro - licensing and attribution notices
+
+Copyright (C) 2026 K320X for original Circadian Pro source code and modifications.
+
+Original Circadian Pro source code and modifications are licensed under the
+GNU General Public License, version 3 (GPL-3.0-only). The combined integration
+is distributed under GPLv3, with the inherited-code notices and Apache 2.0
+conditions below preserved. A complete GPLv3 copy is included in
+LICENSE-GPL-3.0.txt in this directory and in LICENSE at the repository root.
+
+This licensing statement covers source code. Artwork and branding are outside
+its scope, and no trademark rights are granted.
 
 Parts of this integration derive from Adaptive Lighting:
 https://github.com/basnijholt/adaptive-lighting
@@ -28,6 +39,6 @@ and the upstream license were checked on 2026-10-13 against upstream revision
 283fec08ae7d34901d13c32e91fb001f92395fe7. That revision is a comparison reference,
 not a claim about the revision originally imported.
 
-This notice concerns inherited code. It does not assign authorship of that code
-to Circadian Pro or extend its license to independently created code or artwork.
+The inherited-code attribution does not assign authorship of that code to
+Circadian Pro or replace its original Apache 2.0 license.
 Circadian Pro is maintained separately; no upstream endorsement is implied.

@@ -221,7 +221,11 @@ Circadian Pro is a custom integration and is not part of the official Home Assis
 
 Compatibility can vary depending on the capabilities and implementation of each light integration.
 
-## Third-party notices
+## License and third-party notices
+
+Original Circadian Pro source code and modifications are licensed under the [GNU GPLv3](LICENSE) (`GPL-3.0-only`). Commercial use and charging for distribution are allowed. Distributing a covered modified version requires compliance with GPLv3, including making its corresponding source available under the same license. Keeping private modifications does not require publishing them.
+
+Inherited portions retain their Apache 2.0 license and attribution; the combined integration is distributed under GPLv3 with those notices preserved. Artwork and branding are outside the scope of this source-code licensing statement; no trademark rights are granted.
 
 The integration, panel, entities and services use the Circadian Pro name and `circadian_pro` domain. Technical references to Home Assistant, WLED and other supported integrations describe compatibility.
 
