@@ -24,13 +24,13 @@
     cal_rgb_neutral_r:255, cal_rgb_neutral_g:255, cal_rgb_neutral_b:255,
     cal_rgb_warm_r:255, cal_rgb_warm_g:56, cal_rgb_warm_b:0,
     cal_white_intensity_neutral:100, cal_white_intensity_warm:0,
-    sleep_rgb_color:[255,0,0],sleep_rgb_or_color_temp:'rgb_color',sleep_color_temp:1500,sleep_brightness:80,
+    sleep_rgb_color:[255,0,0],sleep_rgb_or_color_temp:'rgb_color',sleep_color_temp:1500,sleep_brightness:80,sleep_transition:90,
     sleep_activation_mode:'schedule',sleep_schedule_start:'21:00:00',sleep_schedule_end:'06:00:00',sunrise_time:'None',
   };
   const steps = ['init','white_channels','cal_neutral','cal_warm'];
   const names = [
     ['lights','interval','transition','min_color_temp','max_color_temp','min_brightness','max_brightness','brightness_mode','apply_temperature_curve','brightness_mode_time_light_minutes','brightness_mode_time_dark_minutes',
-      'sleep_activation_mode','sleep_schedule_start','sleep_schedule_end','sleep_brightness','sleep_rgb_or_color_temp','sleep_color_temp','sleep_rgb_color','sunrise_time'],
+      'sleep_activation_mode','sleep_schedule_start','sleep_schedule_end','sleep_brightness','sleep_transition','sleep_rgb_or_color_temp','sleep_color_temp','sleep_rgb_color','sunrise_time'],
     ['white_w_kelvin','white_cw_kelvin'],
     ['cal_rgb_neutral_r','cal_rgb_neutral_g','cal_rgb_neutral_b','cal_white_intensity_neutral','cal_white_kelvin_neutral'],
     ['cal_rgb_warm_r','cal_rgb_warm_g','cal_rgb_warm_b','cal_white_intensity_warm'],

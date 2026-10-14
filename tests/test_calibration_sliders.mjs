@@ -224,12 +224,27 @@ test("general settings keep their existing number controls", (t) => {
 
 test("general brightness fields expose the canonical 1–100 range and keep invalid zero drafts editable", (t) => {
   const harness = panelHarness(t, "init");
+  harness.panel.copy.brightnessRangeHint = "Rango: 1–100 %.";
+  harness.panel.translations.step.init = { data_description: { min_brightness: "Brillo mínimo permitido.",
+    max_brightness: "Brillo máximo permitido.", sleep_brightness: "Brillo objetivo en modo noche." } };
   for (const name of ["min_brightness", "max_brightness", "sleep_brightness"]) {
     const { field, number } = harness.add(name, 50, 0, 100);
     assert.deepEqual([Number(number.min), Number(number.max), Number(number.step)], [1, 100, 1]);
     const hint = field.querySelector(".brightness-range-help");
-    assert.equal(hint.textContent, "1–100 %");
-    assert.equal(number.getAttribute("aria-describedby"), hint.id);
+    if (name === "sleep_brightness") {
+      assert.equal(hint.textContent, `${harness.panel.translations.step.init.data_description[name]} Rango: 1–100 %.`);
+      assert.equal(number.getAttribute("aria-describedby"), hint.id);
+      assert.deepEqual(field.children.map((node) => node.tag), ["span", "input", "small"]);
+    } else {
+      assert.equal(hint, undefined, "minimum and maximum brightness do not repeat their title in a description");
+      assert.deepEqual(field.children.map((node) => node.tag), ["span", "input"], "compact brightness limits have only a title and control row");
+      const range = field.querySelector(".brightness-limit-range");
+      assert.equal(range.textContent, "1–100");
+      assert.equal(field.children[0].children[0], range, "range stays inside the title line");
+      assert.equal(number.getAttribute("aria-describedby"), range.id);
+      assert.match(field.className, /brightness-limit/);
+    }
+    assert.equal(field.children[1], number);
     number.value = "0";
     number.dispatchEvent(new Event("input"));
     assert.equal(number.value, "0", "the invalid draft is never silently clamped");

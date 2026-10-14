@@ -539,6 +539,7 @@ const COPY = {
     checkStep: "Comprobar estado",
     choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
     warmWhite: "Cálido", coldWhite: "Frío",
+    brightnessRangeHint: "Rango: 1–100 %.",
     timingDiagram: {
       sunrise: "Amanecer", sunset: "Atardecer", minimum: "Mín.", maximum: "Máx.",
       title: "Vista de la curva", brightness: "Brillo", temperature: "Temperatura de color",
@@ -600,6 +601,7 @@ const COPY = {
     checkStep: "Check status",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
     warmWhite: "Warm", coldWhite: "Cold",
+    brightnessRangeHint: "Range: 1–100%.",
     timingDiagram: {
       sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
       title: "Curve preview", brightness: "Brightness", temperature: "Color temperature",
@@ -1740,14 +1742,20 @@ export class CircadianCalibrationPanel extends HTMLElement {
       }
     }
     input.dataset.field = name;
-    if (step === "init" && BRIGHTNESS_FIELDS.has(name) && input.type === "number") {
+    const brightnessField = step === "init" && BRIGHTNESS_FIELDS.has(name) && input.type === "number";
+    const brightnessLimit = brightnessField && ["min_brightness", "max_brightness"].includes(name);
+    if (brightnessField) {
       input.min = 1;
       input.max = 100;
       input.step = 1;
-      const rangeHint = element("small", "1–100 %", "brightness-range-help");
-      rangeHint.id = `field-${name}-range`;
-      input.setAttribute("aria-describedby", rangeHint.id);
-      wrapper.append(rangeHint);
+      if (brightnessLimit) {
+        wrapper.className += " brightness-limit";
+        label.className += " brightness-limit-title";
+        const range = element("span", "1–100", "brightness-limit-range");
+        range.id = `field-${name}-range`;
+        label.append(range);
+        input.setAttribute("aria-describedby", range.id);
+      }
     }
     if (timingPortion) input.setAttribute("aria-labelledby", label.id);
     if (input.type === "checkbox") wrapper.className += " checkbox-field";
@@ -1808,7 +1816,14 @@ export class CircadianCalibrationPanel extends HTMLElement {
       wrapper.append(input);
     }
     const description = text.data_description?.[name];
-    if (description && name === "brightness_mode") {
+    if (brightnessField && !brightnessLimit) {
+      // Paired fields share three subgrid rows: title, control, help. Keep the
+      // range in the same help element so it cannot create an overlapping row.
+      const help = element("small", [description, this.copy.brightnessRangeHint || "1–100 %"].filter(Boolean).join(" "), "brightness-range-help");
+      help.id = `field-${name}-help`;
+      input.setAttribute("aria-describedby", help.id);
+      wrapper.append(help);
+    } else if (description && name === "brightness_mode") {
       const help = element("small", undefined, "mode-description");
       const modeNames = Object.values(this.translations.selector?.brightness_mode?.options || this.copy.timingDiagram?.modes || {});
       for (const line of description.split("\n")) {
@@ -1820,7 +1835,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
         help.append(paragraph);
       }
       wrapper.append(help);
-    } else if (description) wrapper.append(element("small", description));
+    } else if (description && !brightnessLimit) wrapper.append(element("small", description));
     return wrapper;
   }
 
@@ -1899,6 +1914,9 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .settings-row { display:grid; gap:8px 24px; min-width:0; } .settings-row + .settings-row { margin-top:22px; }
       .settings-row.paired { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .settings-row.paired > .field { grid-template-rows:subgrid; grid-row:span 3; }
+      .settings-row.paired > .brightness-limit { grid-row:span 2; }
+      .brightness-limit-title { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+      .brightness-limit-range { flex-shrink:0; font-weight:400; color:var(--secondary-text-color,#606770); font-variant-numeric:tabular-nums; }
       .settings-group .label,.settings-group small { overflow-wrap:anywhere; }
       .settings-group .checkbox-field { grid-template-columns:20px minmax(0,1fr); align-items:center; }
       .settings-group .checkbox-field .label { grid-column:2; grid-row:1; }
