@@ -6,6 +6,7 @@ const CONFIG_FLOW = "config/config_entries/flow";
 const OPTIONAL_TIMES = new Set([
   "sunrise_time", "sunset_time", "min_sunrise_time", "max_sunrise_time", "min_sunset_time", "max_sunset_time",
 ]);
+const BRIGHTNESS_FIELDS = new Set(["min_brightness", "max_brightness", "sleep_brightness"]);
 // Presentation only: the server still supplies the fields, defaults and validation.
 // Each row contains related settings; future unknown fields stay visible below.
 const GENERAL_GROUPS = [
@@ -555,6 +556,8 @@ const COPY = {
       nightStartShort: "IN · Noche", nightEndShort: "OUT · Noche",
       nightTiming: "Horario previsto. Transición general: {transition} s. La detección puede retrasarse hasta {interval} s, o más si hay otra transición en curso. La luz determina cómo suaviza el cambio.",
       nightInvalid: "Revisa el brillo, el color nocturno y la transición general.",
+      brightnessRange: "Introduce un brillo entero entre 1 y 100 %. El 0 % no está permitido.",
+      brightnessOrder: "El brillo mínimo no puede superar al máximo.",
       rise: "Subida: {dark} min antes + {light} min después del amanecer.",
       fall: "Bajada: {light} min antes + {dark} min después del atardecer.",
       linear: "Cada transición dura {total} min.",
@@ -614,6 +617,8 @@ const COPY = {
       nightStartShort: "IN · Night", nightEndShort: "OUT · Night",
       nightTiming: "Planned schedule. General transition: {transition} s. Detection may take up to {interval} s, or longer while another transition is running. The light determines how the change is smoothed.",
       nightInvalid: "Check brightness, sleep color and the general transition.",
+      brightnessRange: "Enter a whole brightness percentage from 1 to 100%. A value of 0% is not allowed.",
+      brightnessOrder: "Minimum brightness cannot exceed maximum brightness.",
       rise: "Rise: {dark} min before + {light} min after sunrise.",
       fall: "Fall: {light} min before + {dark} min after sunset.",
       linear: "Each transition lasts {total} min.",
@@ -845,6 +850,13 @@ function normalGraphColor(progress) {
 
 const graphDefault = (value, fallback) => value === undefined ? fallback : value;
 
+function brightnessGraphError(values) {
+  if ([...BRIGHTNESS_FIELDS].some((name) => values[name] !== undefined
+    && (!Number.isInteger(values[name]) || values[name] < 1 || values[name] > 100))) return "brightnessRange";
+  return values.min_brightness !== undefined && values.max_brightness !== undefined
+    && values.min_brightness > values.max_brightness ? "brightnessOrder" : null;
+}
+
 // Approximate black-body sRGB for the sleep CCT swatch. It is not a prediction
 // of LED spectra or calibration. Normal daytime colors keep the existing key.
 export function sleepGraphColor(values) {
@@ -945,6 +957,31 @@ export function nightTimingPoints(values, context) {
 
 let timingGradientId = 0;
 
+export function layoutTimelineLabels(items, width, gap = 8) {
+  const positions = items.map((item) => ({ ...item, width: Math.min(width, item.width) }));
+  let row = [], used = 0, rowIndex = 0;
+  const place = () => {
+    let right = -gap;
+    for (const item of row) {
+      item.row = rowIndex;
+      item.left = Math.max(right + gap, item.anchor - item.width / 2);
+      right = item.left + item.width;
+    }
+    right = width + gap;
+    for (const item of [...row].reverse()) {
+      item.left = Math.min(item.left, right - gap - item.width);
+      right = item.left;
+    }
+  };
+  for (const item of positions) {
+    if (row.length && used + gap + item.width > width) { place(); row = []; used = 0; rowIndex++; }
+    used += (row.length ? gap : 0) + item.width;
+    row.push(item);
+  }
+  place();
+  return positions;
+}
+
 export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {}) {
   const figure = element("figure", undefined, "timing-diagram");
   const svgNode = (tag, attributes, text) => {
@@ -966,6 +1003,31 @@ export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {
   const labels = element("div", undefined, "timing-event-labels");
   const midpointLabels = element("div", undefined, "timing-midpoint-labels");
   const nightLabels = element("div", undefined, "timing-night-labels");
+  let nightLabelItems = [], lastWidth = 0;
+  const layoutNightLabels = () => {
+    const width = area.clientWidth || 600;
+    lastWidth = width;
+    const positions = layoutTimelineLabels(nightLabelItems.map(({ label, position }) => ({
+      anchor: position * width, width: label.getBoundingClientRect?.().width || 80,
+    })), width);
+    positions.forEach(({ left, row, anchor, width: labelWidth }, index) => {
+      const { label, leader } = nightLabelItems[index];
+      label.style.left = `${left}px`;
+      label.style.top = `${row * 38}px`;
+      const offset = left + labelWidth / 2 - anchor;
+      leader.hidden = row !== 0 || Math.abs(offset) < 8;
+      leader.style.left = `${anchor - left}px`;
+      leader.style.width = `${Math.hypot(offset, 8)}px`;
+      leader.style.transform = `rotate(${Math.atan2(8, offset)}rad)`;
+    });
+    const height = positions.length ? (Math.max(...positions.map((item) => item.row)) + 1) * 38 : 0;
+    nightLabels.style.height = `${height}px`;
+    bounds.style.setProperty("--night-bottom", `${height ? height + 6 : 0}px`);
+  };
+  const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+    if (area.clientWidth !== lastWidth) layoutNightLabels();
+  }) : null;
+  observer?.observe(area);
   const eventLabels = ["sunrise", "sunset"].map((name) => {
     const label = element("span", undefined, "timing-event-label");
     label.append(element("span", copy[name]), element("time"));
@@ -1000,19 +1062,21 @@ export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {
   retry.type = "button";
   retry.addEventListener("click", onRetry);
   figure.append(heading, plot, status, retry, caption, details);
-  return { figure, update(values, context, contextStatus = "loading") {
+  return { figure, close() { observer?.disconnect(); }, update(values, context, contextStatus = "loading") {
     const mode = values.brightness_mode;
     const light = values.brightness_mode_time_light_minutes;
     const dark = values.brightness_mode_time_dark_minutes;
     const validContext = validSolarContext(context);
     const night = ["sun", "schedule"].includes(values.sleep_activation_mode ?? context?.sleep_mode);
     const nightPoints = night && context?.sleep_mode === (values.sleep_activation_mode ?? context?.sleep_mode) ? nightTimingPoints(values, context) : null;
-    const points = night ? nightPoints : brightnessTimingPoints(mode, light, dark, context);
+    const brightnessError = brightnessGraphError(values);
+    const points = brightnessError ? null : night ? nightPoints : brightnessTimingPoints(mode, light, dark, context);
     const shared = mode !== "default" && values.apply_temperature_curve === true;
     legend.textContent = `${copy.modes[mode] || ""} · ${copy.brightness}`;
     plot.hidden = !points;
     status.hidden = Boolean(points);
-    status.textContent = points ? "" : validContext ? (night ? copy.nightInvalid : copy.invalid) : copy[contextStatus] || copy.unavailable;
+    status.textContent = points ? "" : brightnessError ? copy[brightnessError]
+      : validContext ? (night ? copy.nightInvalid : copy.invalid) : copy[contextStatus] || copy.unavailable;
     retry.hidden = validContext || contextStatus === "loading";
     caption.hidden = !points;
     details.hidden = !points || !night;
@@ -1050,26 +1114,19 @@ export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {
       ? context.sleep_windows.flatMap((window) => [{ timestamp: window.start, name: copy.nightStart, short: copy.nightStartShort },
         { timestamp: window.end, name: copy.nightEnd, short: copy.nightEndShort }])
         .filter((edge) => edge.timestamp >= context.day_start && edge.timestamp < context.day_end) : [];
-    const rows = [];
-    nightLabels.replaceChildren(...edges.map((edge, index) => {
+    nightLabelItems = edges.map((edge) => {
       const position = (edge.timestamp - context.day_start) / (context.day_end - context.day_start);
-      let row = rows.findIndex((previous) => position - previous >= 0.43);
-      if (row < 0) row = rows.length;
-      rows[row] = position;
       const label = element("span", undefined, "timing-event-label");
+      const leader = element("span", undefined, "timing-night-leader");
+      leader.setAttribute("aria-hidden", "true");
       label.append(element("span", edge.short), element("time", clock(edge.timestamp)));
+      label.append(leader);
       label.setAttribute("aria-label", `${edge.name} ${clock(edge.timestamp)}`);
-      label.style.left = `${position * 100}%`;
-      label.style.top = `${row * 38}px`;
-      label.style.setProperty("--mobile-night-top", `${index * 38}px`);
-      label.style.transform = position < 0.22 ? "none" : position > 0.78 ? "translateX(-100%)" : "translateX(-50%)";
-      return label;
-    }));
+      return { label, position, leader };
+    });
+    nightLabels.replaceChildren(...nightLabelItems.map((item) => item.label));
     nightLabels.hidden = edges.length === 0;
-    nightLabels.style.height = `${rows.length * 38}px`;
-    nightLabels.style.setProperty("--mobile-night-height", `${edges.length * 38}px`);
-    bounds.style.setProperty("--night-bottom", `${edges.length ? rows.length * 38 + 6 : 0}px`);
-    bounds.style.setProperty("--mobile-night-bottom", `${edges.length ? edges.length * 38 + 6 : 0}px`);
+    layoutNightLabels();
     nightLines.setAttribute("d", edges.map((edge) => `M${(edge.timestamp - context.day_start) / (context.day_end - context.day_start) * 600} 0 V176`).join(" "));
     const date = new Intl.DateTimeFormat(language, { day: "numeric", month: "short", year: "numeric", timeZone: context.timezone }).format(new Date((context.day_start + context.day_end) * 500));
     caption.textContent = copy.caption.replace("{date}", date).replace("{timezone}", context.timezone);
@@ -1342,6 +1399,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     window.removeEventListener("pagehide", this.onLeave);
     this.solarContext?.close();
     this.solarContext = null;
+    this.timingChart?.close();
     const flow = this.flow;
     this.flow = this.session = null;
     flow?.close().catch(() => {});
@@ -1534,6 +1592,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
   async closeWizard() {
     this.solarContext?.close();
     this.solarContext = null;
+    this.timingChart?.close();
     const flow = this.flow;
     if (!flow) return;
     try { await flow.close(); }
@@ -1681,6 +1740,15 @@ export class CircadianCalibrationPanel extends HTMLElement {
       }
     }
     input.dataset.field = name;
+    if (step === "init" && BRIGHTNESS_FIELDS.has(name) && input.type === "number") {
+      input.min = 1;
+      input.max = 100;
+      input.step = 1;
+      const rangeHint = element("small", "1–100 %", "brightness-range-help");
+      rangeHint.id = `field-${name}-range`;
+      input.setAttribute("aria-describedby", rangeHint.id);
+      wrapper.append(rangeHint);
+    }
     if (timingPortion) input.setAttribute("aria-labelledby", label.id);
     if (input.type === "checkbox") wrapper.className += " checkbox-field";
     input.required = Boolean(field.required) || input.type === "number";
@@ -1780,6 +1848,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
   }
 
   render() {
+    this.timingChart?.close();
     this.shadowRoot.replaceChildren();
     this.solarContext?.close();
     this.solarContext = null;
@@ -1809,6 +1878,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .timing-midpoint-labels { position:relative; height:20px; font-size:11px; line-height:16px; font-variant-numeric:tabular-nums; color:var(--secondary-text-color,#606770); }
       .timing-midpoint-labels time { position:absolute; white-space:nowrap; }
       .timing-night-labels { position:relative; margin-top:6px; font-size:11px; line-height:17px; color:var(--secondary-text-color,#606770); }
+      .timing-night-leader { position:absolute; top:-8px; height:1px; border-top:1px solid #c62828; opacity:.55; transform-origin:left center; pointer-events:none; }
       .timing-diagram svg { display:block; width:100%; height:176px; overflow:visible; }
       .timing-grid,.timing-event,.timing-night-event,.timing-curve { fill:none; vector-effect:non-scaling-stroke; }
       .timing-grid { stroke:#34445a; stroke-opacity:.3; stroke-width:1; }
@@ -1880,7 +1950,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .mobile-menu { display:none; padding:8px 10px; font-size:22px; line-height:1; } @media(max-width:870px) { .mobile-menu { display:block; } }
       #catalog-warning { margin-bottom:20px; padding:12px; border:1px solid var(--warning-color,#e69500); border-radius:8px; } #catalog-warning p { margin:0 0 10px; }
       #error { background:#b3261e; color:white; padding:12px; border-radius:8px; white-space:pre-line; } .step { margin:0 0 10px; font-size:13px; } .saved { color:var(--success-color,#16814b); } [hidden] { display:none !important; }
-      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; gap:8px; } header strong { font-size:16px; flex-shrink:0; } .close,.integration-link { padding:8px; } .timing-diagram svg { height:117px; } .timing-night-labels { height:var(--mobile-night-height)!important; } .timing-night-labels .timing-event-label { top:var(--mobile-night-top)!important; } .timing-bounds { padding-bottom:var(--mobile-night-bottom,0px); } }
+      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; gap:8px; } header strong { font-size:16px; flex-shrink:0; } .close,.integration-link { padding:8px; } .timing-diagram svg { height:117px; } }
     `;
     const header = element("header");
     const menu = element("button", "☰", "mobile-menu");

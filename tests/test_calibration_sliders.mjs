@@ -8,7 +8,7 @@ const previousHTMLElement = globalThis.HTMLElement;
 const previousCustomElements = globalThis.customElements;
 globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
-const { CalibrationFlow, CircadianCalibrationPanel, PreviewSession, brightnessTimingValue: rawBrightnessTimingValue, brightnessTimingPoints: rawBrightnessTimingPoints, temperatureTimingPoints: rawTemperatureTimingPoints, SolarContextSession, validSolarContext, nightTimingPoints, sleepGraphColor, brightnessTimingDiagram } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const { CalibrationFlow, CircadianCalibrationPanel, PreviewSession, brightnessTimingValue: rawBrightnessTimingValue, brightnessTimingPoints: rawBrightnessTimingPoints, temperatureTimingPoints: rawTemperatureTimingPoints, SolarContextSession, validSolarContext, nightTimingPoints, sleepGraphColor, brightnessTimingDiagram, layoutTimelineLabels } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 if (previousHTMLElement === undefined) delete globalThis.HTMLElement;
 else globalThis.HTMLElement = previousHTMLElement;
 if (previousCustomElements === undefined) delete globalThis.customElements;
@@ -220,6 +220,52 @@ test("general settings keep their existing number controls", (t) => {
   const { number, range } = harness.add("interval", 60, 1, 3600);
   assert.equal(range, undefined);
   assert.equal(number.value, "60");
+});
+
+test("general brightness fields expose the canonical 1–100 range and keep invalid zero drafts editable", (t) => {
+  const harness = panelHarness(t, "init");
+  for (const name of ["min_brightness", "max_brightness", "sleep_brightness"]) {
+    const { field, number } = harness.add(name, 50, 0, 100);
+    assert.deepEqual([Number(number.min), Number(number.max), Number(number.step)], [1, 100, 1]);
+    const hint = field.querySelector(".brightness-range-help");
+    assert.equal(hint.textContent, "1–100 %");
+    assert.equal(number.getAttribute("aria-describedby"), hint.id);
+    number.value = "0";
+    number.dispatchEvent(new Event("input"));
+    assert.equal(number.value, "0", "the invalid draft is never silently clamped");
+    assert.equal(harness.panel.values[name], 0);
+    assert.equal(number.checkValidity(), false);
+    assert.throws(() => harness.panel.readValues(), /Invalid value/);
+    number.value = "1";
+    number.dispatchEvent(new Event("input"));
+    assert.equal(number.checkValidity(), true);
+  }
+});
+
+test("zero brightness has an explicit graph error with automatic night on or off and recovers after correction", (t) => {
+  installDocument(t);
+  for (const language of ["en", "es"]) {
+    const copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language }).timingDiagram;
+    for (const mode of ["default", "linear", "tanh"]) {
+      for (const activation of ["disabled", "schedule"]) {
+        const chart = brightnessTimingDiagram(copy, language);
+        const context = nightContext([], { sleep_mode: activation });
+        const values = { ...NIGHT_VALUES, brightness_mode: mode, sleep_activation_mode: activation };
+        for (const field of ["min_brightness", "max_brightness", "sleep_brightness"]) {
+          chart.update({ ...values, [field]: 0 }, context, "ready");
+          assert.equal(chart.figure.querySelector(".timing-plot").hidden, true);
+          assert.equal(chart.figure.querySelector(".timing-status").textContent, copy.brightnessRange);
+          assert.match(chart.figure.querySelector(".timing-status").textContent, /1.*100/);
+          assert.equal(chart.figure.querySelector(".timing-curve").getAttribute("d"), null);
+        }
+        chart.update({ ...values, min_brightness: 90, max_brightness: 20 }, context, "ready");
+        assert.equal(chart.figure.querySelector(".timing-status").textContent, copy.brightnessOrder);
+        chart.update({ ...values, min_brightness: 1 }, context, "ready");
+        assert.equal(chart.figure.querySelector(".timing-plot").hidden, false);
+        assert.equal(chart.figure.querySelector(".timing-status").hidden, true);
+      }
+    }
+  }
 });
 
 test("timing controls share one figure rather than embedding figures inside fields", (t) => {
@@ -1167,17 +1213,56 @@ test("shared graph has arithmetic midpoint hours above and scheduled red boundar
   assert.deepEqual(chart.figure.querySelector(".timing-bounds").children.map((node) => node.textContent), ["Max.", "Min."]);
 });
 
-test("close scheduled edges occupy separate bottom rows and retain all repeated wall-clock boundaries", (t) => {
+test("repeated scheduled boundaries add rows only when their actual label widths cannot fit", (t) => {
   installDocument(t);
   const copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "es" }).timingDiagram;
   const chart = brightnessTimingDiagram(copy, "es");
+  chart.figure.querySelector(".timing-plot-area").clientWidth = 180;
   chart.update(NIGHT_VALUES, nightContext([{ start: 3600, end: 3660 }, { start: 7200, end: 7260 }]));
   const labels = chart.figure.querySelector(".timing-night-labels");
   assert.equal(labels.children.length, 4);
-  assert.deepEqual(labels.children.map((label) => label.style.top), ["0px", "38px", "76px", "114px"]);
+  assert.deepEqual(labels.children.map((label) => label.style.top), ["0px", "0px", "38px", "38px"]);
   assert.equal(labels.children[0].children[0].textContent, "IN · Noche");
   assert.equal(labels.children[0].getAttribute("aria-label"), "Inicio modo noche 01:00");
-  assert.equal(labels.style.height, "152px");
+  assert.equal(labels.style.height, "76px");
+});
+
+test("two close IN/OUT labels share one baseline on desktop and mobile without overlap or overflow", () => {
+  for (const width of [180, 225, 600]) {
+    for (const hours of [[0, 5], [5, 15 + 40 / 60], [23, 23.5]]) {
+      const positions = layoutTimelineLabels(hours.map((hour) => ({ anchor: hour / 24 * width, width: 70 })), width);
+      assert.deepEqual(positions.map((item) => item.row), [0, 0]);
+      assert.ok(positions[0].left >= 0);
+      assert.ok(positions[1].left >= positions[0].left + positions[0].width + 8);
+      assert.ok(positions[1].left + positions[1].width <= width);
+    }
+  }
+});
+
+test("night-label layout measures width changes and disconnects its single observer when closed", (t) => {
+  installDocument(t);
+  const previous = globalThis.ResizeObserver;
+  const observers = [];
+  globalThis.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.closed = true; }
+  };
+  t.after(() => { if (previous === undefined) delete globalThis.ResizeObserver; else globalThis.ResizeObserver = previous; });
+  const copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "es" }).timingDiagram;
+  const chart = brightnessTimingDiagram(copy, "es");
+  const area = chart.figure.querySelector(".timing-plot-area");
+  area.clientWidth = 225;
+  chart.update(NIGHT_VALUES, nightContext([{ start: 0, end: 18000 }]));
+  const labels = chart.figure.querySelector(".timing-night-labels");
+  assert.deepEqual(labels.children.map((label) => label.style.top), ["0px", "0px"]);
+  assert.equal(observers.length, 1);
+  assert.equal(observers[0].target, area);
+  area.clientWidth = 140;
+  observers[0].callback();
+  assert.deepEqual(labels.children.map((label) => label.style.top), ["0px", "38px"]);
+  chart.close();
+  assert.equal(observers[0].closed, true);
 });
 
 test("only automatic mode and hours trigger solar reads; night colors, brightness and transition stay local", async (t) => {
@@ -1190,6 +1275,9 @@ test("only automatic mode and hours trigger solar reads; night colors, brightnes
   session.update({ ...NIGHT_VALUES, ...settings, sleep_brightness: 20, sleep_rgb_color: [0, 0, 255], transition: 60 });
   t.mock.timers.tick(300);
   assert.equal(requests.length, 1);
+  session.update({ ...NIGHT_VALUES, ...settings, min_brightness: 0, max_brightness: 0, sleep_brightness: 0 });
+  t.mock.timers.tick(300);
+  assert.equal(requests.length, 1, "invalid brightness drafts must not trigger a WS request or a light command");
   session.update({ ...NIGHT_VALUES, ...settings, sleep_schedule_start: "22:00:00" });
   t.mock.timers.tick(300);
   assert.equal(requests.length, 2);

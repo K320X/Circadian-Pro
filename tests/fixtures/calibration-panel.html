@@ -61,6 +61,7 @@
         : name.startsWith('sleep_schedule_') ? {selector:{time:{}}}
         : name === 'apply_temperature_curve' ? {selector:{boolean:{}}}
         : name.startsWith('brightness_mode_time_') ? {selector:{number:{min:0,max:240,step:1}}}
+        : ['min_brightness','max_brightness','sleep_brightness'].includes(name) ? {selector:{number:{min:1,max:100,step:1}}}
         : name === 'sunrise_time' ? {type:'string'}
         : {selector:{number:{min:name === 'cal_white_kelvin_neutral' ? defaults.white_w_kelvin : 0,
           max:name === 'cal_white_kelvin_neutral' ? defaults.white_cw_kelvin : name.startsWith('cal_rgb') ? 255 : name.startsWith('cal_white_intensity') ? 100 : 10000,step:1}}}),
