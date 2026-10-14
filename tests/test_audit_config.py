@@ -262,6 +262,70 @@ class ConfigAuditTests(unittest.TestCase):
         self.assertEqual(draft["sunrise_offset"], 3600)
         self.assertEqual(draft["sunrise_offset_minutes"], 20)
 
+    def test_brightness_windows_display_minutes_and_roundtrip_legacy_seconds_on_back(self):
+        for light, dark in ((1, 10000), (0, 3600), (61, 123), (0.25, 10000.75)):
+            with self.subTest(light=light, dark=dark):
+                options = {"brightness_mode": "linear", "brightness_mode_time_light": light,
+                           "brightness_mode_time_dark": dark}
+                first = self.options_flow(options)
+                fields = flow_fixtures.form_fields(immediate(first.async_step_init()))
+                draft = {"brightness_mode": "linear"}
+                for name, seconds in (("brightness_mode_time_light", light), ("brightness_mode_time_dark", dark)):
+                    form_name = f"{name}_minutes"
+                    self.assertNotIn(name, fields)
+                    self.assertEqual(fields[form_name][0], seconds / 60)
+                    self.assertEqual(fields[form_name][1].step, "any")
+                    self.assertEqual(fields[form_name][1].mode, "box")
+                    draft[form_name] = fields[form_name][0]
+                original_draft = dict(draft)
+                # Back and forward replay a UI draft through fresh options flows.
+                for _ in range(3):
+                    flow = self.options_flow(options)
+                    self.assertEqual(immediate(flow.async_step_init(draft))["step_id"], "cal_neutral")
+                    self.assertEqual(flow._base_options, options)
+                    self.assertEqual(flow.config_entry.options, options)
+                    self.assertEqual(draft, original_draft)
+
+    def test_invalid_brightness_minutes_preserve_draft_and_validate_in_seconds(self):
+        for mode in ("linear", "tanh"):
+            for light, dark in ((-1, 20), (20, -1), (0, 0)):
+                with self.subTest(mode=mode, light=light, dark=dark):
+                    flow = self.options_flow({"brightness_mode_time_light": 1, "brightness_mode_time_dark": 10000})
+                    draft = {"brightness_mode": mode, "brightness_mode_time_light_minutes": light,
+                             "brightness_mode_time_dark_minutes": dark}
+                    form = immediate(flow.async_step_init(draft))
+                    self.assertEqual(form["errors"], {"base": "invalid_brightness_window"})
+                    fields = flow_fixtures.form_fields(form)
+                    self.assertEqual(fields["brightness_mode_time_light_minutes"][0], light)
+                    self.assertEqual(fields["brightness_mode_time_dark_minutes"][0], dark)
+                    self.assertIsNone(flow._base_options)
+                    corrected = {**draft, "brightness_mode_time_light_minutes": 20,
+                                 "brightness_mode_time_dark_minutes": 30}
+                    self.assertEqual(immediate(flow.async_step_init(corrected))["step_id"], "cal_neutral")
+                    self.assertEqual(flow._base_options["brightness_mode_time_light"], 1200)
+                    self.assertEqual(flow._base_options["brightness_mode_time_dark"], 1800)
+
+    def test_invalid_brightness_minute_types_return_recoverable_form_errors(self):
+        for name in ("brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"):
+            for value in (None, True, False, "60", [], {}, float("inf"), float("nan"), 1e100, 10 ** 400):
+                with self.subTest(name=name, value=value):
+                    flow = self.options_flow({})
+                    form = immediate(flow.async_step_init({name: value}))
+                    self.assertEqual(form["errors"], {"base": "option_error"})
+                    self.assertIs(flow_fixtures.form_fields(form)[name][0], value)
+                    self.assertIsNone(flow._base_options)
+
+    def test_brightness_minute_aliases_override_only_corresponding_canonical_values(self):
+        convert = self.namespace["options_from_form"]
+        canonical = {"brightness_mode_time_light": 1.25, "brightness_mode_time_dark": 10000,
+                     "transition": 45, "sunrise_offset": 3600}
+        self.assertEqual(convert(canonical), canonical)
+        draft = {**canonical, "brightness_mode_time_light_minutes": 20.125,
+                 "brightness_mode_time_dark_minutes": 10000 / 60}
+        self.assertEqual(convert(draft), {**canonical, "brightness_mode_time_light": 1207.5})
+        self.assertEqual(draft["brightness_mode_time_light"], 1.25)
+        self.assertEqual(draft["brightness_mode_time_light_minutes"], 20.125)
+
     def test_yaml_schema_infers_legacy_before_new_defaults_and_keeps_explicit_mode(self):
         undefined = object()
 

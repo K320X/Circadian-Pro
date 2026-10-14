@@ -84,7 +84,8 @@ def load_api_module():
 
     def domain_schema(data):
         const.schema_calls.append(deepcopy(data))
-        allowed = {"lights", "min_brightness", "max_brightness", "min_color_temp", "max_color_temp", "interval", "sunrise_time", "sunrise_offset", "sunset_offset", "cal_rgb_neutral_r"}
+        allowed = {"lights", "min_brightness", "max_brightness", "min_color_temp", "max_color_temp", "interval", "sunrise_time", "sunrise_offset", "sunset_offset", "cal_rgb_neutral_r",
+                   "brightness_mode", "brightness_mode_time_light", "brightness_mode_time_dark"}
         if set(data) - allowed:
             raise Invalid("Unexpected option")
         if "cal_rgb_neutral_r" in data and (not isinstance(data["cal_rgb_neutral_r"], int) or not 0 <= data["cal_rgb_neutral_r"] <= 255):
@@ -338,6 +339,39 @@ class ApiTests(unittest.TestCase):
                 self.invoke(self.api.websocket_preview, entry_id="loaded",
                             settings={"sunrise_offset_minutes": value}, kelvin=1000)
                 self.assertEqual(self.errors[-1][1], "invalid_options")
+        self.assertEqual(self.calibration.calls, [])
+
+    def test_preview_brightness_minute_drafts_roundtrip_without_mutating_stored_seconds(self):
+        self.entry.options.update(brightness_mode_time_light=1, brightness_mode_time_dark=10000)
+        original = deepcopy(self.entry.options)
+        for light, dark in ((1, 10000), (0.25, 10000.75), (1200, 1800)):
+            with self.subTest(light=light, dark=dark):
+                draft = {"brightness_mode_time_light": 1, "brightness_mode_time_dark": 10000,
+                         "brightness_mode": "linear", "brightness_mode_time_light_minutes": light / 60,
+                         "brightness_mode_time_dark_minutes": dark / 60}
+                original_draft = deepcopy(draft)
+                for _ in range(2):
+                    self.invoke(self.api.websocket_preview, entry_id="loaded", settings=draft, kelvin=4000)
+                    settings = self.calibration.calls[-1][1]
+                    self.assertEqual(settings["brightness_mode_time_light"], light)
+                    self.assertEqual(settings["brightness_mode_time_dark"], dark)
+                    self.assertNotIn("brightness_mode_time_light_minutes", settings)
+                    self.assertNotIn("brightness_mode_time_dark_minutes", self.const.schema_calls[-1])
+                self.assertEqual(draft, original_draft)
+        self.assertEqual(self.entry.options, original)
+        self.invoke(self.api.websocket_preview, entry_id="loaded", settings={}, kelvin=1000)
+        self.assertEqual(self.calibration.calls[-1][1]["brightness_mode_time_light"], 1)
+        self.assertEqual(self.calibration.calls[-1][1]["brightness_mode_time_dark"], 10000)
+
+    def test_invalid_brightness_minute_draft_cannot_start_preview(self):
+        for name in ("brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"):
+            for value in (True, None, "60", float("inf"), float("nan"), 1e100, -1):
+                with self.subTest(name=name, value=value):
+                    self.invoke(self.api.websocket_preview, entry_id="loaded", settings={
+                        "brightness_mode": "linear", "brightness_mode_time_light_minutes": 20,
+                        "brightness_mode_time_dark_minutes": 30, name: value,
+                    }, kelvin=1000)
+                    self.assertEqual(self.errors[-1][1], "invalid_options")
         self.assertEqual(self.calibration.calls, [])
 
     def test_invalid_channel_or_unknown_option_never_starts_preview(self):

@@ -50,22 +50,28 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def options_from_form(user_input: dict[str, Any]) -> dict[str, Any]:
-    """Convert UI-only minute offsets to stored seconds without altering a draft."""
+    """Convert UI-only minute values to stored seconds without altering a draft."""
     options = dict(user_input)
-    for name in ("sunrise_offset", "sunset_offset"):
+    for name in (
+        "sunrise_offset", "sunset_offset",
+        "brightness_mode_time_light", "brightness_mode_time_dark",
+    ):
         form_name = f"{name}_minutes"
         if form_name not in options:
             continue
         minutes = options.pop(form_name)
         try:
             if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
-                raise ValueError("A numeric offset is required")
+                raise ValueError("A numeric duration is required")
             seconds = float(minutes) * 60
             if not isfinite(seconds):
-                raise ValueError("A finite offset is required")
-            # Legacy offsets may contain individual seconds. Round only after
-            # converting back, so displaying 61 / 60 minutes preserves 61 s.
-            seconds = round(seconds)
+                raise ValueError("A finite duration is required")
+            # Solar offsets retain whole-second rounding. Brightness windows
+            # also support fractional seconds; remove only conversion noise
+            # near an integer so legacy values survive reopening and saving.
+            nearest_second = round(seconds)
+            if name in ("sunrise_offset", "sunset_offset") or abs(seconds - nearest_second) < 1e-9:
+                seconds = nearest_second
             timedelta(seconds=seconds)  # Reject durations the runtime cannot use.
         except (ValueError, TypeError, OverflowError) as err:
             raise vol.Invalid("option_error") from err
@@ -371,7 +377,10 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
         for name, default, validation in VALIDATION_TUPLES:
             if name in calibration_keys or name not in allowed_init_keys:
                 continue
-            if name in ("sunrise_offset", "sunset_offset"):
+            if name in (
+                "sunrise_offset", "sunset_offset",
+                "brightness_mode_time_light", "brightness_mode_time_dark",
+            ):
                 form_name = f"{name}_minutes"
                 if user_input is not None and form_name in user_input:
                     selected_default = user_input[form_name]

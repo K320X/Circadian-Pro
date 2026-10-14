@@ -409,6 +409,25 @@ class CalibrationFlowTests(unittest.TestCase):
             result = immediate(flow.async_step_cal_warm(self.warm()))
         self.assertEqual(result["type"], "create_entry")
 
+    def test_final_save_converts_brightness_minutes_without_persisting_form_aliases(self):
+        for light, dark in ((1, 10000), (0.25, 10000.75), (1200, 1800)):
+            with self.subTest(light=light, dark=dark):
+                flow = self.flow(mode="rgb", brightness_mode_time_light=1, brightness_mode_time_dark=10000)
+                original = deepcopy(flow.config_entry.options)
+                draft = {"lights": ["light.strip"], "brightness_mode": "linear",
+                         "brightness_mode_time_light_minutes": light / 60,
+                         "brightness_mode_time_dark_minutes": dark / 60}
+                self.assertEqual(immediate(flow.async_step_init(draft))["step_id"], "cal_neutral")
+                immediate(flow.async_step_cal_neutral(self.neutral()))
+                result = immediate(flow.async_step_cal_warm(self.warm()))
+                self.assertEqual(result["type"], "create_entry")
+                self.assertEqual(result["data"]["brightness_mode_time_light"], light)
+                self.assertEqual(result["data"]["brightness_mode_time_dark"], dark)
+                self.assertNotIn("brightness_mode_time_light_minutes", result["data"])
+                self.assertNotIn("brightness_mode_time_dark_minutes", result["data"])
+                self.assertEqual(flow.config_entry.options, original)
+                self.assertEqual(draft["brightness_mode_time_dark_minutes"], dark / 60)
+
     def test_rgbww_has_physical_and_mixture_fields_rgbw_keeps_legacy_fields(self):
         for mode, physical_step, expected_physical in (
             ("rgbww", "white_channels", {"white_w_kelvin", "white_cw_kelvin"}),

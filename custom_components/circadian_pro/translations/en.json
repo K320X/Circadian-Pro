@@ -69,6 +69,8 @@
           "brightness_mode": "Brightness mode",
           "brightness_mode_time_light": "Brightness transition: daytime portion (s)",
           "brightness_mode_time_dark": "Brightness transition: nighttime portion (s)",
+          "brightness_mode_time_light_minutes": "Brightness transition: daytime portion (min)",
+          "brightness_mode_time_dark_minutes": "Brightness transition: nighttime portion (min)",
           "sleep_activation_mode": "Automatic sleep mode activation"
         },
         "data_description": {
@@ -98,6 +100,8 @@
           "max_sunset_time": "Prevent the profile sunset from occurring after this time. Leave it empty to apply no upper limit.",
           "brightness_mode_time_dark": "Duration of the nighttime portion of the transition: before sunrise and after sunset.\nUsed only in Linear and Sigmoid modes. A higher value lengthens this portion; Natural ignores it.",
           "brightness_mode_time_light": "Duration of the daytime portion of the transition: after sunrise and before sunset.\nUsed only in Linear and Sigmoid modes. A higher value lengthens this portion; Natural ignores it.",
+          "brightness_mode_time_dark_minutes": "Duration in minutes of the nighttime portion of the transition: before sunrise and after sunset.\nUsed only in Linear and Sigmoid modes. A higher value lengthens this portion; Natural ignores it.",
+          "brightness_mode_time_light_minutes": "Duration in minutes of the daytime portion of the transition: after sunrise and before sunset.\nUsed only in Linear and Sigmoid modes. A higher value lengthens this portion; Natural ignores it.",
           "sleep_activation_mode": "Disabled: sleep mode is activated only by its manual switch.\nBy sunrise and sunset: active between the profile sunset and sunrise.\nBy schedule: active during the schedule below.\nThe manual switch can activate sleep mode at any time.",
           "autoreset_control_seconds": "Time before Circadian Pro resumes control after a manual change. Use 0 to disable automatic resumption.",
           "brightness_mode": "Natural: keeps maximum brightness during the day; at night, brightness gradually falls and rises again towards sunrise.\nLinear: changes brightness at a constant rate around sunrise and sunset.\nSigmoid: uses an S curve, gentle at the ends and faster in the middle."
