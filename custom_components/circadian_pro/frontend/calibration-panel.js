@@ -519,7 +519,7 @@ const COPY = {
   es: {
     title: "Circadian Pro", profile: "Perfil", profiles: "Perfiles", actions: "Acciones", start: "Configurar y calibrar", menu: "Abrir menú",
     integration: "Ir a la integración",
-    sortProfiles: "Ordenar por", sortRecent: "Modificados recientemente", sortNameAsc: "Nombre: A–Z", sortNameDesc: "Nombre: Z–A",
+    sortProfiles: "Ordenar", sortRecent: "Modificados recientemente", sortNameAsc: "Nombre: A–Z", sortNameDesc: "Nombre: Z–A",
     newProfile: "Nuevo perfil", profileName: "Nombre del perfil", createProfile: "Crear perfil", cancel: "Cancelar",
     newHint: "Crea un perfil sin luces seleccionadas. Después podrás elegir sus luces, configurarlo y calibrarlo.",
     created: "Perfil creado. Selecciona sus luces y termina la configuración.",
@@ -580,7 +580,7 @@ const COPY = {
   en: {
     title: "Circadian Pro", profile: "Profile", profiles: "Profiles", actions: "Actions", start: "Configure and calibrate", menu: "Open menu",
     integration: "Go to integration",
-    sortProfiles: "Sort by", sortRecent: "Recently modified", sortNameAsc: "Name: A–Z", sortNameDesc: "Name: Z–A",
+    sortProfiles: "Sort", sortRecent: "Recently modified", sortNameAsc: "Name: A–Z", sortNameDesc: "Name: Z–A",
     newProfile: "New profile", profileName: "Profile name", createProfile: "Create profile", cancel: "Cancel",
     newHint: "Create a profile with no lights selected. Then choose its lights, configure it and calibrate it.",
     created: "Profile created. Choose its lights and finish the configuration.",
@@ -1958,31 +1958,38 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .preview-box { padding:18px; margin:24px 0; border-radius:10px; background:var(--secondary-background-color,#f1f4f7); } .preview-box p { margin:8px 0 0; }
       .actions { display:flex; justify-content:flex-end; gap:12px; margin-top:28px; } button { font:inherit; font-weight:600; border-radius:8px; padding:10px 18px; border:1px solid var(--divider-color,#ddd); cursor:pointer; background:var(--card-background-color,#fff); color:var(--primary-color,#0077ab); }
       .profiles-toolbar { display:flex; align-items:end; justify-content:space-between; flex-wrap:wrap; gap:12px; margin:24px 0 18px; }
-      .profile-sort { display:grid; gap:7px; max-width:100%; } .profile-sort select { width:auto; max-width:100%; }
+      .profile-sort { display:flex; align-items:center; gap:8px; max-width:100%; } .profile-sort > .label { flex-shrink:0; white-space:nowrap; } .profile-sort select { width:auto; min-width:0; max-width:100%; }
       .profile-table { width:100%; border-collapse:collapse; table-layout:fixed; } .profile-table th { text-align:left; font-weight:600; }
       .profile-table thead th { padding:0 12px 12px; color:var(--secondary-text-color,#606770); font-size:13px; }
-      .profile-table thead th:last-child { width:72px; } .profile-table tbody th { padding:16px 12px; overflow-wrap:anywhere; }
+      .profile-table thead th:last-child { width:64px; } .profile-table tbody th { padding:16px 12px; overflow-wrap:anywhere; }
       .profile-table td { padding:10px 0 10px 12px; text-align:right; } .profile-table tbody tr { border-top:1px solid var(--divider-color,#ddd); }
-      .profile-settings { width:44px; height:44px; display:inline-flex; align-items:center; justify-content:center; padding:9px; border-color:var(--secondary-text-color,#606770); border-color:color-mix(in srgb,var(--secondary-text-color,#606770) 65%,var(--card-background-color,#fff)); }
+      .profile-settings { width:40px; height:40px; display:inline-flex; align-items:center; justify-content:center; padding:9px; border-color:var(--secondary-text-color,#606770); border-color:color-mix(in srgb,var(--secondary-text-color,#606770) 65%,var(--card-background-color,#fff)); }
       .profile-settings:hover { border-color:var(--primary-color,#0077ab); background:var(--secondary-background-color,#f1f4f7); }
-      .tune-icon { display:grid; grid-template-columns:repeat(3,1.5px); justify-content:space-between; width:24px; height:24px; padding:2px 3.25px; }
+      .tune-icon { display:grid; flex-shrink:0; grid-template-columns:repeat(3,1.5px); justify-content:space-between; width:20px; height:20px; padding:2px 3px; }
       .tune-icon span { position:relative; border-radius:1px; background:currentColor; }
-      .tune-icon span::after { content:""; position:absolute; left:50%; transform:translateX(-50%); top:4px; width:6px; height:2px; border-radius:1px; background:currentColor; }
-      .tune-icon span:nth-child(2)::after { top:13px; } .tune-icon span:nth-child(3)::after { top:8px; }
+      .tune-icon span::after { content:""; position:absolute; left:50%; transform:translateX(-50%); top:3px; width:5px; height:2px; border-radius:1px; background:currentColor; }
+      .tune-icon span:nth-child(2)::after { top:10px; } .tune-icon span:nth-child(3)::after { top:6px; }
       .profile-settings:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; }
       .profile-create { display:flex; justify-content:center; margin-top:28px; } .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
       button.primary { background:var(--primary-color,#0077ab); color:var(--primary-background-color,#081018); border-color:transparent; } button:disabled { opacity:.55; cursor:wait; } .close { margin-left:auto; font-size:13px; }
       .integration-link { display:flex; align-items:center; justify-content:center; margin-left:auto; min-height:44px; padding:10px 14px; border:1px solid var(--divider-color,#ddd); border-radius:8px; color:var(--primary-color,#0077ab); font-size:13px; font-weight:600; line-height:1.3; text-align:center; text-decoration:none; }
       .integration-link:hover { background:var(--secondary-background-color,#f1f4f7); border-color:var(--primary-color,#0077ab); } .integration-link:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; }
-      .mobile-menu { display:none; padding:8px 10px; font-size:22px; line-height:1; } @media(max-width:870px) { .mobile-menu { display:block; } }
+      .mobile-menu { display:none; width:48px; height:48px; flex-shrink:0; padding:12px; border:0; border-radius:50%; background:transparent; color:var(--primary-text-color,#202124); }
+      .menu-icon { display:flex; width:24px; height:24px; flex-direction:column; align-items:center; justify-content:center; gap:3px; } .menu-icon span { width:18px; height:2px; background:currentColor; }
+      .mobile-menu:hover { background:var(--secondary-background-color,#f1f4f7); } .mobile-menu:focus-visible { outline:2px solid var(--primary-color,#0077ab); outline-offset:2px; }
+      @media(max-width:870px) { .mobile-menu { display:block; } }
       #catalog-warning { margin-bottom:20px; padding:12px; border:1px solid var(--warning-color,#e69500); border-radius:8px; } #catalog-warning p { margin:0 0 10px; }
       #error { background:#b3261e; color:white; padding:12px; border-radius:8px; white-space:pre-line; } .step { margin:0 0 10px; font-size:13px; } .saved { color:var(--success-color,#16814b); } [hidden] { display:none !important; }
       @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; gap:8px; } header strong { font-size:16px; flex-shrink:0; } .close,.integration-link { padding:8px; } .timing-diagram svg { height:117px; } }
     `;
     const header = element("header");
-    const menu = element("button", "☰", "mobile-menu");
+    const menu = element("button", undefined, "mobile-menu");
     menu.type = "button";
     menu.setAttribute("aria-label", this.copy.menu);
+    const menuIcon = element("span", undefined, "menu-icon");
+    menuIcon.setAttribute("aria-hidden", "true");
+    menuIcon.append(element("span"), element("span"), element("span"));
+    menu.append(menuIcon);
     menu.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true })));
     header.append(menu);
     header.append(element("strong", this.copy.title));

@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.24`
+**Current stable version:** `0.21.25`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.24 shows existing numeric limits beside field labels throughout settings and calibration; see the [release notes](docs/release-0.21.24.md). It includes the automatic sleep-mode graph introduced in [0.21.21](docs/release-0.21.21.md).
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.25 makes profile controls more compact and gives the mobile menu the familiar three-bar appearance; see the [release notes](docs/release-0.21.25.md). It includes the numeric range labels introduced in [0.21.24](docs/release-0.21.24.md).
 
 ## Features
 
