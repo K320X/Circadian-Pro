@@ -300,7 +300,8 @@ test("one accessible chart updates in place from times, mode and temperature che
   assert.equal(svg.getAttribute("role"), "img");
   assert.equal(svg.getAttribute("focusable"), "false");
   assert.match(svg.getAttribute("aria-label"), /both times at 0/);
-  assert.match(figure.querySelector("figcaption").textContent, /12 h of daylight.*not your schedule or actual light output/);
+  assert.equal(figure.querySelector("figcaption").textContent, "Illustrative diagram: 12 h of daylight and 12 h of night.");
+  assert.equal(figure.querySelector(".timing-summary"), undefined, "only the short caption belongs beneath the visible chart");
   assert.deepEqual(figure.querySelector(".timing-event-labels").children.map((node) => node.textContent), ["Sunrise", "Sunset"]);
   const timeInput = input("brightness_mode_time_light_minutes");
   const stepPath = path.getAttribute("d");
@@ -323,6 +324,27 @@ test("one accessible chart updates in place from times, mode and temperature che
   assert.match(svg.getAttribute("aria-label"), /same curve between its own limits/);
   assert.equal(panel.flow.current.step_id, "init", "editing the graph must not advance or save the flow");
   assert.equal(panel.session.enabled, false, "editing the graph must not activate the physical light preview");
+});
+
+test("mode descriptions emphasize localized names and keep all explanation text inert", async (t) => {
+  for (const [language, names] of [["es", ["Natural:", "Lineal:", "Sigmoide:"]], ["en", ["Natural:", "Linear:", "Sigmoid:"]]]) {
+    await t.test(language, async (t) => {
+      const { panel, form } = panelHarness(t, "init");
+      const translations = JSON.parse(await readFile(new URL(`../custom_components/circadian_pro/translations/${language}.json`, import.meta.url), "utf8"));
+      panel.translations = { ...translations.options, selector: translations.selector };
+      panel.values.brightness_mode = "linear";
+      const literal = "<b>Literal explanation</b>";
+      panel.translations.step.init.data_description.brightness_mode += `\n${literal}`;
+      const field = CircadianCalibrationPanel.prototype.field.call(panel, {
+        name: "brightness_mode", selector: { select: { options: ["default", "linear", "tanh"], translation_key: "brightness_mode" } },
+      });
+      form.append(field);
+      assert.deepEqual(field.querySelectorAll("strong").map((node) => node.textContent), names);
+      assert.equal(field.querySelector(".mode-description").children.at(-1).textContent, literal);
+      assert.equal(field.querySelector("b"), undefined);
+      assert.equal(field.querySelector("select").value, "linear");
+    });
+  }
 });
 
 test("invalid timing drafts hide the plot until corrected without changing the input", (t) => {

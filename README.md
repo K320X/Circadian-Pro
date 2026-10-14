@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.17`
+**Current stable version:** `0.21.18`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.17 provides one interactive timing curve and 0–240 minute sliders, with whole-minute controls; see the [release notes](docs/release-0.21.17.md).
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.18 simplifies the timing descriptions, emphasizes mode names and makes the mobile graph more compact; see the [release notes](docs/release-0.21.18.md).
 
 ## Features
 
@@ -115,7 +115,7 @@ Color temperature normally follows its own solar curve, reaching its maximum aro
 
 The panel displays one interactive curve below the mode controls. It updates while dragging either time slider or editing its number, without saving settings or changing lights. Each active window accepts 0–240 whole minutes. Equal windows place the midpoint at sunrise and sunset; unequal windows move more of the transition before or after the events. Natural hides both duration controls as well as the temperature checkbox, retaining their draft values when you switch back.
 
-The graph uses normalized minimum/maximum bounds and a reference day with 12 hours of daylight and 12 hours of night. It illustrates the actual curve formula and chosen durations, rather than the day's real astronomical schedule or measured light output. It remains useful when the profile's minimum and maximum brightness are equal. The caption identifies whether the curve applies to brightness alone or also to temperature.
+The graph uses normalized minimum/maximum bounds and a reference day with 12 hours of daylight and 12 hours of night. It illustrates the actual curve formula and chosen durations, rather than the day's real astronomical schedule or measured light output. It remains useful when the profile's minimum and maximum brightness are equal. The legend identifies whether the curve applies to brightness alone or also to temperature. The visible caption stays brief, with detailed curve information available to screen readers. The chart is about one third shorter on mobile.
 
 The update does not migrate or clamp saved durations. A legacy duration above 240 minutes remains unchanged and can still be retained while Natural ignores it; selecting Linear or Sigmoid in the panel exposes that value and requires reducing it to the supported UI range before saving. Canonical YAML and service durations retain their previous validation.
 

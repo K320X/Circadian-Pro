@@ -542,7 +542,7 @@ const COPY = {
       sunrise: "Amanecer", sunset: "Atardecer", minimum: "Mín.", maximum: "Máx.",
       title: "Vista de la curva", brightness: "Brillo", shared: "Brillo y temperatura",
       modes: { default: "Natural", linear: "Lineal", tanh: "Sigmoide" },
-      caption: "Forma de la curva entre mínimo y máximo. Día de ejemplo: 12 h de luz y 12 h de noche; no representa tu horario ni la luminosidad real.",
+      caption: "Esquema orientativo: 12 h de día y 12 h de noche.",
       natural: "El brillo llega al máximo al amanecer y se mantiene hasta el atardecer. La temperatura sigue su propia curva solar.",
       independent: "La temperatura sigue su propia curva solar.",
       synchronized: "La temperatura sigue esta misma curva entre sus propios límites.",
@@ -592,7 +592,7 @@ const COPY = {
       sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
       title: "Curve preview", brightness: "Brightness", shared: "Brightness and temperature",
       modes: { default: "Natural", linear: "Linear", tanh: "Sigmoid" },
-      caption: "Curve shape between minimum and maximum. Example day: 12 h of daylight and 12 h of night; this is not your schedule or actual light output.",
+      caption: "Illustrative diagram: 12 h of daylight and 12 h of night.",
       natural: "Brightness reaches its maximum at sunrise and stays there until sunset. Temperature follows its own solar curve.",
       independent: "Temperature follows its own solar curve.",
       synchronized: "Temperature follows this same curve between its own limits.",
@@ -699,10 +699,7 @@ function brightnessTimingDiagram(copy) {
   plot.append(bounds, area);
   const status = element("p", undefined, "timing-status");
   status.setAttribute("role", "status");
-  const summary = element("div", undefined, "timing-summary");
-  const rise = element("span"), fall = element("span"), duration = element("span"), temperature = element("span");
-  summary.append(rise, fall, duration, temperature);
-  figure.append(heading, plot, status, summary, element("figcaption", copy.caption));
+  figure.append(heading, plot, status, element("figcaption", copy.caption));
   return { figure, update(values) {
     const mode = values.brightness_mode;
     const light = values.brightness_mode_time_light_minutes;
@@ -710,21 +707,19 @@ function brightnessTimingDiagram(copy) {
     const points = brightnessTimingPoints(mode, light, dark);
     const shared = mode !== "default" && values.apply_temperature_curve === true;
     legend.textContent = `${copy.modes[mode] || ""} · ${shared ? copy.shared : copy.brightness}`;
-    plot.hidden = summary.hidden = !points;
+    plot.hidden = !points;
     status.hidden = Boolean(points);
     status.textContent = points ? "" : copy.invalid;
     if (!points) { path.removeAttribute("d"); return; }
     path.setAttribute("d", points.map(([minute, value], index) => `${index ? "L" : "M"}${minute / 1440 * 600} ${168 - value * 160}`).join(" "));
     // Updating only the figure retains the edited input, focus and scroll.
     const format = (template) => template.replaceAll("{light}", String(light)).replaceAll("{dark}", String(dark)).replaceAll("{total}", String(light + dark));
-    rise.hidden = fall.hidden = mode === "default" || light + dark === 0;
-    rise.textContent = format(copy.rise);
-    fall.textContent = format(copy.fall);
-    duration.textContent = mode === "default" ? copy.natural : light + dark === 0 ? copy.step : format(copy[mode]);
-    temperature.hidden = mode === "default";
-    temperature.textContent = shared ? copy.synchronized : copy.independent;
-    const description = [legend.textContent, ...(rise.hidden ? [] : [rise.textContent, fall.textContent]), duration.textContent,
-      ...(temperature.hidden ? [] : [temperature.textContent]), copy.caption].join(" ");
+    // Keep the detailed interpretation available to screen readers without
+    // repeating the form's explanations beneath the visible graph.
+    const duration = mode === "default" ? copy.natural : light + dark === 0 ? copy.step : format(copy[mode]);
+    const description = [legend.textContent,
+      ...(mode === "default" || light + dark === 0 ? [] : [format(copy.rise), format(copy.fall)]), duration,
+      ...(mode === "default" ? [] : [shared ? copy.synchronized : copy.independent]), copy.caption].join(" ");
     title.textContent = description;
     svg.setAttribute("aria-label", description);
   } };
@@ -1366,7 +1361,19 @@ export class CircadianCalibrationPanel extends HTMLElement {
       wrapper.append(input);
     }
     const description = text.data_description?.[name];
-    if (description) wrapper.append(element("small", description));
+    if (description && name === "brightness_mode") {
+      const help = element("small", undefined, "mode-description");
+      const modeNames = Object.values(this.translations.selector?.brightness_mode?.options || this.copy.timingDiagram?.modes || {});
+      for (const line of description.split("\n")) {
+        const paragraph = element("span");
+        const separator = line.indexOf(":");
+        if (separator >= 0 && modeNames.includes(line.slice(0, separator).trim())) {
+          paragraph.append(element("strong", line.slice(0, separator + 1)), element("span", line.slice(separator + 1)));
+        } else paragraph.textContent = line;
+        help.append(paragraph);
+      }
+      wrapper.append(help);
+    } else if (description) wrapper.append(element("small", description));
     return wrapper;
   }
 
@@ -1405,6 +1412,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       h1 { margin:0 0 12px; font-size:24px; } p { line-height:1.55; white-space:pre-line; } .muted,small { color:var(--secondary-text-color,#606770); }
       form { display:grid; gap:22px; margin-top:24px; min-width:0; } .field { display:grid; gap:8px; min-width:0; align-content:start; } .label { font-weight:600; } small { line-height:1.55; }
       .field small { white-space:pre-line; }
+      .mode-description { display:grid; gap:7px; }
       .timing-diagram { min-width:0; margin:20px 0 0; padding:16px; border:1px solid var(--divider-color,#ddd); border-radius:10px; background:var(--card-background-color,#fff); }
       .timing-heading { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 16px; margin-bottom:18px; }
       .timing-legend { display:flex; align-items:center; gap:7px; color:var(--secondary-text-color,#606770); font-size:12px; }
@@ -1421,9 +1429,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .timing-grid { stroke:var(--divider-color,#ddd); stroke-width:1; }
       .timing-event { stroke:var(--secondary-text-color,#606770); stroke-width:1; stroke-dasharray:3 4; }
       .timing-curve { stroke:var(--primary-color,#009f8a); stroke-width:2.5; stroke-linejoin:round; stroke-linecap:round; }
-      .timing-summary { display:grid; gap:5px; margin:14px 0 10px; font-size:12px; line-height:1.5; }
       .timing-status { font-size:13px; line-height:1.5; }
-      .timing-diagram figcaption { color:var(--secondary-text-color,#606770); font-size:12px; line-height:1.45; }
+      .timing-diagram figcaption { margin-top:12px; color:var(--secondary-text-color,#606770); font-size:12px; line-height:1.45; }
       .timing-control { --channel-track:linear-gradient(to right,var(--divider-color,#ddd),var(--primary-color,#009f8a)); }
       .timing-control .calibration-controls { grid-template-columns:minmax(0,1fr) 82px; gap:12px; }
       .settings-row[hidden],.timing-diagram [hidden] { display:none; }
@@ -1483,7 +1490,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .mobile-menu { display:none; padding:8px 10px; font-size:22px; line-height:1; } @media(max-width:870px) { .mobile-menu { display:block; } }
       #catalog-warning { margin-bottom:20px; padding:12px; border:1px solid var(--warning-color,#e69500); border-radius:8px; } #catalog-warning p { margin:0 0 10px; }
       #error { background:#b3261e; color:white; padding:12px; border-radius:8px; white-space:pre-line; } .step { margin:0 0 10px; font-size:13px; } .saved { color:var(--success-color,#16814b); } [hidden] { display:none !important; }
-      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; gap:8px; } header strong { font-size:16px; flex-shrink:0; } .close,.integration-link { padding:8px; } }
+      @media(max-width:600px) { article { padding:20px; } main { padding:16px 10px; } header { padding:0 12px; gap:8px; } header strong { font-size:16px; flex-shrink:0; } .close,.integration-link { padding:8px; } .timing-diagram svg { height:117px; } }
     `;
     const header = element("header");
     const menu = element("button", "☰", "mobile-menu");
