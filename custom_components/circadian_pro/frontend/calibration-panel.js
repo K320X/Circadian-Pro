@@ -538,6 +538,12 @@ const COPY = {
     checkStep: "Comprobar estado",
     choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
     warmWhite: "Cálido", coldWhite: "Frío",
+    timingDiagram: {
+      sunrise: "Amanecer", sunset: "Atardecer", minimum: "Mín.", maximum: "Máx.",
+      light: "El brillo sube después del amanecer y baja antes del atardecer. Las pendientes destacadas corresponden al tramo dentro del día.",
+      dark: "El brillo sube antes del amanecer y baja después del atardecer. Las pendientes destacadas corresponden al tramo fuera del día.",
+      caption: "Esquema orientativo: no representa el brillo de este perfil.",
+    },
     groups: { adaptation: "Ritmo de adaptación", limits: "Brillo y temperatura", night: "Modo noche",
       solar: "Amanecer y atardecer", manual: "Cambios manuales", compatibility: "Compatibilidad y envío", other: "Otros ajustes" },
     selectEntities: "Seleccionar luces",
@@ -573,6 +579,12 @@ const COPY = {
     checkStep: "Check status",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
     warmWhite: "Warm", coldWhite: "Cold",
+    timingDiagram: {
+      sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
+      light: "Brightness rises after sunrise and falls before sunset. The highlighted slopes show the portion inside daytime.",
+      dark: "Brightness rises before sunrise and falls after sunset. The highlighted slopes show the portion outside daytime.",
+      caption: "Illustrative diagram: it does not show this profile's brightness.",
+    },
     groups: { adaptation: "Adaptation timing", limits: "Brightness and temperature", night: "Sleep mode",
       solar: "Sunrise and sunset", manual: "Manual changes", compatibility: "Compatibility and commands", other: "Other settings" },
     selectEntities: "Select lights",
@@ -592,6 +604,34 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+
+function brightnessTimingDiagram(portion, copy) {
+  const figure = element("figure", undefined, "timing-diagram");
+  const svgNode = (tag, attributes, text) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const svg = svgNode("svg", { viewBox: "0 0 280 122", role: "img", "aria-label": copy[portion], focusable: "false" });
+  // Both examples use the same normalized bounds and solar markers. Only the
+  // side of each event containing the adjustable ramp changes; these are not
+  // simulations of the saved duration, solar times or brightness limits.
+  const inside = portion === "light";
+  svg.append(
+    svgNode("rect", { x: 86, y: 29, width: 116, height: 67, class: "timing-day" }),
+    svgNode("path", { d: "M34 39 H268 M34 91 H268", class: "timing-grid" }),
+    svgNode("path", { d: "M86 27 V103 M202 27 V103", class: "timing-event" }),
+    svgNode("path", { d: inside ? "M34 91 H86 L125 39 H163 L202 91 H268" : "M34 91 H47 L86 39 H202 L241 91 H268", class: "timing-curve" }),
+    svgNode("path", { d: inside ? "M86 91 L125 39 M163 39 L202 91" : "M47 91 L86 39 M202 39 L241 91", class: "timing-adjustable" }),
+    svgNode("text", { x: 86, y: 17, "text-anchor": "middle" }, copy.sunrise),
+    svgNode("text", { x: 202, y: 17, "text-anchor": "middle" }, copy.sunset),
+    svgNode("text", { x: 28, y: 43, "text-anchor": "end", class: "timing-bound" }, copy.maximum),
+    svgNode("text", { x: 28, y: 95, "text-anchor": "end", class: "timing-bound" }, copy.minimum),
+  );
+  figure.append(svg, element("figcaption", copy.caption));
+  return figure;
 }
 
 function generalSettings(fields, renderField, titles) {
@@ -1074,7 +1114,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
     const selector = field.selector || {};
     const entityField = Boolean(selector.entity || field.type === "multi_select");
     const calibration = ["cal_neutral", "cal_warm"].includes(step);
-    const wrapper = element(entityField || calibration ? "div" : "label", undefined, "field");
+    const timingPortion = step === "init" && name.match(/^brightness_mode_time_(light|dark)_minutes$/)?.[1];
+    const wrapper = element(entityField || calibration || timingPortion ? "div" : "label", undefined, "field");
     const label = element("span", text.data?.[name] || name.replaceAll("_", " "), "label");
     label.id = `field-${name}-label`;
     wrapper.append(label);
@@ -1118,6 +1159,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       }
     }
     input.dataset.field = name;
+    if (timingPortion) input.setAttribute("aria-labelledby", label.id);
     if (input.type === "checkbox") wrapper.className += " checkbox-field";
     input.required = Boolean(field.required) || input.type === "number";
     const changed = () => {
@@ -1170,7 +1212,15 @@ export class CircadianCalibrationPanel extends HTMLElement {
       input.addEventListener("input", changed);
       wrapper.append(input);
     }
-    if (text.data_description?.[name]) wrapper.append(element("small", text.data_description[name]));
+    const description = text.data_description?.[name];
+    if (timingPortion) {
+      // Keep the help and figure in one grid row, so paired labels and inputs
+      // remain aligned even when their descriptions wrap differently.
+      const help = element("div", undefined, "timing-help");
+      if (description) help.append(element("small", description));
+      help.append(brightnessTimingDiagram(timingPortion, this.copy.timingDiagram));
+      wrapper.append(help);
+    } else if (description) wrapper.append(element("small", description));
     return wrapper;
   }
 
@@ -1208,6 +1258,18 @@ export class CircadianCalibrationPanel extends HTMLElement {
       h1 { margin:0 0 12px; font-size:24px; } p { line-height:1.55; white-space:pre-line; } .muted,small { color:var(--secondary-text-color,#606770); }
       form { display:grid; gap:22px; margin-top:24px; min-width:0; } .field { display:grid; gap:8px; min-width:0; align-content:start; } .label { font-weight:600; } small { line-height:1.55; }
       .field small { white-space:pre-line; }
+      .timing-help { display:grid; gap:12px; min-width:0; }
+      .timing-diagram { min-width:0; margin:0; padding:10px 8px; border:1px solid var(--divider-color,#ddd); border-radius:8px; background:var(--card-background-color,#fff); }
+      .timing-diagram svg { display:block; width:100%; max-width:380px; height:auto; margin:0 auto; overflow:visible; }
+      .timing-diagram text { fill:var(--secondary-text-color,#606770); font:14px system-ui,sans-serif; }
+      .timing-diagram .timing-bound { font-size:12px; }
+      .timing-day { fill:var(--primary-color,#009f8a); opacity:.07; }
+      .timing-grid,.timing-event,.timing-curve,.timing-adjustable { fill:none; vector-effect:non-scaling-stroke; }
+      .timing-grid { stroke:var(--divider-color,#ddd); stroke-width:1; }
+      .timing-event { stroke:var(--secondary-text-color,#606770); stroke-width:1; stroke-dasharray:3 4; }
+      .timing-curve { stroke:var(--secondary-text-color,#606770); stroke-width:2; stroke-linejoin:round; }
+      .timing-adjustable { stroke:var(--primary-color,#009f8a); stroke-width:3; stroke-linecap:round; }
+      .timing-diagram figcaption { color:var(--secondary-text-color,#606770); font-size:12px; line-height:1.45; }
       .settings-group { min-width:0; margin:0; padding:20px; border:1px solid var(--divider-color,#ddd); border-radius:12px; background:var(--secondary-background-color,#f1f4f7); background:color-mix(in srgb,var(--card-background-color,#fff) 94%,var(--primary-text-color,#202124)); }
       .settings-group legend { max-width:100%; padding:0 8px; font-size:16px; font-weight:650; }
       .settings-row { display:grid; gap:8px 24px; min-width:0; } .settings-row + .settings-row { margin-top:22px; }

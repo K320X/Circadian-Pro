@@ -46,7 +46,7 @@ class Node {
   matches(selector) {
     if (selector.includes(",")) return selector.split(",").some((part) => this.matches(part.trim()));
     if (selector.startsWith("#")) return this.id === selector.slice(1);
-    if (selector.startsWith(".")) return this.className?.split(" ").includes(selector.slice(1));
+    if (selector.startsWith(".")) return (this.className ?? this.getAttribute("class"))?.split(" ").includes(selector.slice(1));
     if (selector === "[data-field]") return Object.hasOwn(this.dataset, "field");
     if (selector === '[data-kind="entity"]') return this.dataset.kind === "entity";
     return this.tag === selector;
@@ -73,7 +73,10 @@ class Node {
 
 function installDocument(t) {
   const original = globalThis.document;
-  globalThis.document = { createElement: (tag) => new Node(tag) };
+  globalThis.document = {
+    createElement: (tag) => new Node(tag),
+    createElementNS: (namespace, tag) => Object.assign(new Node(tag), { namespaceURI: namespace }),
+  };
   t.after(() => { if (original === undefined) delete globalThis.document; else globalThis.document = original; });
 }
 
@@ -193,6 +196,57 @@ test("general settings keep their existing number controls", (t) => {
   const { number, range } = harness.add("interval", 60, 1, 3600);
   assert.equal(range, undefined);
   assert.equal(number.value, "60");
+});
+
+test("brightness timing diagrams highlight opposite sides of the same solar events", (t) => {
+  const harness = panelHarness(t, "init");
+  harness.panel.copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "es" });
+  const light = harness.add("brightness_mode_time_light_minutes", 1, 1, undefined, "any");
+  const dark = harness.add("brightness_mode_time_dark_minutes", 160, 1, undefined, "any");
+  for (const { field, number } of [light, dark]) {
+    assert.equal(field.tag, "div", "figure must not be nested inside an implicit input label");
+    assert.ok(field.querySelector(`#${number.getAttribute("aria-labelledby")}`));
+    const svg = field.querySelector("svg");
+    assert.equal(svg.namespaceURI, "http://www.w3.org/2000/svg");
+    assert.equal(svg.getAttribute("role"), "img");
+    assert.equal(svg.getAttribute("focusable"), "false");
+    assert.match(field.querySelector("figcaption").textContent, /no representa el brillo de este perfil/);
+    assert.deepEqual(svg.querySelectorAll("text").map((node) => node.textContent), ["Amanecer", "Atardecer", "Máx.", "Mín."]);
+    assert.equal(field.querySelectorAll("input").length, 1, "the illustration must not add another submitted control");
+  }
+  assert.equal(light.field.querySelector(".timing-event").getAttribute("d"), dark.field.querySelector(".timing-event").getAttribute("d"));
+  assert.equal(light.field.querySelector(".timing-adjustable").getAttribute("d"), "M86 91 L125 39 M163 39 L202 91");
+  assert.equal(dark.field.querySelector(".timing-adjustable").getAttribute("d"), "M47 91 L86 39 M202 39 L241 91");
+  assert.match(light.field.querySelector("svg").getAttribute("aria-label"), /después del amanecer.*antes del atardecer/);
+  assert.match(dark.field.querySelector("svg").getAttribute("aria-label"), /antes del amanecer.*después del atardecer/);
+  assert.deepEqual(harness.panel.readValues(), { brightness_mode_time_light_minutes: 1, brightness_mode_time_dark_minutes: 160 });
+  assert.equal(harness.refreshes(), 0, "drawing explanatory diagrams must not request light previews");
+});
+
+test("timing figures remain illustrative after an edit and preserve the numeric validation", (t) => {
+  const harness = panelHarness(t, "init");
+  harness.panel.copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "en" });
+  const { field, number } = harness.add("brightness_mode_time_dark_minutes", 160, 1, undefined, "any");
+  const path = field.querySelector(".timing-adjustable").getAttribute("d");
+  number.value = "240.5";
+  number.dispatchEvent(new Event("input"));
+  assert.deepEqual(harness.panel.readValues(), { brightness_mode_time_dark_minutes: 240.5 });
+  assert.equal(field.querySelector(".timing-adjustable").getAttribute("d"), path);
+  assert.match(field.querySelector("svg").getAttribute("aria-label"), /before sunrise.*after sunset/);
+  assert.match(field.querySelector("figcaption").textContent, /does not show this profile's brightness/);
+  number.value = "0";
+  number.dispatchEvent(new Event("input"));
+  assert.throws(() => harness.panel.readValues(), /Check the indicated values/);
+  assert.equal(number.value, "0", "the figure must not silently clamp invalid user input");
+});
+
+test("only the two general brightness minute fields receive explanatory figures", (t) => {
+  const harness = panelHarness(t, "init");
+  for (const name of ["interval", "sunrise_offset_minutes", "brightness_mode_time_light", "cal_white_kelvin_neutral"]) {
+    assert.equal(harness.add(name, 60, 1, 600).field.querySelector("figure"), undefined);
+  }
+  harness.panel.flow.current.step_id = "cal_neutral";
+  assert.equal(harness.add("brightness_mode_time_light_minutes", 1, 1, 600).field.querySelector("figure"), undefined);
 });
 
 function nightSettingsHarness(t, mode = "rgb_color", omitted = []) {
