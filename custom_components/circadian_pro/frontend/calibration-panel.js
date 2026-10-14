@@ -1984,12 +1984,13 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .profiles-toolbar { display:flex; align-items:end; justify-content:space-between; flex-wrap:wrap; gap:12px; margin:24px 0 18px; }
       .profile-sort { display:flex; align-items:center; gap:8px; max-width:100%; } .profile-sort > .label { flex-shrink:0; white-space:nowrap; } .profile-sort select { width:auto; min-width:0; max-width:100%; }
       .profile-table { width:100%; border-collapse:collapse; table-layout:fixed; } .profile-table th { text-align:left; font-weight:600; }
-      .profile-table thead th { padding:0 12px 12px; color:var(--secondary-text-color,#606770); font-size:13px; }
-      .profile-table thead th:last-child { width:64px; } .profile-table tbody th { padding:16px 12px; overflow-wrap:anywhere; }
-      .profile-table td { padding:10px 0 10px 12px; text-align:right; } .profile-table tbody tr { border-top:1px solid var(--divider-color,#ddd); }
-      .profile-settings { width:40px; height:40px; display:inline-flex; align-items:center; justify-content:center; padding:9px; border-color:var(--secondary-text-color,#606770); border-color:color-mix(in srgb,var(--secondary-text-color,#606770) 65%,var(--card-background-color,#fff)); }
+      .profile-table thead th { padding:0 0 10px; color:var(--primary-text-color,#202124); font-size:16px; font-weight:700; }
+      .profile-table thead th:last-child { width:56px; } .profile-table tbody th { padding:10px 12px; overflow-wrap:anywhere; }
+      .profile-table td { padding:6px 0 6px 12px; text-align:right; } .profile-table tbody tr { border-top:1px solid var(--divider-color,#ddd); }
+      .profile-table tbody tr:last-child { border-bottom:1px solid var(--divider-color,#ddd); }
+      .profile-settings { width:36px; height:36px; display:inline-flex; align-items:center; justify-content:center; padding:8px; border-color:var(--secondary-text-color,#606770); border-color:color-mix(in srgb,var(--secondary-text-color,#606770) 65%,var(--card-background-color,#fff)); }
       .profile-settings:hover { border-color:var(--primary-color,#0077ab); background:var(--secondary-background-color,#f1f4f7); }
-      .tune-icon { display:grid; flex-shrink:0; grid-template-columns:repeat(3,1.5px); justify-content:space-between; width:20px; height:20px; padding:2px 3px; }
+      .tune-icon { display:grid; flex-shrink:0; grid-template-columns:repeat(3,1.5px); justify-content:space-between; width:18px; height:18px; padding:2px 3px; }
       .tune-icon span { position:relative; border-radius:1px; background:currentColor; }
       .tune-icon span::after { content:""; position:absolute; left:50%; transform:translateX(-50%); top:3px; width:5px; height:2px; border-radius:1px; background:currentColor; }
       .tune-icon span:nth-child(2)::after { top:10px; } .tune-icon span:nth-child(3)::after { top:6px; }
