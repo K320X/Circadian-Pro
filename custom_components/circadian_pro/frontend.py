@@ -27,7 +27,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 
 from .calibration import PREVIEW_SECONDS, async_preview_calibration, async_stop_calibration_preview
-from .const import DOMAIN, EXTRA_VALIDATION, NONE_STR, VALIDATION_TUPLES, _DOMAIN_SCHEMA, validate_cross_options
+from .const import DOMAIN, EXTRA_VALIDATION, NONE_STR, VALIDATION_TUPLES, _DOMAIN_SCHEMA, is_panel_entry, validate_cross_options
 
 FRONTEND_DATA = "circadian_pro_frontend"
 PANEL_PATH = "circadian-pro-calibration"
@@ -99,14 +99,21 @@ def _validated_draft(entry: Any, draft: dict[str, Any]) -> dict[str, Any]:
     return validate_cross_options(checked)
 
 
-@websocket_api.websocket_command({"type": "circadian_pro/calibration/entries"})
+@websocket_api.websocket_command({
+    "type": "circadian_pro/calibration/entries",
+    ws_schema.Optional("include_status", default=False): bool,
+})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def websocket_entries(hass: Any, connection: Any, msg: dict[str, Any]) -> None:
     from .config_flow import validate_entry
 
     entries = []
+    configured_profiles = 0
     for entry in hass.config_entries.async_entries(DOMAIN):
+        if is_panel_entry(entry):
+            continue
+        configured_profiles += 1
         try:
             _loaded_entry(hass, entry.entry_id)
         except HomeAssistantError:
@@ -119,7 +126,11 @@ async def websocket_entries(hass: Any, connection: Any, msg: dict[str, Any]) -> 
             "modified_at": modified_at.isoformat() if modified_at is not None else None,
             "settings": _serializable_settings(validate_entry(entry)),
         })
-    connection.send_result(msg["id"], entries)
+    result = (
+        {"entries": entries, "configured_profiles": configured_profiles}
+        if msg.get("include_status", False) else entries
+    )
+    connection.send_result(msg["id"], result)
 
 
 def _schedule_sleep_windows(

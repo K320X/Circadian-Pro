@@ -23,7 +23,12 @@
       "profile_missing": "El perfil seleccionado ya no existe. Elige otro perfil o crea uno nuevo."
     },
     "abort": {
-      "already_configured": "Ya existe un perfil con este nombre."
+      "already_configured": "Ya existe un perfil con este nombre.",
+      "panel_already_configured": "El panel de Circadian Pro ya está activo.",
+      "panel_name_reserved": "Este nombre está reservado por el panel de Circadian Pro. Elige otro nombre para el perfil."
+    },
+    "create_entry": {
+      "default": "El panel de la barra lateral está listo. [Abre Circadian Pro](/circadian-pro-calibration) para crear y configurar tus perfiles."
     }
   },
   "options": {
@@ -186,7 +191,8 @@
       "invalid_solar_times": "El amanecer y el atardecer fijos deben ocurrir a horas distintas después de aplicar sus desplazamientos."
     },
     "abort": {
-      "yaml_configuration": "Este perfil está configurado mediante YAML. Edita sus ajustes en la configuración YAML."
+      "yaml_configuration": "Este perfil está configurado mediante YAML. Edita sus ajustes en la configuración YAML.",
+      "panel_configuration": "Abre el [panel Circadian Pro](/circadian-pro-calibration) para crear y configurar perfiles."
     }
   },
   "selector": {

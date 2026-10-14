@@ -524,10 +524,13 @@ class CalibrationPreviewTests(unittest.TestCase):
         namespace = {
             "__name__": "preview_tests_package", "__package__": "preview_tests_package",
             "DOMAIN": "circadian_pro", "PLATFORMS": ["switch"], "ATTR_CIRCADIAN_PRO_MANAGER": "manager",
+            "CONF_ENTRY_TYPE": "entry_type", "ENTRY_TYPE_PANEL": "panel",
         }
+        from test_calibration_flow import load_nodes
+        load_nodes(namespace, "const.py", {"is_panel_entry"})
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), fn], type_ignores=[])
         exec(compile(ast.fix_missing_locations(module), "<real integration unload>", "exec"), namespace)
-        result = immediate(namespace["async_unload_entry"](self.hass, SimpleNamespace(entry_id="one")))
+        result = immediate(namespace["async_unload_entry"](self.hass, SimpleNamespace(entry_id="one", data={})))
         self.assertTrue(result)
         self.assertNotIn("circadian_pro", self.hass.data)
         self.assertTrue(self.hass.timers[-1].cancelled)

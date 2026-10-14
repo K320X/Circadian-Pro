@@ -23,7 +23,12 @@
       "profile_missing": "The selected profile no longer exists. Choose another profile or create a new one."
     },
     "abort": {
-      "already_configured": "A profile with this name already exists."
+      "already_configured": "A profile with this name already exists.",
+      "panel_already_configured": "The Circadian Pro panel is already active.",
+      "panel_name_reserved": "This name is reserved by the Circadian Pro panel. Choose another profile name."
+    },
+    "create_entry": {
+      "default": "The sidebar panel is ready. [Open Circadian Pro](/circadian-pro-calibration) to create and configure your profiles."
     }
   },
   "options": {
@@ -178,7 +183,8 @@
       "invalid_solar_times": "Fixed sunrise and sunset must occur at different times after applying their offsets."
     },
     "abort": {
-      "yaml_configuration": "This profile is configured in YAML. Edit its settings in your YAML configuration."
+      "yaml_configuration": "This profile is configured in YAML. Edit its settings in your YAML configuration.",
+      "panel_configuration": "Open the [Circadian Pro panel](/circadian-pro-calibration) to create and configure profiles."
     }
   },
   "selector": {

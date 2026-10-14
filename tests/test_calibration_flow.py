@@ -116,7 +116,7 @@ def production_namespace():
     namespace["VALIDATION_TUPLES"] = [
         (value, namespace.get(name.replace("CONF_", "DEFAULT_", 1)), object())
         for name, value in list(namespace.items())
-        if name.startswith("CONF_")
+        if name.startswith("CONF_") and name != "CONF_ENTRY_TYPE"
     ]
     namespace["selector"] = SimpleNamespace(
         NumberSelector=lambda config: config,
@@ -130,7 +130,7 @@ def production_namespace():
     )
     namespace["EntitySelector"] = lambda config: config
     namespace["EntitySelectorConfig"] = lambda **config: SimpleNamespace(**config)
-    load_nodes(namespace, "const.py", {"box_int", "replace_none_str", "_duration_seconds", "_time_value", "validate_cross_options"})
+    load_nodes(namespace, "const.py", {"is_panel_entry", "box_int", "replace_none_str", "_duration_seconds", "_time_value", "validate_cross_options"})
     load_nodes(namespace, "config_flow.py", {"minutes_for_form", "options_from_form", "validate_entry", "validate_options"})
 
     tree = ast.parse((COMPONENT / "config_flow.py").read_text(encoding="utf-8"))
@@ -161,7 +161,7 @@ class ConfigCreationTests(unittest.TestCase):
         self.namespace["AbortFlow"] = AbortFlow
         self.namespace["vol"].Required = Optional
         self.namespace["vol"].In = lambda values: values
-        names = {"async_step_user", "async_step_menu", "async_step_wait_for_name"}
+        names = {"async_step_user", "async_step_panel", "async_step_system", "async_step_menu", "async_step_wait_for_name"}
         load_nodes(self.namespace, "config_flow.py", names, class_name="ConfigFlow")
 
         class FakeConfigFlow:
@@ -188,6 +188,9 @@ class ConfigCreationTests(unittest.TestCase):
             def async_show_form(self, **kwargs):
                 return {"type": "form", **kwargs}
 
+            def async_abort(self, **kwargs):
+                return {"type": "abort", **kwargs}
+
             def async_create_entry(self, **kwargs):
                 self.created_entries.append(kwargs)
                 return {"type": "create_entry", **kwargs}
@@ -197,7 +200,8 @@ class ConfigCreationTests(unittest.TestCase):
         self.Flow = FakeConfigFlow
 
     def test_new_profile_uses_empty_lights_default_until_options_select_lights(self):
-        flow = self.Flow()
+        panel = SimpleNamespace(entry_id="panel", unique_id="circadian_pro:panel", data={"entry_type": "panel"})
+        flow = self.Flow([panel])
         form = immediate(flow.async_step_user())
         self.assertEqual(form["step_id"], "user")
         result = immediate(flow.async_step_user({"name": " Bedroom "}))

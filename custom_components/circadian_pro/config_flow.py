@@ -35,13 +35,16 @@ from .const import (  # pylint: disable=unused-import
     CONF_WHITE_W_KELVIN,
     DEFAULT_WHITE_W_KELVIN,
     CONF_LIGHTS,
+    CONF_ENTRY_TYPE,
     CONF_SLEEP_RGB_OR_COLOR_TEMP,
     CONF_SLEEP_ACTIVATION_MODE,
     DOMAIN,
+    ENTRY_TYPE_PANEL,
     EXTRA_VALIDATION,
     NONE_STR,
     VALIDATION_TUPLES,
     box_int,
+    is_panel_entry,
     replace_none_str,
     validate_cross_options,
 )
@@ -142,9 +145,35 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         """Handle the initial step."""
-        if user_input is None and self._async_current_entries():
-            return await self.async_step_menu()
+        if user_input is None:
+            entries = self._async_current_entries()
+            if not entries:
+                return await self.async_step_panel()
+            if any(not is_panel_entry(entry) for entry in entries):
+                return await self.async_step_menu()
         return await self.async_step_wait_for_name(user_input)
+
+    async def async_step_system(self, user_input: dict[str, Any] | None = None):
+        """Keep the sidebar available on existing installations."""
+        return await self.async_step_panel(user_input)
+
+    async def async_step_panel(self, user_input: dict[str, Any] | None = None):
+        """Activate the sidebar without asking for or creating a light profile."""
+        entries = self._async_current_entries()
+        if any(is_panel_entry(entry) for entry in entries):
+            return self.async_abort(reason="panel_already_configured")
+
+        # Existing profiles may use any name as their unique ID. Preserve them
+        # even if one happens to use the panel's preferred internal identifier.
+        unique_id = f"{DOMAIN}:panel"
+        occupied_ids = {entry.unique_id for entry in entries}
+        while unique_id in occupied_ids:
+            unique_id += ":panel"
+        await self.async_set_unique_id(unique_id)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title="Circadian Pro", data={CONF_ENTRY_TYPE: ENTRY_TYPE_PANEL},
+        )
 
     async def async_step_menu(self, user_input: dict[str, Any] | None = None):
         """Handle the menu step."""
@@ -156,7 +185,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 entry_id = user_input["action"]
                 entry = self.hass.config_entries.async_get_entry(entry_id)
-                if entry is not None:
+                if entry is not None and entry in self._async_current_entries() and not is_panel_entry(entry):
                     self.source_options = deepcopy(validate_entry(entry))
                     self.source_options.pop(CONF_NAME, None)
                     for key, (_validate, serialize) in EXTRA_VALIDATION.items():
@@ -167,7 +196,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.source_options = None
                 errors["base"] = "profile_missing"
 
-        entries = self._async_current_entries()
+        entries = [entry for entry in self._async_current_entries() if not is_panel_entry(entry)]
         options = {"new": "Create new instance"}
         for entry in entries:
             options[entry.entry_id] = f"Duplicate '{entry.title}'"
@@ -226,6 +255,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         for entry in self._async_current_entries():
             if entry.unique_id == self.unique_id:
+                if is_panel_entry(entry):
+                    return self.async_abort(reason="panel_name_reserved")
                 if self.hass.config_entries.async_update_entry(entry, data=user_input):
                     self.hass.config_entries.async_schedule_reload(entry.entry_id)
                 self._abort_if_unique_id_configured()
@@ -287,6 +318,8 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Step 1: general settings."""
         conf = self.config_entry
+        if is_panel_entry(conf):
+            return self.async_abort(reason="panel_configuration")
         if conf.source == config_entries.SOURCE_IMPORT:
             return self.async_abort(reason="yaml_configuration")
         data = validate_entry(conf)

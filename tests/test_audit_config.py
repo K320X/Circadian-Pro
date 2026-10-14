@@ -606,7 +606,7 @@ class ConfigAuditTests(unittest.TestCase):
                    "audit_config_package.config_flow": flow, "audit_config_package.calibration": calibration}
         namespace = {"__name__": "audit_config_package", "__package__": "audit_config_package",
                      "SOURCE_IMPORT": "import", "DOMAIN": "circadian_pro", "PLATFORMS": ["switch"],
-                     "ATTR_CIRCADIAN_PRO_MANAGER": "manager"}
+                     "ATTR_CIRCADIAN_PRO_MANAGER": "manager", "is_panel_entry": self.namespace["is_panel_entry"]}
         load_nodes(namespace, "__init__.py", {"async_setup_entry", "async_unload_entry"})
         return namespace, modules
 
@@ -915,7 +915,7 @@ class ConfigAuditTests(unittest.TestCase):
         data = {"profile": {"switch": object()}, "manager": manager}
         hass = SimpleNamespace(data={"circadian_pro": data}, config_entries=SimpleNamespace(async_unload_platforms=unload))
         with patch.dict(sys.modules, modules):
-            self.assertFalse(immediate(namespace["async_unload_entry"](hass, SimpleNamespace(entry_id="profile"))))
+            self.assertFalse(immediate(namespace["async_unload_entry"](hass, SimpleNamespace(entry_id="profile", data={}))))
         self.assertIn("profile", data)
         self.assertIs(data["manager"], manager)
         self.assertEqual(disabled, [])
@@ -931,7 +931,7 @@ class ConfigAuditTests(unittest.TestCase):
         data = {"profile": {"switch": object()}, "manager": manager, "__yaml__": {"Bedroom"}}
         hass = SimpleNamespace(data={"circadian_pro": data}, config_entries=SimpleNamespace(async_unload_platforms=unload))
         with patch.dict(sys.modules, modules):
-            self.assertTrue(immediate(namespace["async_unload_entry"](hass, SimpleNamespace(entry_id="profile"))))
+            self.assertTrue(immediate(namespace["async_unload_entry"](hass, SimpleNamespace(entry_id="profile", data={}))))
         self.assertEqual(disabled, [True])
         self.assertEqual(data, {"__yaml__": {"Bedroom"}})
 

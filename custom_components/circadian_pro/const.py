@@ -19,6 +19,16 @@ ICON_SLEEP = "mdi:sleep"
 
 DOMAIN = "circadian_pro"
 
+# A lightweight entry keeps the sidebar available before/after light profiles.
+CONF_ENTRY_TYPE = "entry_type"
+ENTRY_TYPE_PANEL = "panel"
+
+
+def is_panel_entry(entry: Any) -> bool:
+    """Identify the panel anchor by its marker, never by a profile's name."""
+    return entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_PANEL
+
+
 # Documentation strings (shown in services.yaml and used by UI helpers)
 DOCS = {CONF_ENTITY_ID: "Entity ID of the switch. "}
 

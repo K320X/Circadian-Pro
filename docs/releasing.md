@@ -15,6 +15,8 @@ Keep private backups, Home Assistant credentials, local installation records and
 
 For rollback, restore the preserved component and restart Home Assistant Core. Use the native backup if configuration also requires recovery; do not overwrite `.storage` files while Home Assistant is running.
 
+When rolling back from 0.21.26 or later to 0.21.25 or earlier, the older code does not recognize the panel-only entry. Prefer restoring the native backup made before this update. For a component-only rollback, first identify and remove only the entry marked `entry_type: panel` through Home Assistant's configuration-entry UI/API while the newer code is still running, then restore the older component and restart. Record its entry ID in the private installation receipt. Do not remove lighting profiles or edit `.storage` directly. Leaving the panel entry in place would make older versions treat it as an extra lighting profile.
+
 ## Deployment retention
 
 Keep the active verified version and exactly two distinct previous verified versions for local/Home Assistant recovery. Count successful installed versions, not upload attempts or candidate builds. Before pruning, verify the retained packages/components, their versions and hashes, and the matching configuration/state snapshots. Never remove the active component directory.

@@ -108,10 +108,11 @@ def load_api_module():
                             namespace[name.id] = value.value
                 elif isinstance(target, ast.Name) and isinstance(node.value, ast.Constant):
                     namespace[target.id] = node.value.value
-    functions = [node for node in tree.body if getattr(node, "name", None) in {"_duration_seconds", "_time_value", "validate_cross_options"}]
+    functions = [node for node in tree.body if getattr(node, "name", None) in {"is_panel_entry", "_duration_seconds", "_time_value", "validate_cross_options"}]
     module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *functions], type_ignores=[])
     exec(compile(ast.fix_missing_locations(module), "<real option relationship validation>", "exec"), namespace)
     const.validate_cross_options = namespace["validate_cross_options"]
+    const.is_panel_entry = namespace["is_panel_entry"]
     config_flow = ModuleType("calibration_api_tests_package.config_flow")
     config_flow.validate_entry = lambda entry: deepcopy(entry.options)
     flow_tree = ast.parse((COMPONENT / "config_flow.py").read_text(encoding="utf-8"))
@@ -216,7 +217,7 @@ def load_api_module():
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.api, self.saved_modules, self.calibration, self.const, self.ws, self.panel_custom = load_api_module()
-        self.entry = SimpleNamespace(entry_id="loaded", domain="circadian_pro", state=EntryState.LOADED, title="Profile A", options={
+        self.entry = SimpleNamespace(entry_id="loaded", domain="circadian_pro", state=EntryState.LOADED, title="Profile A", data={"name": "Profile A"}, options={
             "lights": ["light.example_a"], "min_brightness": 50, "max_brightness": 100,
             "min_color_temp": 1200, "max_color_temp": 4000, "interval": timedelta(seconds=60), "sunrise_time": None,
         })
@@ -268,14 +269,14 @@ class ApiTests(unittest.TestCase):
 
     def test_all_endpoints_require_an_administrator_before_accessing_lights(self):
         self.connection.user.is_admin = False
-        for handler, fields in ((self.api.websocket_entries, {}), (self.api.websocket_preview, {"entry_id": "loaded", "settings": {}, "kelvin": 4000}), (self.api.websocket_stop, {"entry_id": "loaded"}), (self.api.websocket_translations, {}), (self.api.websocket_solar, {"entry_id": "loaded", "settings": {}})):
+        for handler, fields in ((self.api.websocket_entries, {}), (self.api.websocket_entries, {"include_status": True}), (self.api.websocket_preview, {"entry_id": "loaded", "settings": {}, "kelvin": 4000}), (self.api.websocket_stop, {"entry_id": "loaded"}), (self.api.websocket_translations, {}), (self.api.websocket_solar, {"entry_id": "loaded", "settings": {}})):
             with self.assertRaises(PermissionError):
                 self.invoke(handler, **fields)
         self.assertEqual(self.calibration.calls, [])
         self.assertEqual(self.calibration.stops, [])
 
     def test_entries_are_loaded_only_and_settings_are_serialized_for_the_form(self):
-        self.entries["unloaded"] = SimpleNamespace(entry_id="unloaded", domain="circadian_pro", state=EntryState.NOT_LOADED, title="Dormitorio")
+        self.entries["unloaded"] = SimpleNamespace(entry_id="unloaded", domain="circadian_pro", state=EntryState.NOT_LOADED, title="Dormitorio", data={"name": "Dormitorio"})
         self.entries["foreign"] = SimpleNamespace(entry_id="foreign", domain="other", state=EntryState.LOADED)
         self.entry.options["sunrise_time"] = time(7, 30)
         self.invoke(self.api.websocket_entries)
@@ -285,6 +286,59 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(entry["settings"]["interval"], 60)
         self.assertEqual(entry["settings"]["sunrise_time"], "07:30:00")
         self.assertEqual(len(self.results[-1][1]), 1)
+
+    def test_panel_anchor_is_not_a_profile_and_empty_panel_can_read_catalog(self):
+        self.entries["panel"] = SimpleNamespace(
+            entry_id="panel", domain="circadian_pro", state=EntryState.LOADED,
+            title="Circadian Pro", data={"entry_type": "panel"}, options={},
+        )
+        self.invoke(self.api.websocket_entries)
+        self.assertEqual([entry["entry_id"] for entry in self.results[-1][1]], ["loaded"])
+        self.entries.pop("loaded")
+        self.hass.data.pop("circadian_pro")
+        self.invoke(self.api.websocket_entries)
+        self.assertEqual(self.results[-1][1], [])
+
+    def test_catalog_status_reports_zero_with_only_panel_anchor(self):
+        self.entries.clear()
+        self.entries["panel"] = SimpleNamespace(
+            entry_id="panel", domain="circadian_pro", state=EntryState.LOADED,
+            data={"entry_type": "panel"},
+        )
+        self.invoke(self.api.websocket_entries, include_status=True)
+        self.assertEqual(self.results[-1][1], {"entries": [], "configured_profiles": 0})
+
+    def test_catalog_status_counts_disabled_profile_without_treating_it_as_available(self):
+        self.entry.state = EntryState.NOT_LOADED
+        self.entry.disabled_by = "user"
+        self.hass.data.pop("circadian_pro")
+        self.invoke(self.api.websocket_entries, include_status=True)
+        self.assertEqual(self.results[-1][1], {"entries": [], "configured_profiles": 1})
+        self.invoke(self.api.websocket_entries)
+        self.assertEqual(self.results[-1][1], [])  # Old clients keep their list contract.
+
+    def test_catalog_status_counts_loaded_disabled_and_failed_profiles_excluding_panel(self):
+        for key, disabled_by in (("disabled", "user"), ("failed", None)):
+            self.entries[key] = SimpleNamespace(
+                entry_id=key, domain="circadian_pro", state=EntryState.NOT_LOADED,
+                disabled_by=disabled_by, data={"name": key},
+            )
+        self.entries["panel"] = SimpleNamespace(
+            entry_id="panel", domain="circadian_pro", state=EntryState.LOADED,
+            data={"entry_type": "panel"},
+        )
+        self.entries["foreign"] = SimpleNamespace(domain="other")
+        self.invoke(self.api.websocket_entries, include_status=True)
+        result = self.results[-1][1]
+        self.assertEqual(result["configured_profiles"], 3)
+        self.assertEqual([entry["entry_id"] for entry in result["entries"]], ["loaded"])
+        self.invoke(self.api.websocket_entries, include_status=False)
+        self.assertEqual(self.results[-1][1], result["entries"])
+
+    def test_catalog_status_flag_requires_boolean(self):
+        for value in ("true", 1, None):
+            with self.subTest(value=value), self.assertRaises(Invalid):
+                self.invoke(self.api.websocket_entries, include_status=value)
 
     def test_entries_expose_stored_dates_for_profile_sorting_without_changing_settings(self):
         self.entry.created_at = datetime(2026, 1, 10, tzinfo=timezone.utc)
@@ -569,9 +623,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.panel_custom.calls, [])
 
     def test_real_integration_setup_hook_registers_api_and_panel(self):
+        from test_calibration_flow import load_nodes
+
         source = ast.parse((COMPONENT / "__init__.py").read_text(encoding="utf-8"))
         function = next(node for node in source.body if getattr(node, "name", None) == "async_setup")
-        namespace = {"__name__": "calibration_api_tests_package", "__package__": "calibration_api_tests_package", "DOMAIN": "circadian_pro"}
+        namespace = {"__name__": "calibration_api_tests_package", "__package__": "calibration_api_tests_package", "DOMAIN": "circadian_pro",
+                     "CONF_ENTRY_TYPE": "entry_type", "ENTRY_TYPE_PANEL": "panel"}
+        load_nodes(namespace, "const.py", {"is_panel_entry"})
+        self.entry.data = {"name": "Profile A"}
+        self.entries["panel"] = SimpleNamespace(domain="circadian_pro", data={"entry_type": "panel"})
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), function], type_ignores=[])
         exec(compile(ast.fix_missing_locations(module), "<real integration setup hook>", "exec"), namespace)
         self.assertTrue(immediate(namespace["async_setup"](self.hass, {})))

@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.25`
+**Current stable version:** `0.21.26`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.25 makes profile controls more compact and gives the mobile menu the familiar three-bar appearance; see the [release notes](docs/release-0.21.25.md). It includes the numeric range labels introduced in [0.21.24](docs/release-0.21.24.md).
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.26 opens the sidebar panel without requiring an initial lighting profile; see the [release notes](docs/release-0.21.26.md). It retains the compact controls and mobile menu introduced in [0.21.25](docs/release-0.21.25.md).
 
 ## Features
 
@@ -66,9 +66,12 @@ The final structure must be:
 Settings → Devices & services → Add integration
 ```
 
-6. Search for **Circadian Pro** and complete the configuration.
+6. Search for **Circadian Pro**. On a fresh installation, selecting it activates the panel without asking for a profile name or lights.
+7. Open **Circadian Pro** in the sidebar and choose **Create first profile**. Select and calibrate its lights there.
 
-Once the integration loads, it automatically adds the **Circadian Pro** sidebar panel for administrator users. No manual dashboard or sidebar configuration is required. The panel lets you create additional profiles and configure or calibrate existing ones.
+Once the integration loads, it automatically adds the **Circadian Pro** sidebar panel for administrator users. No manual dashboard or sidebar configuration is required. The panel lets you create, configure and calibrate profiles, and remains available across restarts even with no lighting profiles.
+
+Home Assistant still requires that one-time **Add integration** step to load a newly downloaded integration. Copying or downloading the files alone does not activate it. In Devices & services, the **Circadian Pro** entry keeps the panel available; it creates no lights or switches. Existing installations acquire this entry automatically while keeping their profile settings, entity identifiers and switch states.
 
 The panel lists every loaded profile in its own row, with a settings button on the right and **New profile** centered below the table. Sort by recent modification (default), name A–Z or name Z–A. Profile changes refresh automatically. Recent ordering uses Home Assistant's stored configuration-entry dates, with creation date as a fallback; it does not track ordinary light-state changes.
 

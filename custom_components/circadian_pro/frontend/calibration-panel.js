@@ -301,6 +301,19 @@ export class NewProfileFlow {
     return result;
   }
 
+  async start() {
+    // The first flow may activate the panel itself, without creating a profile.
+    // Only a name submission below can create the profile requested by the user.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await this.callApi("POST", CONFIG_FLOW, {
+        handler: "circadian_pro", show_advanced_options: false, source: "user",
+      });
+      if (result.type !== "create_entry") return this.accept(result);
+      if (this.closed) throw closedFlowError();
+    }
+    throw Object.assign(new Error("profile_form_unavailable"), { reason: "profile_form_unavailable" });
+  }
+
   async create(name) {
     if (this.createdEntryId) throw new Error("This profile has already been created.");
     if (this.closed) throw closedFlowError();
@@ -308,9 +321,7 @@ export class NewProfileFlow {
     if (!this.name) throw Object.assign(new Error("name_required"), { reason: "name_required" });
     if (this.uncertain) throw Object.assign(new Error("creation_uncertain"), { reason: "creation_uncertain" });
     if (this.current?.type !== "form" || !["user", "menu"].includes(this.current.step_id)) {
-      await this.accept(await this.callApi("POST", CONFIG_FLOW, {
-        handler: "circadian_pro", show_advanced_options: false, source: "user",
-      }));
+      await this.start();
     }
     if (this.current.type === "form" && this.current.step_id === "menu") {
       await this.accept(await this.callApi("POST", `${CONFIG_FLOW}/${this.current.flow_id}`, { action: "new" }));
@@ -520,12 +531,13 @@ const COPY = {
     title: "Circadian Pro", profile: "Perfil", profiles: "Perfiles", actions: "Acciones", start: "Configurar y calibrar", menu: "Abrir menú",
     integration: "Ir a la integración",
     sortProfiles: "Ordenar", sortRecent: "Modificados recientemente", sortNameAsc: "Nombre: A–Z", sortNameDesc: "Nombre: Z–A",
-    newProfile: "Nuevo perfil", profileName: "Nombre del perfil", createProfile: "Crear perfil", cancel: "Cancelar",
+    newProfile: "Nuevo perfil", firstProfile: "Crear primer perfil", profileName: "Nombre del perfil", createProfile: "Crear perfil", cancel: "Cancelar",
     newHint: "Crea un perfil sin luces seleccionadas. Después podrás elegir sus luces, configurarlo y calibrarlo.",
     created: "Perfil creado. Selecciona sus luces y termina la configuración.",
     createdKept: "El perfil creado se conserva. Los ajustes que no hayas terminado no se han guardado.",
     notLoaded: "El perfil se ha creado, pero aún no está listo para configurar. Puedes reintentar la carga sin crear otro perfil.",
     retryLoading: "Reintentar carga", name_required: "Escribe un nombre para el perfil.",
+    profile_form_unavailable: "No se pudo abrir el formulario del perfil. Vuelve a intentarlo.",
     profileUnavailable: "Perfil no disponible",
     unique_name: "Ya existe un perfil con ese nombre. Elige otro nombre.",
     creation_uncertain: "No se pudo confirmar la creación. Comprueba el estado antes de volver a crear el perfil.",
@@ -572,7 +584,8 @@ const COPY = {
     idle: "Puedes ajustar los valores sin cambiar las luces.",
     hint: "Al marcar la casilla, la luz muestra este punto. Los ajustes se ven mientras está marcada. Se desactiva al cambiar de pantalla o después de 60 segundos sin ajustes.",
     restore: "Al terminar se recupera el estado anterior; un cambio manual de la luz se conserva.",
-    loading: "Cargando…", saved: "Configuración guardada.", empty: "No hay perfiles activos de Circadian Pro.",
+    loading: "Cargando…", saved: "Configuración guardada.", empty: "Todavía no hay perfiles. Crea el primero para elegir sus luces y configurar la adaptación.",
+    noAvailableProfiles: "No hay perfiles disponibles. Comprueba su estado en la integración o crea un nuevo perfil.",
     admin: "Abre este panel con un usuario administrador.", error: "No se pudo completar la acción.",
     invalid: "Revisa los valores indicados antes de continuar.", missing: "Esta luz no está disponible en Home Assistant.",
     fallback: "Este formulario contiene un campo que todavía no admite este panel. Usa Configurar en la integración.",
@@ -581,12 +594,13 @@ const COPY = {
     title: "Circadian Pro", profile: "Profile", profiles: "Profiles", actions: "Actions", start: "Configure and calibrate", menu: "Open menu",
     integration: "Go to integration",
     sortProfiles: "Sort", sortRecent: "Recently modified", sortNameAsc: "Name: A–Z", sortNameDesc: "Name: Z–A",
-    newProfile: "New profile", profileName: "Profile name", createProfile: "Create profile", cancel: "Cancel",
+    newProfile: "New profile", firstProfile: "Create first profile", profileName: "Profile name", createProfile: "Create profile", cancel: "Cancel",
     newHint: "Create a profile with no lights selected. Then choose its lights, configure it and calibrate it.",
     created: "Profile created. Choose its lights and finish the configuration.",
     createdKept: "The created profile is kept. Settings you did not finish have not been saved.",
     notLoaded: "The profile was created but is not ready to configure yet. You can retry loading without creating another profile.",
     retryLoading: "Retry loading", name_required: "Enter a name for the profile.",
+    profile_form_unavailable: "The profile form could not be opened. Please try again.",
     profileUnavailable: "Profile unavailable",
     unique_name: "A profile with that name already exists. Choose another name.",
     creation_uncertain: "Creation could not be confirmed. Check its status before trying to create the profile again.",
@@ -633,7 +647,8 @@ const COPY = {
     idle: "You can adjust the values without changing the lights.",
     hint: "Check the box to show this calibration point. Edits are shown while checked. Changing steps or 60 seconds without edits ends the preview.",
     restore: "The previous state is restored when preview ends; manual light changes are preserved.",
-    loading: "Loading…", saved: "Settings saved.", empty: "There are no active Circadian Pro profiles.",
+    loading: "Loading…", saved: "Settings saved.", empty: "There are no profiles yet. Create the first one to choose its lights and configure adaptation.",
+    noAvailableProfiles: "There are no available profiles. Check their status in the integration or create a new profile.",
     admin: "Open this panel as an administrator.", error: "The action could not be completed.",
     invalid: "Check the indicated values before continuing.", missing: "This light is unavailable in Home Assistant.",
     fallback: "This form contains a field this panel does not yet support. Use Configure on the integration.",
@@ -1367,6 +1382,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.pendingCreated = null;
     this.creationRevision = 0;
     this.catalog = null;
+    this.catalogLoaded = false;
+    this.configuredProfiles = null;
     this.catalogError = "";
     this.selectedEntryId = null;
     this.selectedEntryTitle = "";
@@ -1418,10 +1435,10 @@ export class CircadianCalibrationPanel extends HTMLElement {
     if (!this._hass.user?.is_admin) { this.error = this.copy.admin; this.render(); return; }
     this.catalog?.stop();
     const catalog = new EntryCatalog(
-      () => this._hass.callWS({ type: API + "entries" }),
+      () => this._hass.callWS({ type: API + "entries", include_status: true }),
       (entries) => {
         if (this.catalog === catalog && this.isConnected) this.applyEntries(entries);
-      }, this.entries, () => {
+      }, { entries: this.entries, configured_profiles: this.configuredProfiles }, () => {
         if (this.catalog === catalog && this.isConnected) this.catalogFailure();
       }, () => {
         if (this.catalog === catalog && this.isConnected && !this.busy && !this.flow && !this.newProfileOpen) this.render();
@@ -1445,8 +1462,14 @@ export class CircadianCalibrationPanel extends HTMLElement {
     });
   }
 
-  applyEntries(entries) {
+  applyEntries(payload) {
+    const entries = Array.isArray(payload) ? payload : payload.entries;
     this.entries = entries;
+    // Loaded rows alone cannot distinguish a new installation from disabled
+    // or failed profiles. Older array responses leave that count unknown.
+    this.configuredProfiles = !Array.isArray(payload) && Number.isInteger(payload.configured_profiles)
+      && payload.configured_profiles >= entries.length ? payload.configured_profiles : null;
+    this.catalogLoaded = true;
     this.catalogError = "";
     if (!this.selectedEntryId && entries.length) this.selectedEntryId = entries[0].entry_id;
     const selected = entries.find((entry) => entry.entry_id === this.selectedEntryId);
@@ -1458,14 +1481,16 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   catalogFailure() {
     this.catalogError = this.copy.catalogError;
-    this.updateControls();
+    if (!this.busy && !this.flow && !this.newProfileOpen) this.render();
+    else this.updateControls();
   }
 
   async readEntries() {
     const catalog = this.catalog;
-    if (!catalog) return this._hass.callWS({ type: API + "entries" });
-    const entries = await catalog.read();
-    return this.catalog === catalog && this.isConnected ? entries : this.entries;
+    const payload = await (catalog ? catalog.read() : this._hass.callWS({ type: API + "entries", include_status: true }));
+    if (catalog && (this.catalog !== catalog || !this.isConnected)) return this.entries;
+    if (!catalog) this.applyEntries(payload);
+    return Array.isArray(payload) ? payload : payload.entries;
   }
 
   async action(job) {
@@ -1563,7 +1588,6 @@ export class CircadianCalibrationPanel extends HTMLElement {
     const pending = this.pendingCreated;
     if (!pending) return;
     const entry = await waitForLoadedEntry(() => this.readEntries(), pending.entry_id, {
-      onEntries: (entries) => { this.applyEntries(entries); },
       cancelled: () => revision !== this.creationRevision,
     });
     if (revision !== this.creationRevision) return;
@@ -1576,7 +1600,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     await this.action(async () => {
       const creator = this.creator;
       const revision = this.creationRevision;
-      this.applyEntries(await this.readEntries());
+      await this.readEntries();
       if (revision !== this.creationRevision || this.creator !== creator) return;
       const result = await creator.recover();
       if (revision !== this.creationRevision || this.creator !== creator) return;
@@ -2009,7 +2033,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     catalogWarning.setAttribute("role", "alert");
     const catalogRetry = element("button", this.copy.retry);
     catalogRetry.type = "button";
-    catalogRetry.addEventListener("click", () => this.action(async () => { this.applyEntries(await this.readEntries()); }));
+    catalogRetry.addEventListener("click", () => this.action(() => this.readEntries()));
     catalogWarning.append(element("p", this.catalogError), catalogRetry);
     article.append(catalogWarning);
     const error = element("p", this.error);
@@ -2114,6 +2138,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
       actions.append(next);
       article.append(error, actions);
     } else {
+      const emptyCatalog = this.catalogLoaded && !this.entries.length && !this.catalogError && !this.error && !this.pendingCreated;
+      const firstProfile = emptyCatalog && this.configuredProfiles === 0;
       article.append(element("h1", this.copy.title));
       if (this.message) article.append(element("p", this.message, this.saveUncertain ? "muted" : "saved"));
       if (this.pendingCreated) {
@@ -2143,7 +2169,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
         toolbar.append(sortLabel);
         if (!this.catalog?.subscribed) {
           const refresh = element("button", this.copy.refreshProfiles);
-          refresh.addEventListener("click", () => this.action(async () => { this.applyEntries(await this.readEntries()); }));
+          refresh.addEventListener("click", () => this.action(() => this.readEntries()));
           toolbar.append(refresh);
         }
         const table = element("table", undefined, "profile-table");
@@ -2178,10 +2204,16 @@ export class CircadianCalibrationPanel extends HTMLElement {
         }
         table.append(head, body);
         article.append(toolbar, table);
-      } else if (!this.error) article.append(element("p", this.busy ? this.copy.loading : this.copy.empty, "muted"));
-      if (!this.pendingCreated && this._hass?.user?.is_admin) {
+      } else if (!this.error && !this.catalogError && !this.pendingCreated) {
+        const message = element("p", this.busy || !this.catalogLoaded ? this.copy.loading
+          : firstProfile ? this.copy.empty : this.copy.noAvailableProfiles, "muted");
+        message.id = "catalog-status";
+        message.setAttribute("role", "status");
+        article.append(message);
+      }
+      if (!this.pendingCreated && this._hass?.user?.is_admin && (this.entries.length || emptyCatalog)) {
         const actions = element("div", undefined, "profile-create");
-        const create = element("button", this.copy.newProfile, "primary");
+        const create = element("button", firstProfile ? this.copy.firstProfile : this.copy.newProfile, "primary");
         create.type = "button";
         create.addEventListener("click", () => this.openNewProfile());
         actions.append(create);

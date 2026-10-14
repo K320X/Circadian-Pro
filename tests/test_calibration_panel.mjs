@@ -483,9 +483,10 @@ test("compact chooser shows friendly selections and closes after adding another 
 const CONFIG_FLOW = "config/config_entries/flow";
 
 class ProfileBackend {
-  constructor({ menu = true, loseReply = false } = {}) {
+  constructor({ menu = true, loseReply = false, bootstrap = false } = {}) {
     this.menu = menu;
     this.loseReply = loseReply;
+    this.bootstrap = bootstrap;
     this.calls = [];
     this.profiles = [];
     this.configActive = false;
@@ -495,6 +496,10 @@ class ProfileBackend {
     this.calls.push({ method, path, data: data === undefined ? undefined : structuredClone(data) });
     if (path === CONFIG_FLOW) {
       assert.deepEqual(data, { handler: "circadian_pro", show_advanced_options: false, source: "user" });
+      if (this.bootstrap) {
+        this.bootstrap = false;
+        return { type: "create_entry", result: { entry_id: "panel-anchor", title: "Circadian Pro" } };
+      }
       this.configActive = true;
       return { type: "form", flow_id: "server-config-flow", step_id: this.menu ? "menu" : "user" };
     }
@@ -525,8 +530,11 @@ class ProfileBackend {
     throw new Error(`Unexpected request: ${method} ${path}`);
   }
   async callWS(message) {
-    this.calls.push({ type: message.type, entry_id: message.entry_id });
-    if (message.type === API + "entries") return structuredClone(this.profiles);
+    this.calls.push({ type: message.type, entry_id: message.entry_id, include_status: message.include_status });
+    if (message.type === API + "entries") {
+      const entries = structuredClone(this.profiles);
+      return message.include_status ? { entries, configured_profiles: this.profiles.length } : entries;
+    }
     if (message.type === API + "stop") return { active: false };
     throw new Error(`Unexpected WebSocket request: ${message.type}`);
   }
@@ -569,6 +577,53 @@ test("a first profile skips the menu; blank names make no requests", async () =>
   await creation.create("Office");
   assert.equal(backend.calls.length, 2);
   assert.deepEqual(backend.calls[1].data, { name: "Office" });
+});
+
+test("panel activation opens a fresh name form and never counts as the requested first profile", async () => {
+  const backend = new ProfileBackend({ menu: false, bootstrap: true });
+  const creation = new NewProfileFlow(backend.callApi.bind(backend));
+  await creation.create("Office");
+  assert.equal(creation.createdEntryId, "server-returned-entry-id");
+  assert.deepEqual(backend.calls.map((call) => [call.method, call.path]), [
+    ["POST", CONFIG_FLOW], ["POST", CONFIG_FLOW], ["POST", CONFIG_FLOW + "/server-config-flow"],
+  ]);
+  assert.deepEqual(backend.calls.at(-1).data, { name: "Office" });
+  assert.equal(backend.profiles.length, 1);
+});
+
+test("closing while panel activation completes starts no name flow and adopts no anchor as a profile", async () => {
+  const response = deferred();
+  const calls = [];
+  const creation = new NewProfileFlow(async (...args) => { calls.push(args); return response.promise; });
+  const pending = creation.create("Office");
+  await creation.close();
+  response.resolve({ type: "create_entry", result: { entry_id: "panel-anchor" } });
+  await assert.rejects(pending, (error) => error.reason === "flow_closed");
+  assert.equal(creation.createdEntryId, null);
+  assert.equal(creation.current, null);
+  assert.equal(calls.length, 1);
+});
+
+test("unexpected repeated activation is bounded and never reported as profile creation", async () => {
+  let calls = 0;
+  const creation = new NewProfileFlow(async () => {
+    calls++;
+    return { type: "create_entry", result: { entry_id: "panel-anchor" } };
+  });
+  await assert.rejects(creation.create("Office"), (error) => error.reason === "profile_form_unavailable");
+  assert.equal(calls, 2);
+  assert.equal(creation.createdEntryId, null);
+  assert.equal(creation.current, null);
+});
+
+test("losing a real name submission after activation never automatically repeats the profile write", async () => {
+  const backend = new ProfileBackend({ menu: false, bootstrap: true, loseReply: true });
+  const creation = new NewProfileFlow(backend.callApi.bind(backend));
+  await assert.rejects(creation.create("Office"), (error) => error.reason === "creation_uncertain");
+  await assert.rejects(creation.create("Office"), (error) => error.reason === "creation_uncertain");
+  assert.equal(backend.calls.filter((call) => call.data?.name === "Office").length, 1);
+  assert.equal(backend.profiles.length, 1);
+  assert.equal(creation.createdEntryId, null);
 });
 
 test("duplicate-name errors preserve the name and reuse the unsaved name form", async () => {
@@ -721,7 +776,7 @@ test("retrying load reads the same known ID without recreating; cancellation sto
 });
 
 test("creating in the panel opens the options wizard only after loaded confirmation; cancelling keeps the profile", async () => {
-  const backend = new ProfileBackend();
+  const backend = new ProfileBackend({ menu: false, bootstrap: true });
   const panel = {
     _hass: { callApi: backend.callApi.bind(backend), callWS: backend.callWS.bind(backend) },
     creator: new NewProfileFlow(backend.callApi.bind(backend)),
@@ -735,6 +790,8 @@ test("creating in the panel opens the options wizard only after loaded confirmat
   await panel.createNewProfile();
   assert.equal(panel.error, "");
   assert.equal(panel.newProfileOpen, false);
+  assert.equal(panel.catalogLoaded, true);
+  assert.equal(panel.configuredProfiles, 1, "creation polling keeps status metadata while returning an array to its caller");
   assert.equal(panel.flow.current.step_id, "init");
   assert.deepEqual(panel.values.lights, []);
   assert.equal(panel.createdProfile.entry_id, "server-returned-entry-id");
@@ -1165,7 +1222,11 @@ test("a lost initial subscription ACK does not block panel loading or reconnect 
   const panel = {
     initialized: false, busy: false, isConnected: true, entries: [],
     _hass: { user: { is_admin: true }, connection: metadata.connection, callWS: async (message) => {
-      if (message.type === API + "entries") { reads++; return good; }
+      if (message.type === API + "entries") {
+        assert.equal(message.include_status, true);
+        reads++;
+        return { entries: good, configured_profiles: 2 };
+      }
       if (message.type === API + "translations") return {};
       throw new Error("Unexpected message");
     } },
@@ -1178,6 +1239,7 @@ test("a lost initial subscription ACK does not block panel loading or reconnect 
   await panel.initialize();
   assert.equal(panel.busy, false);
   assert.equal(panel.entries, good);
+  assert.equal(panel.configuredProfiles, 2);
   assert.equal(reads, 1);
   metadata.disconnect();
   metadata.ready();

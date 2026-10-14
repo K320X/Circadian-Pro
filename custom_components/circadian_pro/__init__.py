@@ -1,11 +1,12 @@
 """Circadian Pro integration in Home-Assistant."""
 # Modified for Circadian Pro. See NOTICE and LICENSE-APACHE-2.0.txt.
 
+import logging
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.config_entries import SOURCE_IMPORT, SOURCE_SYSTEM, ConfigEntry
 from homeassistant.const import CONF_SOURCE
 from homeassistant.core import HomeAssistant
 
@@ -14,9 +15,21 @@ from .const import (
     ATTR_CIRCADIAN_PRO_MANAGER,
     CONF_NAME,
     DOMAIN,
+    is_panel_entry,
 )
 
 PLATFORMS = ["switch"]
+_LOGGER = logging.getLogger(__name__)
+
+
+async def _async_ensure_panel_entry(hass: HomeAssistant) -> None:
+    """Create the sidebar anchor independently of integration setup."""
+    try:
+        await hass.config_entries.flow.async_init(
+            DOMAIN, context={CONF_SOURCE: SOURCE_SYSTEM},
+        )
+    except Exception:
+        _LOGGER.exception("Could not create the Circadian Pro panel entry")
 
 
 def _all_unique_names(value: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -38,6 +51,13 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     from .frontend import async_setup_frontend
 
     await async_setup_frontend(hass)
+    # Older installations only contain profiles. Keep a separate anchor so
+    # deleting the last profile does not remove the sidebar after a restart.
+    # Do not await its setup from inside the integration's own setup task.
+    if not any(is_panel_entry(entry) for entry in hass.config_entries.async_entries(DOMAIN)):
+        hass.async_create_task(
+            _async_ensure_panel_entry(hass),
+        )
     if DOMAIN in config:
         for entry in config[DOMAIN]:
             hass.async_create_task(
@@ -52,6 +72,9 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up the component."""
+    if is_panel_entry(config_entry):
+        return True
+
     from asyncio import CancelledError
 
     from .config_flow import validate_entry
@@ -124,6 +147,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    if is_panel_entry(config_entry):
+        return True
+
     from .calibration import async_stop_calibration_preview
 
     await async_stop_calibration_preview(hass, config_entry.entry_id)

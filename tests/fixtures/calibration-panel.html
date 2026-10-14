@@ -44,6 +44,7 @@
     ['local-profile-b',{entry_id:'local-profile-b',title:'Profile B',modified_at:'2026-10-12T12:00:00Z',settings:{...original,lights:['light.example_b']}}],
     ['local-profile-c',{entry_id:'local-profile-c',title:'Profile C',modified_at:'2026-10-11T12:00:00Z',settings:{...original,lights:['light.example_c']}}],
   ]);
+  if (new URLSearchParams(location.search).get('empty') === '1') profiles.clear();
   const metadataListeners = new Set();
   const connectionListeners = new Map();
   const metadata = (profile) => ({entry_id:profile.entry_id,title:profile.title,domain:'circadian_pro',state:'loaded'});
@@ -117,7 +118,10 @@
     },
     callWS:async(message) => {
       commands.push(message);
-      if(message.type.endsWith('/entries')) return [...profiles.values()].map((profile) => ({...profile,settings:{...profile.settings}}));
+      if(message.type.endsWith('/entries')) {
+        const entries = [...profiles.values()].map((profile) => ({...profile,settings:{...profile.settings}}));
+        return message.include_status ? {entries,configured_profiles:profiles.size} : entries;
+      }
       if(message.type.endsWith('/translations')) return translations;
       if(message.type.endsWith('/solar')) {
         // Explicit demonstration data; production always requests HA's location.
@@ -160,8 +164,9 @@
       const id = path.split('/').at(-1);
       if(path === 'config/config_entries/flow') {
         const key = `create-${++sequence}`;
-        configFlows.set(key,{step:'menu'});
-        return {type:'form',flow_id:key,step_id:'menu',data_schema:[]};
+        const step = profiles.size ? 'menu' : 'user';
+        configFlows.set(key,{step});
+        return {type:'form',flow_id:key,step_id:step,data_schema:step === 'user' ? [{name:'name',required:true,type:'string'}] : []};
       }
       if(path.startsWith('config/config_entries/flow/')) {
         if(method === 'DELETE') {configFlows.delete(id);return {};}

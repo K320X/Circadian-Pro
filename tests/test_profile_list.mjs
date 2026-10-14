@@ -73,11 +73,13 @@ function panelHarness(t, entries) {
   const opened = [];
   const panel = {
     shadowRoot: new Node("shadow"), entries, profileSort: "recent", language: "es", translations: {},
-    catalog: { subscribed: true }, catalogError: "", error: "", _hass: { user: { is_admin: true } },
+    catalog: { subscribed: true }, catalogLoaded: true, catalogError: "", error: "", _hass: { user: { is_admin: true } },
     copy: {
       title: "Circadian Pro", newProfile: "Nuevo perfil", start: "Configurar y calibrar", profile: "Perfil", profiles: "Perfiles",
       actions: "Acciones", sortProfiles: "Ordenar por", sortRecent: "Modificados recientemente", sortNameAsc: "Nombre: A–Z", sortNameDesc: "Nombre: Z–A",
-      empty: "No hay perfiles", refreshProfiles: "Actualizar lista", retryLoading: "Reintentar carga",
+      empty: "No hay perfiles", firstProfile: "Crear primer perfil", loading: "Cargando…", catalogError: "No se pudo actualizar la lista",
+      noAvailableProfiles: "No hay perfiles disponibles",
+      refreshProfiles: "Actualizar lista", retryLoading: "Reintentar carga",
     },
     start: (entryId) => opened.push(entryId), openNewProfile: () => opened.push("new-profile"),
     action: async (job) => job(),
@@ -85,6 +87,7 @@ function panelHarness(t, entries) {
   panel.render = CircadianCalibrationPanel.prototype.render.bind(panel);
   panel.updateControls = CircadianCalibrationPanel.prototype.updateControls.bind(panel);
   panel.applyEntries = CircadianCalibrationPanel.prototype.applyEntries.bind(panel);
+  panel.catalogFailure = CircadianCalibrationPanel.prototype.catalogFailure.bind(panel);
   panel.render();
   return { panel, opened, rows: () => panel.shadowRoot.querySelector("tbody")?.children || [] };
 }
@@ -139,8 +142,81 @@ test("New profile is below the table, remains available for an empty catalog and
   assert.equal(panel.shadowRoot.querySelector("header").querySelector(".profile-create"), undefined);
   create.querySelector("button").listeners.click();
   assert.deepEqual(opened, ["new-profile"]);
-  panel.applyEntries([]);
+  panel.applyEntries({ entries: [], configured_profiles: 0 });
   assert.equal(panel.shadowRoot.querySelector("table"), undefined);
+  assert.equal(panel.shadowRoot.querySelector(".profile-create").querySelector("button").textContent, "Crear primer perfil");
+});
+
+test("first-profile onboarding requires a successful empty catalog, never a loading or failed request", (t) => {
+  const { panel, opened } = panelHarness(t, []);
+  panel.catalogLoaded = false;
+  panel.busy = true;
+  panel.render();
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status").textContent, "Cargando…");
+  assert.equal(panel.shadowRoot.querySelector(".profile-create"), undefined);
+  panel.busy = false;
+  panel.catalogFailure();
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status"), undefined);
+  assert.equal(panel.shadowRoot.querySelector(".profile-create"), undefined);
+  assert.equal(panel.shadowRoot.querySelector("#catalog-warning").hidden, false);
+
+  panel.applyEntries({ entries: [], configured_profiles: 0 });
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status").textContent, "No hay perfiles");
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status").attributes.role, "status");
+  panel.shadowRoot.querySelector(".profile-create").querySelector("button").listeners.click();
+  assert.deepEqual(opened, ["new-profile"]);
+
+  panel.catalogFailure();
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status"), undefined, "a later failure must remove the previous empty-state message");
+  assert.equal(panel.shadowRoot.querySelector(".profile-create"), undefined);
+  panel.applyEntries([{ entry_id: "first", title: "Office" }]);
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status"), undefined);
+  assert.equal(panel.shadowRoot.querySelector(".profile-create").querySelector("button").textContent, "Nuevo perfil");
+});
+
+test("empty onboarding does not appear while a known created profile is loading", (t) => {
+  const { panel } = panelHarness(t, []);
+  panel.pendingCreated = { entry_id: "new", title: "Office" };
+  panel.render();
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status"), undefined);
+  assert.equal(panel.shadowRoot.querySelector(".profile-create"), undefined);
+  assert.ok(panel.shadowRoot.querySelectorAll("button").some((button) => button.textContent === "Reintentar carga"));
+});
+
+test("Spanish and English explain first-profile setup inside the empty panel", (t) => {
+  const { panel } = panelHarness(t, []);
+  panel.applyEntries({ entries: [], configured_profiles: 0 });
+  const getCopy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get;
+  for (const [language, action, explanation] of [
+    ["es", "Crear primer perfil", "Todavía no hay perfiles. Crea el primero para elegir sus luces y configurar la adaptación."],
+    ["en", "Create first profile", "There are no profiles yet. Create the first one to choose its lights and configure adaptation."],
+  ]) {
+    panel.language = language;
+    panel.copy = getCopy.call(panel);
+    panel.render();
+    assert.equal(panel.shadowRoot.querySelector("#catalog-status").textContent, explanation);
+    assert.equal(panel.shadowRoot.querySelector(".profile-create").querySelector("button").textContent, action);
+  }
+});
+
+test("disabled or failed profiles do not become first-profile onboarding when no loaded rows are available", (t) => {
+  const { panel } = panelHarness(t, []);
+  panel.applyEntries({ entries: [], configured_profiles: 0 });
+  assert.equal(panel.shadowRoot.querySelector(".profile-create").querySelector("button").textContent, "Crear primer perfil");
+  panel.applyEntries({ entries: [], configured_profiles: 2 });
+  assert.equal(panel.configuredProfiles, 2);
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status").textContent, "No hay perfiles disponibles");
+  assert.equal(panel.shadowRoot.querySelector(".profile-create").querySelector("button").textContent, "Nuevo perfil");
+  assert.equal(panel.shadowRoot.querySelector("table"), undefined);
+  assert.equal(panel.shadowRoot.querySelector(".integration-link").href, "/config/integrations/integration/circadian_pro");
+});
+
+test("a legacy empty array has an unknown configured count and cannot claim there are no profiles", (t) => {
+  const { panel } = panelHarness(t, []);
+  panel.applyEntries({ entries: [], configured_profiles: 0 });
+  panel.applyEntries([]);
+  assert.equal(panel.configuredProfiles, null);
+  assert.equal(panel.shadowRoot.querySelector("#catalog-status").textContent, "No hay perfiles disponibles");
   assert.equal(panel.shadowRoot.querySelector(".profile-create").querySelector("button").textContent, "Nuevo perfil");
 });
 
