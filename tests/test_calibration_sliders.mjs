@@ -8,7 +8,7 @@ const previousHTMLElement = globalThis.HTMLElement;
 const previousCustomElements = globalThis.customElements;
 globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
-const { CalibrationFlow, CircadianCalibrationPanel, PreviewSession, brightnessTimingValue, brightnessTimingPoints } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const { CalibrationFlow, CircadianCalibrationPanel, PreviewSession, brightnessTimingValue, brightnessTimingPoints, temperatureTimingPoints } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 if (previousHTMLElement === undefined) delete globalThis.HTMLElement;
 else globalThis.HTMLElement = previousHTMLElement;
 if (previousCustomElements === undefined) delete globalThis.customElements;
@@ -320,10 +320,62 @@ test("one accessible chart updates in place from times, mode and temperature che
   input("apply_temperature_curve").checked = true;
   input("apply_temperature_curve").dispatchEvent(new Event("input"));
   assert.equal(path.getAttribute("d"), sigmoidPath, "sharing the curve must not change its normalized shape");
-  assert.match(figure.querySelector(".timing-legend").textContent, /Brightness and temperature/);
+  assert.equal(figure.querySelector(".timing-legend").textContent, "Sigmoid · Brightness");
+  assert.equal(figure.querySelector(".timing-temperature-legend").textContent, "Color temperature");
   assert.match(svg.getAttribute("aria-label"), /same curve between its own limits/);
   assert.equal(panel.flow.current.step_id, "init", "editing the graph must not advance or save the flow");
   assert.equal(panel.session.enabled, false, "editing the graph must not activate the physical light preview");
+});
+
+test("temperature background stays solar until shared, and returns to solar in Natural", (t) => {
+  const { panel, input, edit } = brightnessSettingsHarness(t, "linear");
+  const figure = panel.shadowRoot.querySelector("figure");
+  const gradient = figure.querySelector("linearGradient");
+  const stops = () => gradient.children.map((stop) => [Number(stop.getAttribute("offset")), stop.getAttribute("stop-color")]);
+  const independent = stops();
+  const at = (offset) => independent.find(([value]) => value === offset)?.[1];
+  for (const offset of [0, 0.25, 0.75, 1]) assert.equal(at(offset), "rgb(255, 138, 26)");
+  assert.equal(at(0.5), "rgb(255, 255, 255)");
+  assert.equal(figure.querySelector(".timing-temperature").getAttribute("fill"), `url(#${gradient.getAttribute("id")})`);
+  assert.equal(gradient.getAttribute("color-interpolation"), "sRGB");
+  edit("brightness_mode_time_light_minutes", "200");
+  edit("brightness_mode_time_dark_minutes", "200");
+  edit("brightness_mode", "tanh");
+  assert.deepEqual(stops(), independent, "brightness mode and its times must not alter independent color");
+  input("apply_temperature_curve").checked = true;
+  input("apply_temperature_curve").dispatchEvent(new Event("input"));
+  const shared = stops();
+  assert.notDeepEqual(shared, independent);
+  assert.equal(shared.find(([offset]) => offset === 0.25)[1], "rgb(255, 197, 141)", "equal shared windows place sunrise halfway between orange and white");
+  edit("brightness_mode", "default");
+  assert.equal(panel.readValues().apply_temperature_curve, true, "Natural retains the checkbox draft");
+  assert.deepEqual(stops(), independent, "Natural ignores a retained checked draft");
+  edit("brightness_mode", "tanh");
+  assert.deepEqual(stops(), shared, "returning to Sigmoid restores shared color");
+  input("apply_temperature_curve").checked = false;
+  input("apply_temperature_curve").dispatchEvent(new Event("input"));
+  assert.deepEqual(stops(), independent);
+  assert.equal(figure.querySelectorAll(".timing-curve").length, 1, "temperature must not add another curve");
+  assert.match(figure.querySelector("svg").getAttribute("aria-label"), /background represents color temperature: orange at its minimum and white at its maximum/);
+  assert.equal(panel.session.enabled, false);
+});
+
+test("shared zero windows make hard color edges without a sampling-width fade", (t) => {
+  const { panel, edit } = brightnessSettingsHarness(t, "linear", true);
+  const figure = panel.shadowRoot.querySelector("figure");
+  const gradient = figure.querySelector("linearGradient");
+  for (const mode of ["linear", "tanh"]) {
+    edit("brightness_mode", mode);
+    assert.deepEqual(gradient.children.map((stop) => [stop.getAttribute("offset"), stop.getAttribute("stop-color")]), [
+      ["0", "rgb(255, 138, 26)"], ["0.25", "rgb(255, 138, 26)"], ["0.25", "rgb(255, 255, 255)"],
+      ["0.75", "rgb(255, 255, 255)"], ["0.75", "rgb(255, 138, 26)"], ["1", "rgb(255, 138, 26)"],
+    ]);
+  }
+  edit("brightness_mode_time_light_minutes", "1");
+  assert.ok(gradient.children.every((stop) => Number.isFinite(Number(stop.getAttribute("offset")))));
+  edit("brightness_mode_time_dark_minutes", "");
+  assert.equal(gradient.children.length, 0, "invalid drafts cannot retain a misleading stale gradient");
+  assert.equal(figure.querySelector(".timing-plot").hidden, true);
 });
 
 test("mode descriptions emphasize localized names and keep all explanation text inert", async (t) => {
@@ -374,7 +426,7 @@ test("Natural hides timing controls and retains their draft when returning to a 
   assert.equal(input("apply_temperature_curve"), undefined);
   assert.equal(panel.readValues().brightness_mode_time_light_minutes, 200);
   assert.equal(panel.readValues().brightness_mode_time_dark_minutes, 166);
-  assert.match(panel.shadowRoot.querySelector("svg").getAttribute("aria-label"), /Temperature follows its own solar curve/);
+  assert.match(panel.shadowRoot.querySelector("svg").getAttribute("aria-label"), /Color temperature follows its own solar curve/);
   assert.equal(panel.shadowRoot.querySelector(".timing-plot").hidden, false);
   CircadianCalibrationPanel.prototype.updateControls.call(panel);
   assert.equal(timeInput.disabled, true, "busy-state updates must keep hidden timing controls disabled");
@@ -444,6 +496,25 @@ test("chart draws zero windows as vertical steps and Natural as the runtime nigh
   }
   assert.deepEqual(brightnessTimingPoints("default", 0, 0), brightnessTimingPoints("default", 300, null), "Natural ignores hidden timing values");
   for (const invalid of [null, "", -1, 0.5, 239.5, 240.01, NaN, Infinity, "200"]) assert.equal(brightnessTimingPoints("linear", 100, invalid), null);
+});
+
+test("independent color follows the runtime daylight parabola and shared color follows each timed curve", () => {
+  const independent = temperatureTimingPoints("default", 0, 0, false);
+  for (const [minute, expected] of [[0, 0], [180, 0], [360, 0], [540, 0.75], [720, 1], [900, 0.75], [1080, 0], [1260, 0], [1440, 0]]) {
+    assert.equal(independent.find(([sample]) => sample === minute)?.[1], expected);
+  }
+  assert.deepEqual(temperatureTimingPoints("default", NaN, null, true), independent, "Natural ignores hidden timing and shared settings");
+  for (const mode of ["linear", "tanh"]) {
+    for (const [light, dark] of [[0, 0], [1, 0], [0, 240], [1, 166], [200, 200], [240, 240]]) {
+      assert.deepEqual(temperatureTimingPoints(mode, light, dark, false), independent);
+      const points = temperatureTimingPoints(mode, light, dark, true);
+      assert.deepEqual(points, brightnessTimingPoints(mode, light, dark));
+      for (const [minute, progress] of points) {
+        assert.ok(Number.isFinite(minute) && minute >= 0 && minute <= 1440);
+        assert.ok(Number.isFinite(progress) && progress >= 0 && progress <= 1);
+      }
+    }
+  }
 });
 
 test("shared temperature curve is opt-in and only offered for Linear and Sigmoid", async (t) => {

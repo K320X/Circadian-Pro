@@ -540,12 +540,13 @@ const COPY = {
     warmWhite: "Cálido", coldWhite: "Frío",
     timingDiagram: {
       sunrise: "Amanecer", sunset: "Atardecer", minimum: "Mín.", maximum: "Máx.",
-      title: "Vista de la curva", brightness: "Brillo", shared: "Brillo y temperatura",
+      title: "Vista de la curva", brightness: "Brillo", temperature: "Temperatura de color",
       modes: { default: "Natural", linear: "Lineal", tanh: "Sigmoide" },
       caption: "Esquema orientativo: 12 h de día y 12 h de noche.",
-      natural: "El brillo llega al máximo al amanecer y se mantiene hasta el atardecer. La temperatura sigue su propia curva solar.",
-      independent: "La temperatura sigue su propia curva solar.",
-      synchronized: "La temperatura sigue esta misma curva entre sus propios límites.",
+      natural: "El brillo llega al máximo al amanecer y se mantiene hasta el atardecer. La temperatura de color sigue su propia curva solar.",
+      independent: "La temperatura de color sigue su propia curva solar.",
+      synchronized: "La temperatura de color sigue esta misma curva entre sus propios límites.",
+      temperatureScale: "El fondo representa la temperatura de color: naranja en el mínimo y blanco en el máximo. Los colores son orientativos.",
       rise: "Subida: {dark} min antes + {light} min después del amanecer.",
       fall: "Bajada: {light} min antes + {dark} min después del atardecer.",
       linear: "Cada transición dura {total} min.",
@@ -590,12 +591,13 @@ const COPY = {
     warmWhite: "Warm", coldWhite: "Cold",
     timingDiagram: {
       sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
-      title: "Curve preview", brightness: "Brightness", shared: "Brightness and temperature",
+      title: "Curve preview", brightness: "Brightness", temperature: "Color temperature",
       modes: { default: "Natural", linear: "Linear", tanh: "Sigmoid" },
       caption: "Illustrative diagram: 12 h of daylight and 12 h of night.",
-      natural: "Brightness reaches its maximum at sunrise and stays there until sunset. Temperature follows its own solar curve.",
-      independent: "Temperature follows its own solar curve.",
-      synchronized: "Temperature follows this same curve between its own limits.",
+      natural: "Brightness reaches its maximum at sunrise and stays there until sunset. Color temperature follows its own solar curve.",
+      independent: "Color temperature follows its own solar curve.",
+      synchronized: "Color temperature follows this same curve between its own limits.",
+      temperatureScale: "The background represents color temperature: orange at its minimum and white at its maximum. Colors are illustrative.",
       rise: "Rise: {dark} min before + {light} min after sunrise.",
       fall: "Fall: {light} min before + {dark} min after sunset.",
       linear: "Each transition lasts {total} min.",
@@ -668,6 +670,20 @@ export function brightnessTimingPoints(mode, light, dark) {
   return [...times].sort((a, b) => a - b).map((minute) => [minute, brightnessTimingValue(minute, mode, light, dark)]);
 }
 
+export function temperatureTimingPoints(mode, light, dark, shared) {
+  if (shared && ["linear", "tanh"].includes(mode)) return brightnessTimingPoints(mode, light, dark);
+  // The independent daytime temperature follows SunEvents.sun_position's
+  // parabola, not Natural brightness's nighttime parabola or a sine wave.
+  // As with the brightness plot, this is a normalized 12-hour reference day;
+  // it does not simulate Kelvin limits, RGB calibration or sleep settings.
+  return Array.from({ length: 361 }, (_, index) => {
+    const minute = index * 4;
+    return [minute, Math.max(0, 1 - ((minute - 720) / 360) ** 2)];
+  });
+}
+
+let timingGradientId = 0;
+
 function brightnessTimingDiagram(copy) {
   const figure = element("figure", undefined, "timing-diagram");
   const svgNode = (tag, attributes, text) => {
@@ -678,7 +694,9 @@ function brightnessTimingDiagram(copy) {
   };
   const heading = element("div", undefined, "timing-heading");
   const legend = element("span", undefined, "timing-legend");
-  heading.append(element("strong", copy.title), legend);
+  const legends = element("div", undefined, "timing-legends");
+  legends.append(legend, element("span", copy.temperature, "timing-temperature-legend"));
+  heading.append(element("strong", copy.title), legends);
   const plot = element("div", undefined, "timing-plot");
   const bounds = element("div", undefined, "timing-bounds");
   bounds.append(element("span", copy.maximum), element("span", copy.minimum));
@@ -688,9 +706,13 @@ function brightnessTimingDiagram(copy) {
   const svg = svgNode("svg", { viewBox: "0 0 600 176", preserveAspectRatio: "none", role: "img", focusable: "false" });
   const title = svgNode("title", {});
   const path = svgNode("path", { class: "timing-curve" });
+  const gradientId = `timing-temperature-${++timingGradientId}`;
+  const gradient = svgNode("linearGradient", { id: gradientId, x1: "0%", y1: "0%", x2: "100%", y2: "0%", "color-interpolation": "sRGB" });
+  const definitions = svgNode("defs", {});
+  definitions.append(gradient);
   svg.append(
-    title,
-    svgNode("rect", { x: 150, y: 8, width: 300, height: 160, class: "timing-day" }),
+    title, definitions,
+    svgNode("rect", { x: 0, y: 8, width: 600, height: 160, class: "timing-temperature", fill: `url(#${gradientId})` }),
     svgNode("path", { d: "M0 8 H600 M0 168 H600", class: "timing-grid" }),
     svgNode("path", { d: "M150 0 V176 M450 0 V176", class: "timing-event" }),
     path,
@@ -706,12 +728,18 @@ function brightnessTimingDiagram(copy) {
     const dark = values.brightness_mode_time_dark_minutes;
     const points = brightnessTimingPoints(mode, light, dark);
     const shared = mode !== "default" && values.apply_temperature_curve === true;
-    legend.textContent = `${copy.modes[mode] || ""} · ${shared ? copy.shared : copy.brightness}`;
+    legend.textContent = `${copy.modes[mode] || ""} · ${copy.brightness}`;
     plot.hidden = !points;
     status.hidden = Boolean(points);
     status.textContent = points ? "" : copy.invalid;
-    if (!points) { path.removeAttribute("d"); return; }
+    if (!points) { path.removeAttribute("d"); gradient.replaceChildren(); return; }
     path.setAttribute("d", points.map(([minute, value], index) => `${index ? "L" : "M"}${minute / 1440 * 600} ${168 - value * 160}`).join(" "));
+    // Shared timing samples include repeated offsets for a true 0/0 step.
+    // Explicit sRGB interpolation keeps color progress linear between stops;
+    // dense samples retain the independent parabola and sigmoid's shape.
+    gradient.replaceChildren(...temperatureTimingPoints(mode, light, dark, shared).map(([minute, value]) =>
+      svgNode("stop", { offset: minute / 1440,
+        "stop-color": `rgb(255, ${Math.round(138 + 117 * value)}, ${Math.round(26 + 229 * value)})` })));
     // Updating only the figure retains the edited input, focus and scroll.
     const format = (template) => template.replaceAll("{light}", String(light)).replaceAll("{dark}", String(dark)).replaceAll("{total}", String(light + dark));
     // Keep the detailed interpretation available to screen readers without
@@ -719,7 +747,7 @@ function brightnessTimingDiagram(copy) {
     const duration = mode === "default" ? copy.natural : light + dark === 0 ? copy.step : format(copy[mode]);
     const description = [legend.textContent,
       ...(mode === "default" || light + dark === 0 ? [] : [format(copy.rise), format(copy.fall)]), duration,
-      ...(mode === "default" ? [] : [shared ? copy.synchronized : copy.independent]), copy.caption].join(" ");
+      ...(mode === "default" ? [] : [shared ? copy.synchronized : copy.independent]), copy.temperatureScale, copy.caption].join(" ");
     title.textContent = description;
     svg.setAttribute("aria-label", description);
   } };
@@ -1415,8 +1443,10 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .mode-description { display:grid; gap:7px; }
       .timing-diagram { min-width:0; margin:20px 0 0; padding:16px; border:1px solid var(--divider-color,#ddd); border-radius:10px; background:var(--card-background-color,#fff); }
       .timing-heading { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 16px; margin-bottom:18px; }
-      .timing-legend { display:flex; align-items:center; gap:7px; color:var(--secondary-text-color,#606770); font-size:12px; }
-      .timing-legend::before { content:""; width:20px; height:3px; border-radius:2px; background:var(--primary-color,#009f8a); }
+      .timing-legends { display:flex; flex-wrap:wrap; gap:8px 16px; }
+      .timing-legend,.timing-temperature-legend { display:flex; align-items:center; gap:7px; color:var(--secondary-text-color,#606770); font-size:12px; }
+      .timing-legend::before { content:""; width:20px; height:3px; border-radius:2px; background:#063f42; box-shadow:0 0 0 1px #a9c5c7; }
+      .timing-temperature-legend::before { content:""; width:24px; height:9px; border:1px solid #808080; border-radius:2px; background:linear-gradient(to right,#ff8a1a,#fff); }
       .timing-plot { display:grid; grid-template-columns:36px minmax(0,1fr); gap:5px; }
       .timing-bounds { display:flex; flex-direction:column; justify-content:space-between; padding:26px 0 0; color:var(--secondary-text-color,#606770); font-size:12px; line-height:16px; }
       .timing-plot-area { min-width:0; }
@@ -1424,11 +1454,10 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .timing-event-labels span { position:absolute; left:25%; transform:translateX(-50%); }
       .timing-event-labels span + span { left:75%; }
       .timing-diagram svg { display:block; width:100%; height:176px; overflow:visible; }
-      .timing-day { fill:var(--primary-color,#009f8a); opacity:.07; }
       .timing-grid,.timing-event,.timing-curve { fill:none; vector-effect:non-scaling-stroke; }
-      .timing-grid { stroke:var(--divider-color,#ddd); stroke-width:1; }
-      .timing-event { stroke:var(--secondary-text-color,#606770); stroke-width:1; stroke-dasharray:3 4; }
-      .timing-curve { stroke:var(--primary-color,#009f8a); stroke-width:2.5; stroke-linejoin:round; stroke-linecap:round; }
+      .timing-grid { stroke:#34445a; stroke-opacity:.3; stroke-width:1; }
+      .timing-event { stroke:#34445a; stroke-opacity:.7; stroke-width:1; stroke-dasharray:3 4; }
+      .timing-curve { stroke:#063f42; stroke-width:2.5; stroke-linejoin:round; stroke-linecap:round; }
       .timing-status { font-size:13px; line-height:1.5; }
       .timing-diagram figcaption { margin-top:12px; color:var(--secondary-text-color,#606770); font-size:12px; line-height:1.45; }
       .timing-control { --channel-track:linear-gradient(to right,var(--divider-color,#ddd),var(--primary-color,#009f8a)); }

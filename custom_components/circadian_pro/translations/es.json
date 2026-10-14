@@ -66,8 +66,8 @@
           "sleep_transition": "Transición modo noche (s)",
           "sleep_schedule_start": "Inicio horario modo noche",
           "sleep_schedule_end": "Fin horario modo noche",
-          "brightness_mode": "Modo de brillo / temperatura",
-          "apply_temperature_curve": "Aplicar también a la temperatura",
+          "brightness_mode": "Modo de brillo / temperatura de color",
+          "apply_temperature_curve": "Aplicar también a la temperatura de color",
           "brightness_mode_time_light": "Transición de brillo: tramo diurno (s)",
           "brightness_mode_time_dark": "Transición de brillo: tramo nocturno (s)",
           "brightness_mode_time_light_minutes": "Después del amanecer / antes del atardecer (min)",
@@ -108,13 +108,13 @@
           "sunset_time": "Usa esta hora de atardecer todos los días. Déjala vacía para calcular el atardecer según tu ubicación y la fecha.",
           "min_sunset_time": "Impide que el atardecer del perfil ocurra antes de esta hora. Déjala vacía para no aplicar este límite.",
           "max_sunset_time": "Impide que el atardecer del perfil ocurra después de esta hora. Déjala vacía para no aplicar este límite.",
-          "brightness_mode": "Natural: mantiene el brillo máximo durante el día; por la noche, baja y vuelve a subir hacia el amanecer. No aplica a la temperatura, que sigue su curva solar independiente. Ignora los dos tiempos de transición.\nLineal: cambia el brillo a ritmo constante. Cada transición dura la suma de los dos tiempos.\nSigmoide: usa una curva en S, suave en los extremos y más rápida en el centro. Los dos tiempos definen la parte principal de la transición.\nEn Lineal y Sigmoide, la temperatura también sigue su curva solar salvo que marques «Aplicar también a la temperatura».\nEn Lineal y Sigmoide, cada tiempo admite de 0 a 240 minutos enteros.",
+          "brightness_mode": "Natural: mantiene el brillo máximo durante el día; por la noche, baja y vuelve a subir hacia el amanecer. No aplica a la temperatura de color, que sigue su curva solar independiente. Ignora los dos tiempos de transición.\nLineal: cambia el brillo a ritmo constante. Cada transición dura la suma de los dos tiempos.\nSigmoide: usa una curva en S, suave en los extremos y más rápida en el centro. Los dos tiempos definen la parte principal de la transición.\nEn Lineal y Sigmoide, la temperatura de color también sigue su curva solar salvo que marques «Aplicar también a la temperatura de color».\nEn Lineal y Sigmoide, cada tiempo admite de 0 a 240 minutos enteros.",
           "brightness_mode_time_dark": "Duración del tramo nocturno de la transición: antes del amanecer y después del atardecer.\nSolo se usa en los modos Lineal y Sigmoide. Un valor mayor alarga ese tramo; Natural lo ignora.",
           "brightness_mode_time_light": "Duración del tramo diurno de la transición: después del amanecer y antes del atardecer.\nSolo se usa en los modos Lineal y Sigmoide. Un valor mayor alarga ese tramo; Natural lo ignora.",
-          "brightness_mode_time_dark_minutes": "Adelanta la subida antes del amanecer.\nProlonga la bajada después del atardecer.\nAfecta al brillo y, si marcas la casilla, también a la temperatura.",
-          "brightness_mode_time_light_minutes": "Prolonga la subida después del amanecer.\nAdelanta la bajada antes del atardecer.\nAfecta al brillo y, si marcas la casilla, también a la temperatura.",
+          "brightness_mode_time_dark_minutes": "Adelanta la subida antes del amanecer.\nProlonga la bajada después del atardecer.\nAfecta al brillo y, si marcas la casilla, también a la temperatura de color.",
+          "brightness_mode_time_light_minutes": "Prolonga la subida después del amanecer.\nAdelanta la bajada antes del atardecer.\nAfecta al brillo y, si marcas la casilla, también a la temperatura de color.",
           "sleep_activation_mode": "Desactivado: el modo noche solo se activa con su interruptor manual.\nPor amanecer y atardecer: se activa entre el atardecer y el amanecer del perfil.\nPor franja horaria: se activa durante el horario indicado abajo.\nEl interruptor manual permite activar el modo noche en cualquier momento.",
-          "apply_temperature_curve": "Comparte la curva y los tiempos entre brillo y temperatura, cada uno entre sus límites. Sustituye también la evolución nocturna de la temperatura. El modo noche conserva sus propios ajustes."
+          "apply_temperature_curve": "Comparte la curva y los tiempos entre brillo y temperatura de color, cada uno entre sus límites. Sustituye también la evolución nocturna de la temperatura de color. El modo noche conserva sus propios ajustes."
         }
       },
       "white_w_kelvin": {
