@@ -542,7 +542,9 @@ const COPY = {
       sunrise: "Amanecer", sunset: "Atardecer", minimum: "Mín.", maximum: "Máx.",
       title: "Vista de la curva", brightness: "Brillo", temperature: "Temperatura de color",
       modes: { default: "Natural", linear: "Lineal", tanh: "Sigmoide" },
-      caption: "Esquema orientativo: 12 h de día y 12 h de noche.",
+      caption: "{date} · {timezone}",
+      loading: "Calculando los horarios de hoy…", unavailable: "No se pudieron calcular los horarios solares de hoy.",
+      invalidSolar: "Revisa los horarios y desplazamientos del amanecer y atardecer.", retry: "Reintentar",
       natural: "El brillo llega al máximo al amanecer y se mantiene hasta el atardecer. La temperatura de color sigue su propia curva solar.",
       independent: "La temperatura de color sigue su propia curva solar.",
       synchronized: "La temperatura de color sigue esta misma curva entre sus propios límites.",
@@ -593,7 +595,9 @@ const COPY = {
       sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
       title: "Curve preview", brightness: "Brightness", temperature: "Color temperature",
       modes: { default: "Natural", linear: "Linear", tanh: "Sigmoid" },
-      caption: "Illustrative diagram: 12 h of daylight and 12 h of night.",
+      caption: "{date} · {timezone}",
+      loading: "Calculating today’s schedule…", unavailable: "Today’s solar schedule could not be calculated.",
+      invalidSolar: "Check sunrise and sunset times and offsets.", retry: "Retry",
       natural: "Brightness reaches its maximum at sunrise and stays there until sunset. Color temperature follows its own solar curve.",
       independent: "Color temperature follows its own solar curve.",
       synchronized: "Color temperature follows this same curve between its own limits.",
@@ -626,65 +630,205 @@ function element(tag, text, className) {
   return node;
 }
 
-// Reference day only: sunrise at 360 min, sunset at 1080 min. These formulas
-// mirror SunLightSettings._timed_curve_value and the natural solar parabola,
-// independently of the profile's brightness/Kelvin limits or actual schedule.
-export function brightnessTimingValue(minute, mode, light, dark) {
-  if (mode === "default") {
-    if (minute < 360) return (minute / 360) ** 2;
-    if (minute <= 1080) return 1;
-    return ((1440 - minute) / 360) ** 2;
+// Solar context is supplied by HA in its own timezone. Plot x values are elapsed
+// minutes from that local midnight, so DST days naturally span 23 or 25 hours.
+const SOLAR_FIELDS = [...OPTIONAL_TIMES, "sunrise_offset_minutes", "sunset_offset_minutes"];
+
+export function solarDraft(values) {
+  return Object.fromEntries(SOLAR_FIELDS.filter((name) => Object.hasOwn(values, name)).map((name) => [name, values[name]]));
+}
+
+export function validSolarContext(context) {
+  if (!context || !Number.isFinite(context.day_start) || !Number.isFinite(context.day_end)
+    || context.day_end <= context.day_start || typeof context.timezone !== "string" || !context.timezone
+    || !/^\d{4}-\d{2}-\d{2}$/.test(context.local_date || "")
+    || !Number.isFinite(context.refresh_after) || context.refresh_after <= 0 || context.refresh_after > 90000
+    || !Array.isArray(context.events) || context.events.length < 4) return false;
+  try { new Intl.DateTimeFormat("en", { timeZone: context.timezone }).format(0); }
+  catch { return false; }
+  const next = { sunrise: "solar_noon", solar_noon: "sunset", sunset: "solar_midnight", solar_midnight: "sunrise" };
+  if (context.events.some((item, index, events) => !Object.hasOwn(next, item.event) || !Number.isFinite(item.timestamp)
+    || (index && (item.timestamp <= events[index - 1].timestamp || item.event !== next[events[index - 1].event])))) return false;
+  if (context.events[0].timestamp > context.day_start || context.events.at(-1).timestamp <= context.day_end) return false;
+  return ["sunrise", "sunset"].every((name) => Number.isFinite(context[name]?.timestamp)
+    && /^\d{2}:\d{2}$/.test(context[name]?.local_time || "")
+    && context.events.some((event) => event.event === name && event.timestamp === context[name].timestamp));
+}
+
+// Requests are limited to solar edits and lifecycle changes, never slider ticks.
+// Each invalidation retires the old result immediately, including in-flight reads.
+export class SolarContextSession {
+  constructor(callWS, entryId, onChange, environment = {}) {
+    this.callWS = callWS;
+    this.entryId = entryId;
+    this.onChange = onChange;
+    this.document = environment.document ?? globalThis.document;
+    this.window = environment.window ?? globalThis.window;
+    this.connection = environment.connection;
+    this.revision = 0;
+    this.closed = false;
+    this.draft = {};
+    this.key = null;
+    this.onVisible = () => { if (!this.document?.hidden) this.refresh(); };
+    this.onReady = () => this.refresh();
+    this.onDisconnected = () => { this.invalidate("unavailable"); };
+    this.document?.addEventListener?.("visibilitychange", this.onVisible);
+    this.window?.addEventListener?.("pageshow", this.onVisible);
+    this.connection?.addEventListener?.("ready", this.onReady);
+    this.connection?.addEventListener?.("disconnected", this.onDisconnected);
   }
+
+  invalidate(status = "loading") {
+    clearTimeout(this.debounce);
+    clearTimeout(this.midnight);
+    clearTimeout(this.requestTimeout);
+    this.revision++;
+    this.cancelRead?.();
+    this.cancelRead = null;
+    if (!this.closed) this.onChange(null, status);
+    return this.revision;
+  }
+
+  update(values) {
+    const draft = solarDraft(values);
+    const key = JSON.stringify(draft);
+    if (key === this.key || this.closed) return;
+    const first = this.key === null;
+    this.key = key;
+    this.draft = draft;
+    this.invalidate();
+    if (first) this.refresh();
+    else this.debounce = setTimeout(() => this.refresh(), 300);
+  }
+
+  async refresh() {
+    if (this.closed) return;
+    const revision = this.invalidate();
+    try {
+      const timeout = new Promise((resolve, reject) => {
+        this.cancelRead = () => reject(new Error("Solar read retired"));
+        this.requestTimeout = setTimeout(() => reject(new Error("Solar read timed out")), 10000);
+      });
+      const context = await Promise.race([
+        this.callWS({ type: API + "solar", entry_id: this.entryId, settings: { ...this.draft } }), timeout,
+      ]);
+      if (this.closed || revision !== this.revision) return;
+      if (!validSolarContext(context)) throw new Error("Invalid solar context");
+      this.onChange(context, "ready");
+      // Relative HA time avoids assuming the phone clock or timezone is right.
+      this.midnight = setTimeout(() => this.refresh(), context.refresh_after * 1000 + 250);
+    } catch (error) {
+      if (!this.closed && revision === this.revision) {
+        this.onChange(null, error?.code === "invalid_options" ? "invalidSolar" : "unavailable");
+      }
+    } finally {
+      if (revision === this.revision) {
+        clearTimeout(this.requestTimeout);
+        this.cancelRead = null;
+      }
+    }
+  }
+
+  close() {
+    this.closed = true;
+    this.invalidate();
+    this.document?.removeEventListener?.("visibilitychange", this.onVisible);
+    this.window?.removeEventListener?.("pageshow", this.onVisible);
+    this.connection?.removeEventListener?.("ready", this.onReady);
+    this.connection?.removeEventListener?.("disconnected", this.onDisconnected);
+  }
+}
+
+function solarPair(minute, context) {
+  const timestamp = context.day_start + minute * 60;
+  const index = context.events.findIndex((item) => item.timestamp > timestamp);
+  return index > 0 ? context.events.slice(index - 1, index + 1) : null;
+}
+
+function solarPosition(minute, context) {
+  const [previous, next] = solarPair(minute, context);
+  const timestamp = context.day_start + minute * 60;
+  const nextIsHorizon = ["sunrise", "sunset"].includes(next.event);
+  const h = nextIsHorizon ? previous.timestamp : next.timestamp;
+  const x = nextIsHorizon ? next.timestamp : previous.timestamp;
+  const sign = ["sunset", "solar_noon"].includes(next.event) ? 1 : -1;
+  return sign * (1 - ((timestamp - h) / (h - x)) ** 2);
+}
+
+// Mirror SunLightSettings._timed_curve_value and SunEvents.sun_position, using
+// the same bracketing events (solar noon need not be the midpoint of daylight).
+export function brightnessTimingValue(minute, mode, light, dark, context) {
+  if (mode === "default") return Math.min(1, 1 + solarPosition(minute, context));
+  const pair = solarPair(minute, context);
+  const event = pair.find((item) => item.event === "sunrise") || pair.find((item) => item.event === "sunset");
+  const elapsed = minute - (event.timestamp - context.day_start) / 60;
+  const rising = event.event === "sunrise";
   const total = light + dark;
-  if (total === 0) return minute >= 360 && minute < 1080 ? 1 : 0;
-  const progress = minute < 720 ? (minute - 360 + dark) / total : (1080 - minute + dark) / total;
+  if (total === 0) return (rising ? elapsed >= 0 : elapsed < 0) ? 1 : 0;
+  const progress = (rising ? elapsed + dark : dark - elapsed) / total;
   return mode === "linear" ? Math.max(0, Math.min(1, progress))
     : (Math.tanh(Math.atanh(0.9) * (2 * progress - 1)) + 1) / 2;
 }
 
-export function brightnessTimingPoints(mode, light, dark) {
-  if (!["default", "linear", "tanh"].includes(mode)) return null;
+export function brightnessTimingPoints(mode, light, dark, context) {
+  if (!validSolarContext(context) || !["default", "linear", "tanh"].includes(mode)) return null;
   if (mode !== "default" && [light, dark].some((value) => !Number.isInteger(value) || value < 0 || value > 240)) return null;
+  const endOfDay = (context.day_end - context.day_start) / 60;
+  const eventMinutes = context.events.map((item) => ({ ...item, minute: (item.timestamp - context.day_start) / 60 }));
   if (mode !== "default" && light + dark === 0) {
-    // Repeated x coordinates draw true vertical target changes, without a
-    // sampling-dependent diagonal across a short nonzero interval.
-    return [[0, 0], [360, 0], [360, 1], [1080, 1], [1080, 0], [1440, 0]];
+    const points = [[0, brightnessTimingValue(0, mode, light, dark, context)]];
+    for (const { event, minute } of eventMinutes) {
+      if (minute <= 0 || minute >= endOfDay || !["sunrise", "sunset"].includes(event)) continue;
+      points.push([minute, event === "sunrise" ? 0 : 1], [minute, event === "sunrise" ? 1 : 0]);
+    }
+    return [...points, [endOfDay, brightnessTimingValue(endOfDay, mode, light, dark, context)]];
   }
-  const times = new Set([0, 360, 720, 1080, 1440]);
-  if (mode !== "linear") for (let minute = 0; minute <= 1440; minute += 4) times.add(minute);
+  const times = new Set([0, endOfDay]);
+  const add = (minute) => { if (minute >= 0 && minute <= endOfDay) times.add(minute); };
+  for (const { minute } of eventMinutes) add(minute);
+  if (mode !== "linear") for (let minute = 0; minute <= endOfDay; minute += 4) add(minute);
   if (mode !== "default") {
     const total = light + dark;
-    for (const [start, end] of [[360 - dark, 360 + light], [1080 - light, 1080 + dark]]) {
+    for (const { event, minute } of eventMinutes) {
+      if (!["sunrise", "sunset"].includes(event)) continue;
+      const start = minute - (event === "sunrise" ? dark : light);
+      const end = minute + (event === "sunrise" ? light : dark);
       const midpoint = (start + end) / 2;
-      for (const minute of [start, midpoint, end]) times.add(minute);
-      if (mode === "tanh") {
-        // Resolve even one-minute windows, preserving their 5%, 50%, 95%
-        // reference points and asymptotic tails rather than faking an S path.
-        for (let index = -64; index <= 64; index++) {
-          const minute = midpoint + total * index / 32;
-          if (minute >= 0 && minute <= 1440) times.add(minute);
-        }
-      }
+      for (const value of [start, midpoint, end]) add(value);
+      if (mode === "tanh") for (let index = -64; index <= 64; index++) add(midpoint + total * index / 32);
     }
   }
-  return [...times].sort((a, b) => a - b).map((minute) => [minute, brightnessTimingValue(minute, mode, light, dark)]);
+  const points = [];
+  for (const minute of [...times].sort((a, b) => a - b)) {
+    // Closest-event selection changes at actual noon/midnight. Very long
+    // windows may disagree there; preserve the runtime edge instead of a ramp.
+    if (minute > 0 && mode !== "default" && eventMinutes.some((item) => item.minute === minute
+      && ["solar_noon", "solar_midnight"].includes(item.event))) {
+      const before = brightnessTimingValue(minute - 1e-6, mode, light, dark, context);
+      const after = brightnessTimingValue(minute, mode, light, dark, context);
+      if (Math.abs(before - after) > 1e-7) points.push([minute, before]);
+    }
+    points.push([minute, brightnessTimingValue(minute, mode, light, dark, context)]);
+  }
+  return points;
 }
 
-export function temperatureTimingPoints(mode, light, dark, shared) {
-  if (shared && ["linear", "tanh"].includes(mode)) return brightnessTimingPoints(mode, light, dark);
-  // The independent daytime temperature follows SunEvents.sun_position's
-  // parabola, not Natural brightness's nighttime parabola or a sine wave.
-  // As with the brightness plot, this is a normalized 12-hour reference day;
-  // it does not simulate Kelvin limits, RGB calibration or sleep settings.
-  return Array.from({ length: 361 }, (_, index) => {
-    const minute = index * 4;
-    return [minute, Math.max(0, 1 - ((minute - 720) / 360) ** 2)];
-  });
+export function temperatureTimingPoints(mode, light, dark, shared, context) {
+  if (!validSolarContext(context)) return null;
+  if (shared && ["linear", "tanh"].includes(mode)) return brightnessTimingPoints(mode, light, dark, context);
+  const endOfDay = (context.day_end - context.day_start) / 60;
+  const times = new Set([0, endOfDay]);
+  for (let minute = 0; minute <= endOfDay; minute += 4) times.add(minute);
+  for (const event of context.events) {
+    const minute = (event.timestamp - context.day_start) / 60;
+    if (minute >= 0 && minute <= endOfDay) times.add(minute);
+  }
+  return [...times].sort((a, b) => a - b).map((minute) => [minute, Math.max(0, solarPosition(minute, context))]);
 }
 
 let timingGradientId = 0;
 
-function brightnessTimingDiagram(copy) {
+export function brightnessTimingDiagram(copy, language = "en", onRetry = () => {}) {
   const figure = element("figure", undefined, "timing-diagram");
   const svgNode = (tag, attributes, text) => {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -702,43 +846,73 @@ function brightnessTimingDiagram(copy) {
   bounds.append(element("span", copy.maximum), element("span", copy.minimum));
   const area = element("div", undefined, "timing-plot-area");
   const labels = element("div", undefined, "timing-event-labels");
-  labels.append(element("span", copy.sunrise), element("span", copy.sunset));
+  const eventLabels = ["sunrise", "sunset"].map((name) => {
+    const label = element("span", undefined, "timing-event-label");
+    label.append(element("span", copy[name]), element("time"));
+    labels.append(label);
+    return label;
+  });
   const svg = svgNode("svg", { viewBox: "0 0 600 176", preserveAspectRatio: "none", role: "img", focusable: "false" });
   const title = svgNode("title", {});
   const path = svgNode("path", { class: "timing-curve" });
   const gradientId = `timing-temperature-${++timingGradientId}`;
   const gradient = svgNode("linearGradient", { id: gradientId, x1: "0%", y1: "0%", x2: "100%", y2: "0%", "color-interpolation": "sRGB" });
+  const eventLines = svgNode("path", { class: "timing-event" });
   const definitions = svgNode("defs", {});
   definitions.append(gradient);
   svg.append(
     title, definitions,
     svgNode("rect", { x: 0, y: 8, width: 600, height: 160, class: "timing-temperature", fill: `url(#${gradientId})` }),
     svgNode("path", { d: "M0 8 H600 M0 168 H600", class: "timing-grid" }),
-    svgNode("path", { d: "M150 0 V176 M450 0 V176", class: "timing-event" }),
+    eventLines,
     path,
   );
   area.append(labels, svg);
   plot.append(bounds, area);
   const status = element("p", undefined, "timing-status");
   status.setAttribute("role", "status");
-  figure.append(heading, plot, status, element("figcaption", copy.caption));
-  return { figure, update(values) {
+  const caption = element("figcaption");
+  const retry = element("button", copy.retry, "secondary timing-retry");
+  retry.type = "button";
+  retry.addEventListener("click", onRetry);
+  figure.append(heading, plot, status, retry, caption);
+  return { figure, update(values, context, contextStatus = "loading") {
     const mode = values.brightness_mode;
     const light = values.brightness_mode_time_light_minutes;
     const dark = values.brightness_mode_time_dark_minutes;
-    const points = brightnessTimingPoints(mode, light, dark);
+    const validContext = validSolarContext(context);
+    const points = brightnessTimingPoints(mode, light, dark, context);
     const shared = mode !== "default" && values.apply_temperature_curve === true;
     legend.textContent = `${copy.modes[mode] || ""} · ${copy.brightness}`;
     plot.hidden = !points;
     status.hidden = Boolean(points);
-    status.textContent = points ? "" : copy.invalid;
+    status.textContent = points ? "" : validContext ? copy.invalid : copy[contextStatus] || copy.unavailable;
+    retry.hidden = validContext || contextStatus === "loading";
+    caption.hidden = !points;
     if (!points) { path.removeAttribute("d"); gradient.replaceChildren(); return; }
-    path.setAttribute("d", points.map(([minute, value], index) => `${index ? "L" : "M"}${minute / 1440 * 600} ${168 - value * 160}`).join(" "));
+    const dayMinutes = (context.day_end - context.day_start) / 60;
+    path.setAttribute("d", points.map(([minute, value], index) => `${index ? "L" : "M"}${minute / dayMinutes * 600} ${168 - value * 160}`).join(" "));
+    const positions = ["sunrise", "sunset"].map((name, index) => {
+      const position = (context[name].timestamp - context.day_start) / (context.day_end - context.day_start);
+      const label = eventLabels[index];
+      label.hidden = position < 0 || position > 1;
+      label.style.left = `${Math.max(0, Math.min(1, position)) * 100}%`;
+      label.style.transform = position < 0.12 ? "none" : position > 0.88 ? "translateX(-100%)" : "translateX(-50%)";
+      label.querySelector("time").textContent = context[name].local_time;
+      return position;
+    });
+    const closeLabels = Math.abs(positions[1] - positions[0]) < 0.24;
+    labels.style.height = closeLabels ? "78px" : "44px";
+    bounds.style.paddingTop = closeLabels ? "78px" : "44px";
+    eventLabels[1].style.top = closeLabels ? "34px" : "0";
+    eventLines.setAttribute("d", positions.filter((position) => position >= 0 && position <= 1).map((position) => `M${position * 600} 0 V176`).join(" "));
+    const date = new Intl.DateTimeFormat(language, { day: "numeric", month: "short", year: "numeric", timeZone: context.timezone }).format(new Date((context.day_start + context.day_end) * 500));
+    caption.textContent = copy.caption.replace("{date}", date).replace("{timezone}", context.timezone);
     // Shared timing samples include repeated offsets for a true 0/0 step.
     // Explicit sRGB interpolation keeps color progress linear between stops;
     // dense samples retain the independent parabola and sigmoid's shape.
-    gradient.replaceChildren(...temperatureTimingPoints(mode, light, dark, shared).map(([minute, value]) =>
-      svgNode("stop", { offset: minute / 1440,
+    gradient.replaceChildren(...temperatureTimingPoints(mode, light, dark, shared, context).map(([minute, value]) =>
+      svgNode("stop", { offset: minute / dayMinutes,
         "stop-color": `rgb(255, ${Math.round(138 + 117 * value)}, ${Math.round(26 + 229 * value)})` })));
     // Updating only the figure retains the edited input, focus and scroll.
     const format = (template) => template.replaceAll("{light}", String(light)).replaceAll("{dark}", String(dark)).replaceAll("{total}", String(light + dark));
@@ -747,7 +921,7 @@ function brightnessTimingDiagram(copy) {
     const duration = mode === "default" ? copy.natural : light + dark === 0 ? copy.step : format(copy[mode]);
     const description = [legend.textContent,
       ...(mode === "default" || light + dark === 0 ? [] : [format(copy.rise), format(copy.fall)]), duration,
-      ...(mode === "default" ? [] : [shared ? copy.synchronized : copy.independent]), copy.temperatureScale, copy.caption].join(" ");
+      ...(mode === "default" ? [] : [shared ? copy.synchronized : copy.independent]), copy.temperatureScale, caption.textContent, `${copy.sunrise} ${context.sunrise.local_time}. ${copy.sunset} ${context.sunset.local_time}.`].join(" ");
     title.textContent = description;
     svg.setAttribute("aria-label", description);
   } };
@@ -994,6 +1168,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   disconnectedCallback() {
     window.removeEventListener("pagehide", this.onLeave);
+    this.solarContext?.close();
+    this.solarContext = null;
     const flow = this.flow;
     this.flow = this.session = null;
     flow?.close().catch(() => {});
@@ -1184,6 +1360,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
   }
 
   async closeWizard() {
+    this.solarContext?.close();
+    this.solarContext = null;
     const flow = this.flow;
     if (!flow) return;
     try { await flow.close(); }
@@ -1338,7 +1516,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
       if (beforeChange && !beforeChange(input)) return;
       this.values = this.readValues(false);
       Object.assign(this.settings, this.values);
-      this.timingChart?.update(this.values);
+      this.solarContext?.update({ ...this.settings, ...this.values });
+      this.timingChart?.update(this.values, this.chartSolarContext, this.chartSolarStatus);
       this.session.refresh();
     };
     if ((calibration || timingPortion) && input.type === "number" && input.min !== "" && input.max !== ""
@@ -1430,6 +1609,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   render() {
     this.shadowRoot.replaceChildren();
+    this.solarContext?.close();
+    this.solarContext = null;
     this.timingChart = null;
     const style = element("style");
     style.textContent = `
@@ -1448,11 +1629,11 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .timing-legend::before { content:""; width:20px; height:3px; border-radius:2px; background:#063f42; box-shadow:0 0 0 1px #a9c5c7; }
       .timing-temperature-legend::before { content:""; width:24px; height:9px; border:1px solid #808080; border-radius:2px; background:linear-gradient(to right,#ff8a1a,#fff); }
       .timing-plot { display:grid; grid-template-columns:36px minmax(0,1fr); gap:5px; }
-      .timing-bounds { display:flex; flex-direction:column; justify-content:space-between; padding:26px 0 0; color:var(--secondary-text-color,#606770); font-size:12px; line-height:16px; }
+      .timing-bounds { display:flex; flex-direction:column; justify-content:space-between; padding:44px 0 0; color:var(--secondary-text-color,#606770); font-size:12px; line-height:16px; }
       .timing-plot-area { min-width:0; }
-      .timing-event-labels { position:relative; height:26px; font-size:12px; line-height:18px; color:var(--secondary-text-color,#606770); }
-      .timing-event-labels span { position:absolute; left:25%; transform:translateX(-50%); }
-      .timing-event-labels span + span { left:75%; }
+      .timing-event-labels { position:relative; height:44px; font-size:12px; line-height:18px; color:var(--secondary-text-color,#606770); }
+      .timing-event-label { position:absolute; display:flex; flex-direction:column; align-items:center; white-space:nowrap; }
+      .timing-event-label time { font-variant-numeric:tabular-nums; font-size:11px; }
       .timing-diagram svg { display:block; width:100%; height:176px; overflow:visible; }
       .timing-grid,.timing-event,.timing-curve { fill:none; vector-effect:non-scaling-stroke; }
       .timing-grid { stroke:#34445a; stroke-opacity:.3; stroke-width:1; }
@@ -1597,8 +1778,18 @@ export class CircadianCalibrationPanel extends HTMLElement {
       if (step.step_id === "white_channels") form.className = "settings-row paired";
       if (step.step_id === "init") {
         if (["brightness_mode", "brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"].every((name) => fields.some((field) => field.name === name))) {
-          this.timingChart = brightnessTimingDiagram(this.copy.timingDiagram);
-          this.timingChart.update(this.values);
+          this.chartSolarContext = null;
+          this.chartSolarStatus = "loading";
+          this.timingChart = brightnessTimingDiagram(this.copy.timingDiagram, this.language, () => this.solarContext?.refresh());
+          this.timingChart.update(this.values, null);
+          const chart = this.timingChart;
+          this.solarContext = new SolarContextSession((message) => this._hass.callWS(message), this.entry.entry_id, (context, status) => {
+            if (this.timingChart !== chart) return;
+            this.chartSolarContext = context;
+            this.chartSolarStatus = status;
+            chart.update(this.values, context, status);
+          }, { connection: this._hass?.connection });
+          this.solarContext.update({ ...this.settings, ...this.values });
         }
         form.append(...generalSettings(fields, (field, beforeChange) => this.field(field, beforeChange), this.copy.groups, this.timingChart?.figure));
       }

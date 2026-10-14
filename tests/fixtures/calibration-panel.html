@@ -87,6 +87,24 @@
       commands.push(message);
       if(message.type.endsWith('/entries')) return [...profiles.values()].map((profile) => ({...profile,settings:{...profile.settings}}));
       if(message.type.endsWith('/translations')) return translations;
+      if(message.type.endsWith('/solar')) {
+        // Explicit demonstration data; production always requests HA's location.
+        const now = new Date();
+        const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000;
+        const time = (value, fallback) => value && value !== 'None'
+          ? value.split(':').reduce((total, part, index) => total + Number(part) * [60, 1, 1/60][index], 0) : fallback;
+        const rise = time(message.settings.sunrise_time, 420) + (message.settings.sunrise_offset_minutes || 0);
+        const set = time(message.settings.sunset_time, 1100) + (message.settings.sunset_offset_minutes || 0);
+        const clock = (minute) => `${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`;
+        return {
+          local_date: now.toISOString().slice(0,10), timezone: 'UTC', day_start: start, day_end: start+86400,
+          refresh_after: start+86400-Date.now()/1000,
+          sunrise: {timestamp:start+rise*60,local_time:clock(rise)}, sunset: {timestamp:start+set*60,local_time:clock(set)},
+          events: [-2,-1,0,1,2].flatMap((day) => [
+            ['solar_midnight',50],['sunrise',rise],['solar_noon',770],['sunset',set],
+          ].map(([event,minute]) => ({event,timestamp:start+day*86400+minute*60}))),
+        };
+      }
       if(message.type.endsWith('/preview')) {
         if(message.settings.white_w_kelvin >= message.settings.white_cw_kelvin) throw Error('El blanco frío debe superar la temperatura del blanco cálido.');
         document.querySelector('#demo-status').textContent = `Vista simulada: ${message.kelvin} K · R ${message.settings[message.kelvin === 4000 ? 'cal_rgb_neutral_r' : 'cal_rgb_warm_r']}.`;

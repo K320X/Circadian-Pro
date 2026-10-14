@@ -8,11 +8,23 @@ const previousHTMLElement = globalThis.HTMLElement;
 const previousCustomElements = globalThis.customElements;
 globalThis.HTMLElement = class {};
 globalThis.customElements = { get: () => undefined, define: () => {} };
-const { CalibrationFlow, CircadianCalibrationPanel, PreviewSession, brightnessTimingValue, brightnessTimingPoints, temperatureTimingPoints } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const { CalibrationFlow, CircadianCalibrationPanel, PreviewSession, brightnessTimingValue: rawBrightnessTimingValue, brightnessTimingPoints: rawBrightnessTimingPoints, temperatureTimingPoints: rawTemperatureTimingPoints, SolarContextSession, validSolarContext } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 if (previousHTMLElement === undefined) delete globalThis.HTMLElement;
 else globalThis.HTMLElement = previousHTMLElement;
 if (previousCustomElements === undefined) delete globalThis.customElements;
 else globalThis.customElements = previousCustomElements;
+
+const REFERENCE_CONTEXT = {
+  local_date: "1970-01-01", timezone: "UTC", day_start: 0, day_end: 86400, refresh_after: 86400,
+  sunrise: { timestamp: 21600, local_time: "06:00" }, sunset: { timestamp: 64800, local_time: "18:00" },
+  events: [-1440, 0, 1440].flatMap((day) => [
+    { event: "solar_midnight", timestamp: day * 60 }, { event: "sunrise", timestamp: (day + 360) * 60 },
+    { event: "solar_noon", timestamp: (day + 720) * 60 }, { event: "sunset", timestamp: (day + 1080) * 60 },
+  ]),
+};
+const brightnessTimingValue = (...args) => rawBrightnessTimingValue(...args, REFERENCE_CONTEXT);
+const brightnessTimingPoints = (...args) => rawBrightnessTimingPoints(...args, REFERENCE_CONTEXT);
+const temperatureTimingPoints = (...args) => rawTemperatureTimingPoints(...args, REFERENCE_CONTEXT);
 
 class Node {
   constructor(tag) {
@@ -263,7 +275,14 @@ function generalSettingsHarness(t, fields) {
   Object.assign(panel.copy, { next: "Next", back: "Back", groups: { limits: "Brightness and temperature", night: "Sleep mode", other: "Other settings" } });
   panel.copy.timingDiagram = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "en" }).timingDiagram;
   panel.field = CircadianCalibrationPanel.prototype.field.bind(panel);
-  panel.render = CircadianCalibrationPanel.prototype.render.bind(panel);
+  panel._hass = { callWS: () => new Promise(() => {}) };
+  panel.render = () => {
+    CircadianCalibrationPanel.prototype.render.call(panel);
+    panel.chartSolarContext = REFERENCE_CONTEXT;
+    panel.chartSolarStatus = "ready";
+    panel.timingChart?.update(panel.values, REFERENCE_CONTEXT, "ready");
+  };
+  t.after(() => panel.solarContext?.close());
   panel.showStep = CircadianCalibrationPanel.prototype.showStep.bind(panel);
   panel.navigate = CircadianCalibrationPanel.prototype.navigate.bind(panel);
   panel.action = async (callback) => { await callback(); panel.render(); };
@@ -300,9 +319,9 @@ test("one accessible chart updates in place from times, mode and temperature che
   assert.equal(svg.getAttribute("role"), "img");
   assert.equal(svg.getAttribute("focusable"), "false");
   assert.match(svg.getAttribute("aria-label"), /both times at 0/);
-  assert.equal(figure.querySelector("figcaption").textContent, "Illustrative diagram: 12 h of daylight and 12 h of night.");
+  assert.equal(figure.querySelector("figcaption").textContent, "Jan 1, 1970 · UTC");
   assert.equal(figure.querySelector(".timing-summary"), undefined, "only the short caption belongs beneath the visible chart");
-  assert.deepEqual(figure.querySelector(".timing-event-labels").children.map((node) => node.textContent), ["Sunrise", "Sunset"]);
+  assert.deepEqual(figure.querySelector(".timing-event-labels").children.map((node) => [node.children[0].textContent, node.querySelector("time").textContent]), [["Sunrise", "06:00"], ["Sunset", "18:00"]]);
   const timeInput = input("brightness_mode_time_light_minutes");
   const stepPath = path.getAttribute("d");
   edit("brightness_mode_time_light_minutes", "200");
@@ -786,4 +805,213 @@ test("Back from 1000 K restores before replay, retains its draft and never submi
   assert.equal(flow.current.step_id, "cal_warm");
   assert.deepEqual(flow.drafts.cal_warm, warmDraft);
   assert.equal(saves, 0);
+});
+
+
+function shiftContext(context, seconds, overrides = {}) {
+  return { ...context, day_start: context.day_start + seconds, day_end: context.day_end + seconds,
+    sunrise: { ...context.sunrise, timestamp: context.sunrise.timestamp + seconds },
+    sunset: { ...context.sunset, timestamp: context.sunset.timestamp + seconds },
+    events: context.events.map((event) => ({ ...event, timestamp: event.timestamp + seconds })), ...overrides };
+}
+
+function eventTarget() {
+  const listeners = new Map();
+  return { hidden: false, listeners,
+    addEventListener(type, callback) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(callback); },
+    removeEventListener(type, callback) { listeners.get(type)?.delete(callback); },
+    emit(type) { for (const callback of listeners.get(type) || []) callback(); },
+  };
+}
+
+function solarSessionHarness(t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const requests = [], updates = [];
+  const environment = { document: eventTarget(), window: eventTarget(), connection: eventTarget() };
+  const session = new SolarContextSession((message) => new Promise((resolve, reject) => requests.push({ message, resolve, reject })),
+    "office", (context, status) => updates.push({ context, status }), environment);
+  t.after(() => session.close());
+  return { session, requests, updates, ...environment };
+}
+const settleSolar = async () => { await Promise.resolve(); await Promise.resolve(); };
+
+test("solar requests debounce only changed solar drafts, retaining final unsaved offsets and fixed times", async (t) => {
+  const { session, requests, updates } = solarSessionHarness(t);
+  session.update({ sunrise_time: "None", sunrise_offset_minutes: 0, brightness_mode_time_light_minutes: 1 });
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].message, { type: "circadian_pro/calibration/solar", entry_id: "office",
+    settings: { sunrise_time: "None", sunrise_offset_minutes: 0 } });
+  requests[0].resolve(REFERENCE_CONTEXT);
+  await settleSolar();
+  assert.equal(updates.at(-1).status, "ready");
+  for (let brightness = 1; brightness <= 240; brightness++) session.update({ sunrise_time: "None", sunrise_offset_minutes: 0, brightness_mode_time_light_minutes: brightness });
+  t.mock.timers.tick(300);
+  assert.equal(requests.length, 1, "slider moves must never trigger a solar request");
+  session.update({ sunrise_time: "07:30:00", sunrise_offset_minutes: 20, max_sunrise_time: "08:00:00" });
+  assert.equal(updates.at(-1).context, null, "retire misleading old schedules immediately");
+  session.update({ sunrise_time: "07:35:00", sunrise_offset_minutes: 25, max_sunrise_time: "08:00:00" });
+  t.mock.timers.tick(299);
+  assert.equal(requests.length, 1);
+  t.mock.timers.tick(1);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1].message.settings, { sunrise_time: "07:35:00", max_sunrise_time: "08:00:00", sunrise_offset_minutes: 25 });
+});
+
+test("late solar reads cannot restore a previous draft or a closed profile", async (t) => {
+  const { session, requests, updates } = solarSessionHarness(t);
+  session.update({ sunrise_offset_minutes: 0 });
+  session.update({ sunrise_offset_minutes: 30 });
+  requests[0].resolve(REFERENCE_CONTEXT);
+  await settleSolar();
+  assert.equal(updates.at(-1).context, null);
+  t.mock.timers.tick(300);
+  const fresh = shiftContext(REFERENCE_CONTEXT, 60);
+  requests[1].resolve(fresh);
+  await settleSolar();
+  assert.equal(updates.at(-1).context, fresh);
+  const third = session.refresh();
+  session.close();
+  const closedCount = updates.length;
+  requests[2].resolve(REFERENCE_CONTEXT);
+  await third;
+  assert.equal(updates.length, closedCount);
+  t.mock.timers.tick(90000000);
+  assert.equal(requests.length, 3, "close removes all pending refresh timers");
+});
+
+test("HA relative midnight TTL, visibility and reconnect refresh without browser-clock assumptions", async (t) => {
+  const { session, requests, updates, document, window, connection } = solarSessionHarness(t);
+  session.update({});
+  requests[0].resolve({ ...REFERENCE_CONTEXT, refresh_after: 2 });
+  await settleSolar();
+  t.mock.timers.tick(2249);
+  assert.equal(requests.length, 1);
+  t.mock.timers.tick(1);
+  assert.equal(requests.length, 2, "midnight refresh uses the server TTL even for an old fixture date");
+  const tomorrow = shiftContext(REFERENCE_CONTEXT, 86400, { local_date: "1970-01-02" });
+  requests[1].resolve(tomorrow);
+  await settleSolar();
+  assert.equal(updates.at(-1).context.local_date, "1970-01-02");
+  document.hidden = true;
+  document.emit("visibilitychange");
+  assert.equal(requests.length, 2);
+  document.hidden = false;
+  document.emit("visibilitychange");
+  assert.equal(requests.length, 3);
+  connection.emit("disconnected");
+  requests[2].resolve(REFERENCE_CONTEXT);
+  await settleSolar();
+  assert.equal(updates.at(-1).status, "unavailable");
+  connection.emit("ready");
+  assert.equal(requests.length, 4);
+  requests[3].resolve(tomorrow);
+  await settleSolar();
+  window.emit("pageshow");
+  assert.equal(requests.length, 5);
+  session.close();
+  for (const target of [document, window, connection]) assert.ok([...target.listeners.values()].every((items) => !items.size));
+});
+
+test("solar failures and malformed context hide the graph and permit an explicit retry", async (t) => {
+  const { session, requests, updates } = solarSessionHarness(t);
+  session.update({ sunrise_time: "invalid" });
+  requests[0].reject({ code: "invalid_options" });
+  await settleSolar();
+  assert.deepEqual(updates.at(-1), { context: null, status: "invalidSolar" });
+  const retry = session.refresh();
+  requests[1].resolve({ ...REFERENCE_CONTEXT, timezone: undefined });
+  await retry;
+  assert.deepEqual(updates.at(-1), { context: null, status: "unavailable" });
+  const retryAgain = session.refresh();
+  requests[2].resolve(REFERENCE_CONTEXT);
+  await retryAgain;
+  assert.equal(updates.at(-1).status, "ready");
+  for (const invalid of [null, {}, { ...REFERENCE_CONTEXT, events: [] }, { ...REFERENCE_CONTEXT, refresh_after: -1 },
+    { ...REFERENCE_CONTEXT, timezone: "missing/timezone" }, { ...REFERENCE_CONTEXT, day_end: 0 }]) {
+    assert.equal(rawBrightnessTimingPoints("default", 0, 0, invalid), null);
+    assert.equal(rawTemperatureTimingPoints("default", 0, 0, false, invalid), null);
+  }
+});
+
+test("real-day chart uses shifted HA labels and date without rebuilding controls, and hides missing context", (t) => {
+  const { panel, input } = brightnessSettingsHarness(t, "linear");
+  const figure = panel.shadowRoot.querySelector("figure");
+  const originalInput = input("brightness_mode_time_light_minutes");
+  const start = Date.parse("2026-10-13T11:00:00Z") / 1000;
+  const context = shiftContext(REFERENCE_CONTEXT, start, { local_date: "2026-10-14", timezone: "Pacific/Auckland",
+    sunrise: { timestamp: start + 300 * 60, local_time: "05:00" },
+    sunset: { timestamp: start + 1100 * 60, local_time: "18:20" },
+  });
+  context.events = context.events.map((event) => ({ ...event,
+    timestamp: event.timestamp + (event.event === "sunrise" ? -60 : event.event === "sunset" ? 20 : 0) * 60 }));
+  panel.timingChart.update(panel.values, context, "ready");
+  assert.equal(figure.querySelector("figcaption").textContent, "Oct 14, 2026 · Pacific/Auckland");
+  assert.deepEqual(figure.querySelectorAll("time").map((node) => node.textContent), ["05:00", "18:20"]);
+  assert.equal(figure.querySelector(".timing-event").getAttribute("d"), "M125 0 V176 M458.3333333333333 0 V176");
+  assert.equal(input("brightness_mode_time_light_minutes"), originalInput);
+  panel.timingChart.update(panel.values, null, "unavailable");
+  assert.equal(figure.querySelector(".timing-plot").hidden, true);
+  assert.equal(figure.querySelector(".timing-curve").getAttribute("d"), null);
+  assert.equal(figure.querySelector("linearGradient").children.length, 0);
+  assert.equal(figure.querySelector(".timing-retry").hidden, false);
+  assert.equal(figure.querySelector("figcaption").hidden, true);
+});
+
+test("DST days scale the full 23 or 25 elapsed hours and retain exact zero-window edges", () => {
+  for (const hours of [23, 25]) {
+    const context = { ...REFERENCE_CONTEXT, day_end: hours * 3600 };
+    assert.equal(validSolarContext(context), true);
+    const points = rawBrightnessTimingPoints("linear", 0, 0, context);
+    assert.deepEqual(points.slice(1, 5), [[360, 0], [360, 1], [1080, 1], [1080, 0]]);
+    assert.deepEqual(points.at(-1), [hours * 60, 0]);
+    assert.equal(rawTemperatureTimingPoints("default", 0, 0, false, context).at(-1)[0], hours * 60);
+  }
+});
+
+test("asymmetric solar noon and midnight drive the runtime half-parabolas and nearest events", () => {
+  const context = structuredClone(REFERENCE_CONTEXT);
+  for (const event of context.events) {
+    if (event.event === "solar_noon") event.timestamp += 60 * 60;
+    if (event.event === "solar_midnight") event.timestamp += 30 * 60;
+  }
+  // At midnight the integration reaches minimum; halfway to sunrise its
+  // nighttime parabola is .25. Noon at13:00 is deliberately not12:00.
+  assert.equal(rawBrightnessTimingValue(30, "default", 0, 0, context), 0);
+  assert.equal(rawBrightnessTimingValue(195, "default", 0, 0, context), 0.25);
+  const points = rawTemperatureTimingPoints("default", 0, 0, false, context);
+  assert.equal(points.find(([minute]) => minute === 780)[1], 1);
+  assert.ok(points.find(([minute]) => minute === 720)[1] < 1);
+  assert.equal(points.find(([minute]) => minute === 360)[1], 0);
+  // A deliberately short day exposes the switch of nearest event at noon.
+  const short = structuredClone(REFERENCE_CONTEXT);
+  for (const event of short.events) {
+    if (event.event === "sunrise") event.timestamp += 300 * 60;
+    if (event.event === "sunset") event.timestamp -= 300 * 60;
+    if (event.event === "solar_noon") event.timestamp += 20 * 60;
+  }
+  short.sunrise.timestamp += 300 * 60;
+  short.sunset.timestamp -= 300 * 60;
+  const edge = rawBrightnessTimingPoints("tanh", 240, 0, short).filter(([minute]) => minute === 740);
+  assert.equal(edge.length, 2);
+  assert.ok(Math.abs(edge[0][1] - edge[1][1]) > 0.05);
+});
+
+
+test("a missing solar response times out, offers retry and ignores the eventual old response", async (t) => {
+  const { session, requests, updates } = solarSessionHarness(t);
+  session.update({});
+  t.mock.timers.tick(9999);
+  await settleSolar();
+  assert.equal(updates.at(-1).status, "loading");
+  t.mock.timers.tick(1);
+  await settleSolar();
+  assert.deepEqual(updates.at(-1), { context: null, status: "unavailable" });
+  const retry = session.refresh();
+  requests[0].resolve(REFERENCE_CONTEXT);
+  await settleSolar();
+  assert.equal(updates.at(-1).status, "loading");
+  const fresh = shiftContext(REFERENCE_CONTEXT, 86400, { local_date: "1970-01-02" });
+  requests[1].resolve(fresh);
+  await retry;
+  assert.equal(updates.at(-1).context, fresh);
 });

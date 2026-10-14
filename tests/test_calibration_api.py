@@ -84,7 +84,7 @@ def load_api_module():
 
     def domain_schema(data):
         const.schema_calls.append(deepcopy(data))
-        allowed = {"lights", "min_brightness", "max_brightness", "min_color_temp", "max_color_temp", "interval", "sunrise_time", "sunrise_offset", "sunset_offset", "cal_rgb_neutral_r",
+        allowed = {"lights", "min_brightness", "max_brightness", "min_color_temp", "max_color_temp", "interval", "sunrise_time", "sunrise_offset", "sunset_offset", "min_sunrise_time", "max_sunrise_time", "sunset_time", "min_sunset_time", "max_sunset_time", "cal_rgb_neutral_r",
                    "brightness_mode", "apply_temperature_curve", "brightness_mode_time_light", "brightness_mode_time_dark"}
         if set(data) - allowed:
             raise Invalid("Unexpected option")
@@ -265,7 +265,7 @@ class ApiTests(unittest.TestCase):
 
     def test_all_endpoints_require_an_administrator_before_accessing_lights(self):
         self.connection.user.is_admin = False
-        for handler, fields in ((self.api.websocket_entries, {}), (self.api.websocket_preview, {"entry_id": "loaded", "settings": {}, "kelvin": 4000}), (self.api.websocket_stop, {"entry_id": "loaded"}), (self.api.websocket_translations, {})):
+        for handler, fields in ((self.api.websocket_entries, {}), (self.api.websocket_preview, {"entry_id": "loaded", "settings": {}, "kelvin": 4000}), (self.api.websocket_stop, {"entry_id": "loaded"}), (self.api.websocket_translations, {}), (self.api.websocket_solar, {"entry_id": "loaded", "settings": {}})):
             with self.assertRaises(PermissionError):
                 self.invoke(handler, **fields)
         self.assertEqual(self.calibration.calls, [])
@@ -500,7 +500,7 @@ class ApiTests(unittest.TestCase):
         self.hass.data["frontend_panels"] = {"circadian-pro": dashboard}
         immediate(self.api.async_setup_frontend(self.hass))
         immediate(self.api.async_setup_frontend(self.hass))
-        self.assertEqual(len(self.ws.handlers), 4)
+        self.assertEqual(len(self.ws.handlers), 5)
         self.assertEqual(len(self.static_paths), 2)
         self.assertEqual(self.static_paths[0].url_path, "/circadian_pro_static/calibration-panel.js")
         self.assertTrue(all(not route.cache_headers for route in self.static_paths))
@@ -572,7 +572,7 @@ class ApiTests(unittest.TestCase):
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), function], type_ignores=[])
         exec(compile(ast.fix_missing_locations(module), "<real integration setup hook>", "exec"), namespace)
         self.assertTrue(immediate(namespace["async_setup"](self.hass, {})))
-        self.assertEqual(len(self.ws.handlers), 4)
+        self.assertEqual(len(self.ws.handlers), 5)
         self.assertEqual(len(self.panel_custom.calls), 1)
 
 

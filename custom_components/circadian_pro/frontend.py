@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from bisect import bisect_right
 from copy import deepcopy
+from dataclasses import replace
+from datetime import UTC, datetime, time, timedelta
 from hashlib import sha256
+from itertools import pairwise
 import json
 import logging
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 try:
     import probatio as ws_schema
@@ -33,6 +38,13 @@ _LEGACY_CALIBRATION_OPTIONS = {
     "rgbw_fixed_white_kelvin",
 }
 _LOGGER = logging.getLogger(__name__)
+_SOLAR_TIME_OPTIONS = (
+    "sunrise_time", "min_sunrise_time", "max_sunrise_time",
+    "sunset_time", "min_sunset_time", "max_sunset_time",
+)
+_SOLAR_OFFSET_OPTIONS = ("sunrise_offset", "sunset_offset")
+_SOLAR_DRAFT_OPTIONS = frozenset((*_SOLAR_TIME_OPTIONS, *_SOLAR_OFFSET_OPTIONS,
+                                "sunrise_offset_minutes", "sunset_offset_minutes"))
 
 
 def _panel_asset_registration(path: Path) -> tuple[str, str]:
@@ -106,6 +118,100 @@ async def websocket_entries(hass: Any, connection: Any, msg: dict[str, Any]) -> 
             "settings": _serializable_settings(validate_entry(entry)),
         })
     connection.send_result(msg["id"], entries)
+
+
+def _solar_context(sun: Any, now: datetime, timezone_name: str) -> dict[str, Any]:
+    """Calculate the profile's real local day without changing its runtime state."""
+    from .color_and_brightness import SunEventUnavailable
+
+    today = now.astimezone(sun.timezone).date()
+    start = datetime.combine(today, time(), sun.timezone).timestamp()
+    end = datetime.combine(today + timedelta(days=1), time(), sun.timezone).timestamp()
+    # Adjacent local dates bracket the full plot, including DST and the solar
+    # midnight/noon boundaries used by the real brightness and color formulas.
+    events = []
+    for days in range(-2, 3):
+        try:
+            events.extend((event.value, timestamp) for event, timestamp
+                          in sun.sun_events(today + timedelta(days=days)))
+        except SunEventUnavailable:
+            # A polar condition on an unused adjacent date does not invalidate
+            # today if the remaining real events still bracket every sample.
+            continue
+    events.sort(key=lambda item: item[1])
+    timestamps = [timestamp for _event, timestamp in events]
+    first = max(0, bisect_right(timestamps, start) - 1)
+    last = bisect_right(timestamps, end) + 1
+    events = events[first:last]
+    next_event = {"sunrise": "solar_noon", "solar_noon": "sunset",
+                  "sunset": "solar_midnight", "solar_midnight": "sunrise"}
+    if (
+        not events or events[0][1] > start or events[-1][1] <= end
+        or any(right[1] <= left[1] or next_event[left[0]] != right[0]
+               for left, right in pairwise(events))
+    ):
+        raise ValueError("The solar events cannot represent this local day.")
+
+    def label(event_name: str) -> dict[str, Any]:
+        # Astral's local=False calculations may place the date argument's
+        # event on the following local date near the international date line.
+        # Select from the actual plotted day rather than calling Astral again.
+        matches = [timestamp for event, timestamp in events
+                   if event == event_name and start <= timestamp < end]
+        if len(matches) != 1:
+            raise ValueError("The solar events cannot identify this local day's sunrise and sunset.")
+        timestamp = matches[0]
+        return {"timestamp": timestamp,
+                "local_time": datetime.fromtimestamp(timestamp, sun.timezone).strftime("%H:%M")}
+
+    return {
+        "local_date": today.isoformat(), "timezone": timezone_name,
+        "day_start": start, "day_end": end, "refresh_at": end,
+        "generated_at": now.timestamp(), "refresh_after": max(1, end - now.timestamp()),
+        "events": [{"event": event, "timestamp": timestamp} for event, timestamp in events],
+        "sunrise": label("sunrise"), "sunset": label("sunset"),
+    }
+
+
+@websocket_api.websocket_command({
+    "type": "circadian_pro/calibration/solar",
+    ws_schema.Required("entry_id"): str,
+    ws_schema.Required("settings"): dict,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_solar(hass: Any, connection: Any, msg: dict[str, Any]) -> None:
+    """Read the effective solar schedule, including unsaved solar-only edits."""
+    try:
+        entry = _loaded_entry(hass, msg["entry_id"])
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "not_loaded", str(err))
+        return
+    try:
+        if msg["settings"].keys() - _SOLAR_DRAFT_OPTIONS:
+            raise vol.Invalid("Only sunrise and sunset settings are accepted.")
+        settings = _validated_draft(entry, msg["settings"])
+        overrides = {}
+        for name in (*_SOLAR_TIME_OPTIONS, *_SOLAR_OFFSET_OPTIONS):
+            value = settings.get(name, 0 if name in _SOLAR_OFFSET_OPTIONS else None)
+            overrides[name] = EXTRA_VALIDATION[name][0](value) if value is not None else None
+        timezone_name = hass.config.time_zone
+        overrides["timezone"] = ZoneInfo(timezone_name)
+    except (vol.Invalid, ws_schema.Invalid, ValueError, TypeError, OverflowError) as err:
+        connection.send_error(msg["id"], "invalid_options", str(err))
+        return
+    switch = hass.data[DOMAIN][entry.entry_id]["switch"]
+    # Replace the frozen settings instead of mutating the live profile or its
+    # cached SunEvents. Its Astral location already comes from HA configuration.
+    sun = replace(switch._sun_light_settings.sun, **overrides)
+    try:
+        result = await hass.async_add_executor_job(
+            _solar_context, sun, datetime.now(UTC), timezone_name,
+        )
+    except (ValueError, OverflowError) as err:
+        connection.send_error(msg["id"], "solar_unavailable", str(err))
+        return
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command({
@@ -183,7 +289,7 @@ async def async_setup_frontend(hass: Any) -> None:
     lock = data.setdefault("lock", asyncio.Lock())
     async with lock:
         if not data.get("api_registered"):
-            for handler in (websocket_entries, websocket_preview, websocket_stop, websocket_translations):
+            for handler in (websocket_entries, websocket_preview, websocket_stop, websocket_translations, websocket_solar):
                 websocket_api.async_register_command(hass, handler)
             data["api_registered"] = True
         if not data.get("static_registered"):
