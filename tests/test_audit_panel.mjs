@@ -134,7 +134,8 @@ test("closing while Next waits for restoration prevents the pending save", async
 });
 
 test("pending navigation freezes editable controls while the mobile sidebar remains accessible", () => {
-  const controls = [{ type: "number" }, { type: "color" }, { type: "checkbox" }, { tag: "select" }];
+  const controls = [{ type: "number" }, { type: "color" }, { type: "checkbox" }, { tag: "select" }]
+    .map((control) => ({ ...control, dataset: {} }));
   const buttons = [{ className: "primary" }, { className: "close" }, { className: "mobile-menu" }];
   const panel = {
     busy: true,

@@ -344,7 +344,7 @@ class ApiTests(unittest.TestCase):
     def test_preview_brightness_minute_drafts_roundtrip_without_mutating_stored_seconds(self):
         self.entry.options.update(brightness_mode_time_light=1, brightness_mode_time_dark=10000)
         original = deepcopy(self.entry.options)
-        for light, dark in ((60, 10000), (60, 60), (60.25, 10000.75), (1200, 1800), (0, 0), (1, 0.25)):
+        for light, dark in ((60, 10000), (60, 60), (60.25, 10000.75), (1200, 1800), (0, 0), (1, 0.25), (14400, 14400)):
             with self.subTest(light=light, dark=dark):
                 draft = {"brightness_mode_time_light": 1, "brightness_mode_time_dark": 10000,
                          "brightness_mode": "linear", "brightness_mode_time_light_minutes": light / 60,
@@ -365,7 +365,7 @@ class ApiTests(unittest.TestCase):
 
     def test_invalid_brightness_minute_draft_cannot_start_preview(self):
         for name in ("brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"):
-            for value in (True, None, "60", float("inf"), float("nan"), 1e100, -1, -0.001):
+            for value in (True, None, "60", float("inf"), float("nan"), 1e100, -1, -0.001, 240.001, 240.5):
                 with self.subTest(name=name, value=value):
                     self.invoke(self.api.websocket_preview, entry_id="loaded", settings={
                         "brightness_mode": "linear", "brightness_mode_time_light_minutes": 20,
@@ -373,6 +373,27 @@ class ApiTests(unittest.TestCase):
                     }, kelvin=1000)
                     self.assertEqual(self.errors[-1][1], "invalid_options")
         self.assertEqual(self.calibration.calls, [])
+
+    def test_preview_preserves_legacy_canonical_windows_above_panel_maximum(self):
+        self.entry.options.update(brightness_mode_time_light=18000, brightness_mode_time_dark=18000.25)
+        original = deepcopy(self.entry.options)
+        self.invoke(self.api.websocket_preview, entry_id="loaded", settings={}, kelvin=1000)
+        settings = self.calibration.calls[-1][1]
+        self.assertEqual(settings["brightness_mode_time_light"], 18000)
+        self.assertEqual(settings["brightness_mode_time_dark"], 18000.25)
+        self.assertEqual(self.entry.options, original)
+
+    def test_natural_preview_preserves_inactive_legacy_minute_windows(self):
+        self.entry.options.update(brightness_mode="default", brightness_mode_time_light=18000,
+                                  brightness_mode_time_dark=18000.25)
+        original = deepcopy(self.entry.options)
+        draft = {"brightness_mode": "default", "brightness_mode_time_light_minutes": 300,
+                 "brightness_mode_time_dark_minutes": 18000.25 / 60}
+        self.invoke(self.api.websocket_preview, entry_id="loaded", settings=draft, kelvin=1000)
+        settings = self.calibration.calls[-1][1]
+        self.assertEqual(settings["brightness_mode_time_light"], 18000)
+        self.assertEqual(settings["brightness_mode_time_dark"], 18000.25)
+        self.assertEqual(self.entry.options, original)
 
     def test_preview_preserves_temperature_curve_flag_with_zero_windows_without_saving(self):
         original = deepcopy(self.entry.options)

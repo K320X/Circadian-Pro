@@ -63,8 +63,12 @@ def options_from_form(user_input: dict[str, Any]) -> dict[str, Any]:
         try:
             if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
                 raise ValueError("A numeric duration is required")
-            if name.startswith("brightness_mode_time_") and minutes < 0:
-                raise ValueError("Brightness windows cannot be negative")
+            if name.startswith("brightness_mode_time_"):
+                # Natural does not use these windows and hides their controls.
+                # Preserve inactive legacy values rather than creating an
+                # invisible validation error; active controls stay at 0–240.
+                if minutes < 0 or (options.get("brightness_mode") != "default" and minutes > 240):
+                    raise ValueError("Brightness windows must be between 0 and 240 minutes")
             seconds = float(minutes) * 60
             if not isfinite(seconds):
                 raise ValueError("A finite duration is required")
@@ -400,7 +404,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 options_schema[vol.Optional(form_name, default=selected_default)] = (
                     selector.NumberSelector(selector.NumberSelectorConfig(
                         mode=selector.NumberSelectorMode.BOX, step="any",
-                        **({"min": 0} if is_brightness_window else {}),
+                        **({"min": 0, "max": 240} if is_brightness_window else {}),
                     ))
                 )
                 continue

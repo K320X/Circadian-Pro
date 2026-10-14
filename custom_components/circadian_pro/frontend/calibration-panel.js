@@ -540,9 +540,18 @@ const COPY = {
     warmWhite: "Cálido", coldWhite: "Frío",
     timingDiagram: {
       sunrise: "Amanecer", sunset: "Atardecer", minimum: "Mín.", maximum: "Máx.",
-      light: "El valor sube después del amanecer y baja antes del atardecer. Las pendientes destacadas corresponden al tramo dentro del día.",
-      dark: "El valor sube antes del amanecer y baja después del atardecer. Las pendientes destacadas corresponden al tramo fuera del día.",
-      caption: "Esquema orientativo: no representa los valores de este perfil.",
+      title: "Vista de la curva", brightness: "Brillo", shared: "Brillo y temperatura",
+      modes: { default: "Natural", linear: "Lineal", tanh: "Sigmoide" },
+      caption: "Forma de la curva entre mínimo y máximo. Día de ejemplo: 12 h de luz y 12 h de noche; no representa tu horario ni la luminosidad real.",
+      natural: "El brillo llega al máximo al amanecer y se mantiene hasta el atardecer. La temperatura sigue su propia curva solar.",
+      independent: "La temperatura sigue su propia curva solar.",
+      synchronized: "La temperatura sigue esta misma curva entre sus propios límites.",
+      rise: "Subida: {dark} min antes + {light} min después del amanecer.",
+      fall: "Bajada: {light} min antes + {dark} min después del atardecer.",
+      linear: "Cada transición dura {total} min.",
+      tanh: "Cada tramo principal (5–95 %) dura {total} min. La curva se prolonga suavemente a ambos lados.",
+      step: "Con ambos tiempos a 0, el objetivo cambia al amanecer y al atardecer. Se conserva la transición configurada para las luces.",
+      invalid: "Introduce dos tiempos válidos entre 0 y 240 minutos para ver la curva.",
     },
     groups: { adaptation: "Ritmo de adaptación", limits: "Brillo y temperatura", night: "Modo noche",
       solar: "Amanecer y atardecer", manual: "Cambios manuales", compatibility: "Compatibilidad y envío", other: "Otros ajustes" },
@@ -581,9 +590,18 @@ const COPY = {
     warmWhite: "Warm", coldWhite: "Cold",
     timingDiagram: {
       sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
-      light: "The value rises after sunrise and falls before sunset. The highlighted slopes show the portion inside daytime.",
-      dark: "The value rises before sunrise and falls after sunset. The highlighted slopes show the portion outside daytime.",
-      caption: "Illustrative diagram: it does not show this profile's values.",
+      title: "Curve preview", brightness: "Brightness", shared: "Brightness and temperature",
+      modes: { default: "Natural", linear: "Linear", tanh: "Sigmoid" },
+      caption: "Curve shape between minimum and maximum. Example day: 12 h of daylight and 12 h of night; this is not your schedule or actual light output.",
+      natural: "Brightness reaches its maximum at sunrise and stays there until sunset. Temperature follows its own solar curve.",
+      independent: "Temperature follows its own solar curve.",
+      synchronized: "Temperature follows this same curve between its own limits.",
+      rise: "Rise: {dark} min before + {light} min after sunrise.",
+      fall: "Fall: {light} min before + {dark} min after sunset.",
+      linear: "Each transition lasts {total} min.",
+      tanh: "Each main portion (5–95%) lasts {total} min. The curve continues gently beyond both ends.",
+      step: "With both times at 0, the target changes at sunrise and sunset. The configured light transition still applies.",
+      invalid: "Enter two valid times between 0 and 240 minutes to see the curve.",
     },
     groups: { adaptation: "Adaptation timing", limits: "Brightness and temperature", night: "Sleep mode",
       solar: "Sunrise and sunset", manual: "Manual changes", compatibility: "Compatibility and commands", other: "Other settings" },
@@ -606,7 +624,51 @@ function element(tag, text, className) {
   return node;
 }
 
-function brightnessTimingDiagram(portion, copy) {
+// Reference day only: sunrise at 360 min, sunset at 1080 min. These formulas
+// mirror SunLightSettings._timed_curve_value and the natural solar parabola,
+// independently of the profile's brightness/Kelvin limits or actual schedule.
+export function brightnessTimingValue(minute, mode, light, dark) {
+  if (mode === "default") {
+    if (minute < 360) return (minute / 360) ** 2;
+    if (minute <= 1080) return 1;
+    return ((1440 - minute) / 360) ** 2;
+  }
+  const total = light + dark;
+  if (total === 0) return minute >= 360 && minute < 1080 ? 1 : 0;
+  const progress = minute < 720 ? (minute - 360 + dark) / total : (1080 - minute + dark) / total;
+  return mode === "linear" ? Math.max(0, Math.min(1, progress))
+    : (Math.tanh(Math.atanh(0.9) * (2 * progress - 1)) + 1) / 2;
+}
+
+export function brightnessTimingPoints(mode, light, dark) {
+  if (!["default", "linear", "tanh"].includes(mode)) return null;
+  if (mode !== "default" && [light, dark].some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 240)) return null;
+  if (mode !== "default" && light + dark === 0) {
+    // Repeated x coordinates draw true vertical target changes, without a
+    // sampling-dependent diagonal across a short nonzero interval.
+    return [[0, 0], [360, 0], [360, 1], [1080, 1], [1080, 0], [1440, 0]];
+  }
+  const times = new Set([0, 360, 720, 1080, 1440]);
+  if (mode !== "linear") for (let minute = 0; minute <= 1440; minute += 4) times.add(minute);
+  if (mode !== "default") {
+    const total = light + dark;
+    for (const [start, end] of [[360 - dark, 360 + light], [1080 - light, 1080 + dark]]) {
+      const midpoint = (start + end) / 2;
+      for (const minute of [start, midpoint, end]) times.add(minute);
+      if (mode === "tanh") {
+        // Resolve even sub-minute windows, preserving their 5%, 50%, 95%
+        // reference points and asymptotic tails rather than faking an S path.
+        for (let index = -64; index <= 64; index++) {
+          const minute = midpoint + total * index / 32;
+          if (minute >= 0 && minute <= 1440) times.add(minute);
+        }
+      }
+    }
+  }
+  return [...times].sort((a, b) => a - b).map((minute) => [minute, brightnessTimingValue(minute, mode, light, dark)]);
+}
+
+function brightnessTimingDiagram(copy) {
   const figure = element("figure", undefined, "timing-diagram");
   const svgNode = (tag, attributes, text) => {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -614,27 +676,61 @@ function brightnessTimingDiagram(portion, copy) {
     if (text !== undefined) node.textContent = text;
     return node;
   };
-  const svg = svgNode("svg", { viewBox: "0 0 280 122", role: "img", "aria-label": copy[portion], focusable: "false" });
-  // Both examples use the same normalized bounds and solar markers. Only the
-  // side of each event containing the adjustable ramp changes; these are not
-  // simulations of the saved duration, solar times or brightness limits.
-  const inside = portion === "light";
+  const heading = element("div", undefined, "timing-heading");
+  const legend = element("span", undefined, "timing-legend");
+  heading.append(element("strong", copy.title), legend);
+  const plot = element("div", undefined, "timing-plot");
+  const bounds = element("div", undefined, "timing-bounds");
+  bounds.append(element("span", copy.maximum), element("span", copy.minimum));
+  const area = element("div", undefined, "timing-plot-area");
+  const labels = element("div", undefined, "timing-event-labels");
+  labels.append(element("span", copy.sunrise), element("span", copy.sunset));
+  const svg = svgNode("svg", { viewBox: "0 0 600 176", preserveAspectRatio: "none", role: "img", focusable: "false" });
+  const title = svgNode("title", {});
+  const path = svgNode("path", { class: "timing-curve" });
   svg.append(
-    svgNode("rect", { x: 86, y: 29, width: 116, height: 67, class: "timing-day" }),
-    svgNode("path", { d: "M34 39 H268 M34 91 H268", class: "timing-grid" }),
-    svgNode("path", { d: "M86 27 V103 M202 27 V103", class: "timing-event" }),
-    svgNode("path", { d: inside ? "M34 91 H86 L125 39 H163 L202 91 H268" : "M34 91 H47 L86 39 H202 L241 91 H268", class: "timing-curve" }),
-    svgNode("path", { d: inside ? "M86 91 L125 39 M163 39 L202 91" : "M47 91 L86 39 M202 39 L241 91", class: "timing-adjustable" }),
-    svgNode("text", { x: 86, y: 17, "text-anchor": "middle" }, copy.sunrise),
-    svgNode("text", { x: 202, y: 17, "text-anchor": "middle" }, copy.sunset),
-    svgNode("text", { x: 28, y: 43, "text-anchor": "end", class: "timing-bound" }, copy.maximum),
-    svgNode("text", { x: 28, y: 95, "text-anchor": "end", class: "timing-bound" }, copy.minimum),
+    title,
+    svgNode("rect", { x: 150, y: 8, width: 300, height: 160, class: "timing-day" }),
+    svgNode("path", { d: "M0 8 H600 M0 168 H600", class: "timing-grid" }),
+    svgNode("path", { d: "M150 0 V176 M450 0 V176", class: "timing-event" }),
+    path,
   );
-  figure.append(svg, element("figcaption", copy.caption));
-  return figure;
+  area.append(labels, svg);
+  plot.append(bounds, area);
+  const status = element("p", undefined, "timing-status");
+  status.setAttribute("role", "status");
+  const summary = element("div", undefined, "timing-summary");
+  const rise = element("span"), fall = element("span"), duration = element("span"), temperature = element("span");
+  summary.append(rise, fall, duration, temperature);
+  figure.append(heading, plot, status, summary, element("figcaption", copy.caption));
+  return { figure, update(values) {
+    const mode = values.brightness_mode;
+    const light = values.brightness_mode_time_light_minutes;
+    const dark = values.brightness_mode_time_dark_minutes;
+    const points = brightnessTimingPoints(mode, light, dark);
+    const shared = mode !== "default" && values.apply_temperature_curve === true;
+    legend.textContent = `${copy.modes[mode] || ""} · ${shared ? copy.shared : copy.brightness}`;
+    plot.hidden = summary.hidden = !points;
+    status.hidden = Boolean(points);
+    status.textContent = points ? "" : copy.invalid;
+    if (!points) { path.removeAttribute("d"); return; }
+    path.setAttribute("d", points.map(([minute, value], index) => `${index ? "L" : "M"}${minute / 1440 * 600} ${168 - value * 160}`).join(" "));
+    // Updating only the figure retains the edited input, focus and scroll.
+    const format = (template) => template.replaceAll("{light}", String(light)).replaceAll("{dark}", String(dark)).replaceAll("{total}", String(Math.round((light + dark) * 1e6) / 1e6));
+    rise.hidden = fall.hidden = mode === "default" || light + dark === 0;
+    rise.textContent = format(copy.rise);
+    fall.textContent = format(copy.fall);
+    duration.textContent = mode === "default" ? copy.natural : light + dark === 0 ? copy.step : format(copy[mode]);
+    temperature.hidden = mode === "default";
+    temperature.textContent = shared ? copy.synchronized : copy.independent;
+    const description = [legend.textContent, ...(rise.hidden ? [] : [rise.textContent, fall.textContent]), duration.textContent,
+      ...(temperature.hidden ? [] : [temperature.textContent]), copy.caption].join(" ");
+    title.textContent = description;
+    svg.setAttribute("aria-label", description);
+  } };
 }
 
-function generalSettings(fields, renderField, titles) {
+function generalSettings(fields, renderField, titles, timingDiagram) {
   const remaining = new Map(fields.map((field) => [field.name, field]));
   const nodes = [];
   if (remaining.has("lights")) {
@@ -644,18 +740,40 @@ function generalSettings(fields, renderField, titles) {
   for (const group of [...GENERAL_GROUPS, { id: "other", rows: fields.map((field) => [field.name]) }]) {
     const section = element("fieldset", undefined, "settings-group");
     section.append(element("legend", titles[group.id]));
+    let timingRow, modeSelector, activeMode;
+    const updateTimingVisibility = () => {
+      if (!timingRow || !modeSelector) return;
+      timingRow.hidden = modeSelector.value === "default";
+      for (const input of timingRow.querySelectorAll("input")) {
+        // Hidden Natural windows are retained in the draft, but cannot block
+        // native validation of a legacy value outside the new panel bounds.
+        input.dataset.timingInactive = String(timingRow.hidden);
+        input.disabled = timingRow.hidden;
+      }
+    };
     for (const names of group.rows) {
       const available = names.filter((name) => remaining.has(name));
       if (!available.length) continue;
       const row = element("div", undefined, available.length > 1 ? "settings-row paired" : "settings-row");
-      if (available.length === 2 && available[0] === "brightness_mode") {
+      if (available[0] === "brightness_mode") {
         // Keep the selector and explanation full width. Only Linear and
         // Sigmoid offer a shared temperature curve; Natural keeps its own
         // solar color behavior. Unmounted fields remain in readValues' draft.
         row.className = "settings-row";
-        const choice = renderField(remaining.get("brightness_mode"));
+        const choice = renderField(remaining.get("brightness_mode"), (input) => {
+          // Do not conceal an invalid edit when switching to Natural. Keep
+          // the editable control visible and let native validation explain it.
+          if (input.value === "default" && timingRow
+            && ![...timingRow.querySelectorAll("input")].every((control) => control.reportValidity())) {
+            input.value = activeMode;
+            return false;
+          }
+          return true;
+        });
         const temperatureField = remaining.get("apply_temperature_curve");
         const selector = choice.querySelector("select");
+        modeSelector = selector;
+        activeMode = selector.value;
         let temperatureControl;
         row.append(choice);
         const update = () => {
@@ -663,8 +781,10 @@ function generalSettings(fields, renderField, titles) {
           // Rebuilding from that draft preserves it across mode changes.
           // Keep the selector mounted so keyboard focus does not move.
           if (temperatureControl) row.removeChild(temperatureControl);
-          temperatureControl = ["linear", "tanh"].includes(selector.value) ? renderField(temperatureField) : null;
+          temperatureControl = temperatureField && ["linear", "tanh"].includes(selector.value) ? renderField(temperatureField) : null;
           if (temperatureControl) row.append(temperatureControl);
+          activeMode = selector.value;
+          updateTimingVisibility();
         };
         selector.addEventListener("input", update);
         update();
@@ -709,6 +829,11 @@ function generalSettings(fields, renderField, titles) {
         remaining.delete(name);
       }
       section.append(row);
+      if (timingDiagram && names[0] === "brightness_mode_time_light_minutes") {
+        timingRow = row;
+        section.append(timingDiagram);
+        updateTimingVisibility();
+      }
     }
     if (section.children.length > 1) nodes.push(section);
   }
@@ -1190,21 +1315,24 @@ export class CircadianCalibrationPanel extends HTMLElement {
       if (beforeChange && !beforeChange(input)) return;
       this.values = this.readValues(false);
       Object.assign(this.settings, this.values);
+      this.timingChart?.update(this.values);
       this.session.refresh();
     };
-    if (calibration && input.type === "number" && input.min !== "" && input.max !== ""
+    if ((calibration || timingPortion) && input.type === "number" && input.min !== "" && input.max !== ""
       && Number.isFinite(Number(input.min)) && Number.isFinite(Number(input.max))) {
       // The number remains the only submitted field. The slider is another
       // way to edit it, never a second source of settings or preview requests.
       const mixture = name === "cal_white_kelvin_neutral";
       const channel = name.match(/^cal_rgb_(?:neutral|warm)_([rgb])$/)?.[1] || (mixture ? "mixture" : "white");
-      wrapper.className += ` calibration-${channel}`;
+      wrapper.className += timingPortion ? " timing-control" : ` calibration-${channel}`;
       wrapper.setAttribute("role", "group");
       wrapper.setAttribute("aria-labelledby", label.id);
       input.setAttribute("aria-labelledby", label.id);
-      const dot = element("span", undefined, "channel-dot");
-      dot.setAttribute("aria-hidden", "true");
-      label.prepend(dot);
+      if (!timingPortion) {
+        const dot = element("span", undefined, "channel-dot");
+        dot.setAttribute("aria-hidden", "true");
+        label.prepend(dot);
+      }
       const controls = element("div", undefined, "calibration-controls");
       const rail = element("div", undefined, "calibration-rail");
       const slider = element("input");
@@ -1217,14 +1345,15 @@ export class CircadianCalibrationPanel extends HTMLElement {
       const endpoints = element("div", undefined, "range-endpoints");
       endpoints.setAttribute("aria-hidden", "true");
       endpoints.append(
-        element("span", mixture ? `${this.copy.warmWhite} · ${input.min} K` : input.min),
-        element("span", mixture ? `${this.copy.coldWhite} · ${input.max} K` : input.max),
+        element("span", mixture ? `${this.copy.warmWhite} · ${input.min} K` : timingPortion ? `${input.min} min` : input.min),
+        element("span", mixture ? `${this.copy.coldWhite} · ${input.max} K` : timingPortion ? `${input.max} min` : input.max),
       );
       const syncSlider = () => {
         // Keep invalid/empty drafts visible for native validation; do not
         // replace them with the range control's automatic clamped value.
         if (input.value !== "" && input.validity.valid) slider.value = input.value;
         if (mixture) slider.setAttribute("aria-valuetext", `${slider.value} K`);
+        if (timingPortion) slider.setAttribute("aria-valuetext", `${slider.value} min`);
       };
       syncSlider();
       slider.addEventListener("input", () => { input.value = slider.value; syncSlider(); changed(); });
@@ -1237,14 +1366,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       wrapper.append(input);
     }
     const description = text.data_description?.[name];
-    if (timingPortion) {
-      // Keep the help and figure in one grid row, so paired labels and inputs
-      // remain aligned even when their descriptions wrap differently.
-      const help = element("div", undefined, "timing-help");
-      if (description) help.append(element("small", description));
-      help.append(brightnessTimingDiagram(timingPortion, this.copy.timingDiagram));
-      wrapper.append(help);
-    } else if (description) wrapper.append(element("small", description));
+    if (description) wrapper.append(element("small", description));
     return wrapper;
   }
 
@@ -1263,7 +1385,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     }
     // Freeze submitted inputs while the request is pending, so edits cannot
     // disappear when the next step replaces the form. Navigation stays usable.
-    for (const input of this.shadowRoot.querySelectorAll("input,select")) input.disabled = this.busy;
+    for (const input of this.shadowRoot.querySelectorAll("input,select")) input.disabled = this.busy || input.dataset.timingInactive === "true";
     for (const button of this.shadowRoot.querySelectorAll("button")) {
       button.disabled = this.busy && !String(button.className || "").split(" ").includes("mobile-menu");
     }
@@ -1273,6 +1395,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   render() {
     this.shadowRoot.replaceChildren();
+    this.timingChart = null;
     const style = element("style");
     style.textContent = `
       :host { display:block; height:100%; color:var(--primary-text-color,#202124); background:var(--primary-background-color,#fafafa); font:14px system-ui,sans-serif; }
@@ -1282,18 +1405,28 @@ export class CircadianCalibrationPanel extends HTMLElement {
       h1 { margin:0 0 12px; font-size:24px; } p { line-height:1.55; white-space:pre-line; } .muted,small { color:var(--secondary-text-color,#606770); }
       form { display:grid; gap:22px; margin-top:24px; min-width:0; } .field { display:grid; gap:8px; min-width:0; align-content:start; } .label { font-weight:600; } small { line-height:1.55; }
       .field small { white-space:pre-line; }
-      .timing-help { display:grid; gap:12px; min-width:0; }
-      .timing-diagram { min-width:0; margin:0; padding:10px 8px; border:1px solid var(--divider-color,#ddd); border-radius:8px; background:var(--card-background-color,#fff); }
-      .timing-diagram svg { display:block; width:100%; max-width:380px; height:auto; margin:0 auto; overflow:visible; }
-      .timing-diagram text { fill:var(--secondary-text-color,#606770); font:14px system-ui,sans-serif; }
-      .timing-diagram .timing-bound { font-size:12px; }
+      .timing-diagram { min-width:0; margin:20px 0 0; padding:16px; border:1px solid var(--divider-color,#ddd); border-radius:10px; background:var(--card-background-color,#fff); }
+      .timing-heading { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 16px; margin-bottom:18px; }
+      .timing-legend { display:flex; align-items:center; gap:7px; color:var(--secondary-text-color,#606770); font-size:12px; }
+      .timing-legend::before { content:""; width:20px; height:3px; border-radius:2px; background:var(--primary-color,#009f8a); }
+      .timing-plot { display:grid; grid-template-columns:36px minmax(0,1fr); gap:5px; }
+      .timing-bounds { display:flex; flex-direction:column; justify-content:space-between; padding:26px 0 0; color:var(--secondary-text-color,#606770); font-size:12px; line-height:16px; }
+      .timing-plot-area { min-width:0; }
+      .timing-event-labels { position:relative; height:26px; font-size:12px; line-height:18px; color:var(--secondary-text-color,#606770); }
+      .timing-event-labels span { position:absolute; left:25%; transform:translateX(-50%); }
+      .timing-event-labels span + span { left:75%; }
+      .timing-diagram svg { display:block; width:100%; height:176px; overflow:visible; }
       .timing-day { fill:var(--primary-color,#009f8a); opacity:.07; }
-      .timing-grid,.timing-event,.timing-curve,.timing-adjustable { fill:none; vector-effect:non-scaling-stroke; }
+      .timing-grid,.timing-event,.timing-curve { fill:none; vector-effect:non-scaling-stroke; }
       .timing-grid { stroke:var(--divider-color,#ddd); stroke-width:1; }
       .timing-event { stroke:var(--secondary-text-color,#606770); stroke-width:1; stroke-dasharray:3 4; }
-      .timing-curve { stroke:var(--secondary-text-color,#606770); stroke-width:2; stroke-linejoin:round; }
-      .timing-adjustable { stroke:var(--primary-color,#009f8a); stroke-width:3; stroke-linecap:round; }
+      .timing-curve { stroke:var(--primary-color,#009f8a); stroke-width:2.5; stroke-linejoin:round; stroke-linecap:round; }
+      .timing-summary { display:grid; gap:5px; margin:14px 0 10px; font-size:12px; line-height:1.5; }
+      .timing-status { font-size:13px; line-height:1.5; }
       .timing-diagram figcaption { color:var(--secondary-text-color,#606770); font-size:12px; line-height:1.45; }
+      .timing-control { --channel-track:linear-gradient(to right,var(--divider-color,#ddd),var(--primary-color,#009f8a)); }
+      .timing-control .calibration-controls { grid-template-columns:minmax(0,1fr) 82px; gap:12px; }
+      .settings-row[hidden],.timing-diagram [hidden] { display:none; }
       .settings-group { min-width:0; margin:0; padding:20px; border:1px solid var(--divider-color,#ddd); border-radius:12px; background:var(--secondary-background-color,#f1f4f7); background:color-mix(in srgb,var(--card-background-color,#fff) 94%,var(--primary-text-color,#202124)); }
       .settings-group legend { max-width:100%; padding:0 8px; font-size:16px; font-weight:650; }
       .settings-row { display:grid; gap:8px 24px; min-width:0; } .settings-row + .settings-row { margin-top:22px; }
@@ -1426,7 +1559,13 @@ export class CircadianCalibrationPanel extends HTMLElement {
       form.addEventListener("submit", (event) => { event.preventDefault(); this.navigate(); });
       const fields = step.data_schema || [];
       if (step.step_id === "white_channels") form.className = "settings-row paired";
-      if (step.step_id === "init") form.append(...generalSettings(fields, (field, beforeChange) => this.field(field, beforeChange), this.copy.groups));
+      if (step.step_id === "init") {
+        if (["brightness_mode", "brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"].every((name) => fields.some((field) => field.name === name))) {
+          this.timingChart = brightnessTimingDiagram(this.copy.timingDiagram);
+          this.timingChart.update(this.values);
+        }
+        form.append(...generalSettings(fields, (field, beforeChange) => this.field(field, beforeChange), this.copy.groups, this.timingChart?.figure));
+      }
       else for (const field of fields) form.append(this.field(field));
       article.append(form);
       const errors = Object.entries(step.errors || {}).map(([key, value]) => {
