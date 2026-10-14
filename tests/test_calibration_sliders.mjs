@@ -116,14 +116,17 @@ function panelHarness(t, step = "cal_neutral") {
   panel.readValues = CircadianCalibrationPanel.prototype.readValues.bind(panel);
   const form = new Node("form");
   panel.shadowRoot.append(form);
+  const addField = (schema, value) => {
+    panel.values[schema.name] = value;
+    const field = CircadianCalibrationPanel.prototype.field.call(panel, schema);
+    form.append(field);
+    const controls = field.querySelectorAll("input");
+    return { field, number: controls.find((input) => input.type === "number"), range: controls.find((input) => input.type === "range") };
+  };
   return {
-    panel, form, refreshes: () => refreshes,
+    panel, form, addField, refreshes: () => refreshes,
     add(name, value, min, max, step = 1) {
-      panel.values[name] = value;
-      const field = CircadianCalibrationPanel.prototype.field.call(panel, { name, selector: { number: { min, max, step } } });
-      form.append(field);
-      const controls = field.querySelectorAll("input");
-      return { field, number: controls.find((input) => input.type === "number"), range: controls.find((input) => input.type === "range") };
+      return addField({ name, selector: { number: { min, max, step } } }, value);
     },
   };
 }
@@ -183,8 +186,13 @@ test("cleared and out-of-range numbers remain invalid and can be repaired using 
 
 test("white mixture exposes exact warm and cold endpoints and editable intermediate kelvin", (t) => {
   const harness = panelHarness(t);
-  const { number, range } = harness.add("cal_white_kelvin_neutral", 4123, 2873, 6471);
+  const { field, number, range } = harness.add("cal_white_kelvin_neutral", 4123, 2873, 6471);
   assert.ok(range);
+  const annotation = field.querySelector(".field-range");
+  assert.equal(annotation.textContent, "2873–6471");
+  assert.equal(number.getAttribute("aria-describedby"), annotation.id);
+  assert.equal(range.getAttribute("aria-describedby"), annotation.id);
+  assert.deepEqual(field.querySelector(".range-endpoints").children.map((node) => node.textContent), ["Warm · 2873 K", "Cold · 6471 K"]);
   assert.equal(Number(range.min), 2873);
   assert.equal(Number(range.max), 6471);
   assert.equal(Number(range.step), 1);
@@ -222,6 +230,100 @@ test("general settings keep their existing number controls", (t) => {
   assert.equal(number.value, "60");
 });
 
+test("numeric title annotations use actual selector or legacy bounds without inventing limits", (t) => {
+  const harness = panelHarness(t, "init");
+  const cases = [
+    [{ selector: { number: { min: 0, max: 6553 } } }, "0–6553"],
+    [{ selector: { number: { min: -720, max: 720 } } }, "-720–720"],
+    [{ selector: { number: { min: -8, max: 0 } } }, "-8–0"],
+    [{ selector: { number: { min: 0 } } }, "≥ 0"],
+    [{ selector: { number: { max: 0 } } }, "≤ 0"],
+    [{ type: "integer", valueMin: 0, valueMax: 31536000 }, "0–31536000"],
+    [{ type: "integer", valueMin: -60, valueMax: 0 }, "-60–0"],
+    [{ type: "float", valueMin: 0.125, valueMax: 2.75 }, "0.125–2.75"],
+    [{ type: "integer", valueMin: -10, valueMax: 50, selector: { number: { min: 0, max: 0 } } }, "0–0"],
+    [{ type: "integer", valueMin: -10, valueMax: 50, selector: { number: { min: null, max: null } } }, "-10–50"],
+    [{ selector: { number: {} } }, undefined],
+    [{ type: "integer" }, undefined],
+    [{ selector: { number: { min: null, max: null } } }, undefined],
+    [{ type: "float", valueMin: null, valueMax: null }, undefined],
+    [{ selector: { number: { min: "", max: "" } } }, undefined],
+    [{ selector: { number: { min: NaN, max: Infinity } } }, undefined],
+    [{ selector: { number: { min: -Infinity, max: 10 } } }, "≤ 10"],
+    [{ selector: { number: { min: 0, max: NaN } } }, "≥ 0"],
+  ];
+  for (const [index, [metadata, expected]] of cases.entries()) {
+    const name = `range_case_${index}`;
+    const { field, number, range } = harness.addField({ name, ...metadata }, 0);
+    const annotation = field.querySelector(".field-range");
+    assert.equal(annotation?.textContent, expected, `metadata case ${index}`);
+    assert.equal(range, undefined, "annotations do not introduce sliders to ordinary numeric fields");
+    assert.deepEqual(field.children.map((node) => node.tag), ["span", "input"], "the range never occupies an additional field row");
+    assert.equal(field.querySelectorAll("[data-field]").length, 1);
+    if (expected === undefined) {
+      assert.equal(number.getAttribute("aria-describedby"), null);
+    } else {
+      assert.equal(annotation.id, `field-${name}-range`);
+      assert.ok(field.children[0].children.includes(annotation), "the annotation belongs inside its title");
+      assert.match(field.children[0].className, /\bfield-title-with-range\b/);
+      assert.equal(number.getAttribute("aria-describedby"), annotation.id);
+    }
+  }
+});
+
+test("numeric range and description share an accessible control without adding a subgrid row", (t) => {
+  const harness = panelHarness(t, "init");
+  const descriptions = { min_color_temp: "Lowest target color temperature.", max_color_temp: "Highest target color temperature.",
+    transition: "Transition duration.", sleep_transition: "Manual sleep transition duration." };
+  harness.panel.translations.step.init = { data_description: descriptions };
+  for (const [name, description] of Object.entries(descriptions)) {
+    const { field, number } = harness.add(name, name.includes("color_temp") ? 4000 : 0,
+      name.includes("color_temp") ? 1000 : 0, name.includes("color_temp") ? 10000 : 6553);
+    const annotation = field.querySelector(".field-range");
+    const help = field.querySelector("small");
+    assert.deepEqual(field.children.map((node) => node.tag), ["span", "input", "small"]);
+    assert.equal(help.textContent, description, "the explanation remains intact and does not repeat the range");
+    assert.ok(help.id);
+    assert.deepEqual(number.getAttribute("aria-describedby").split(/\s+/), [annotation.id, help.id]);
+    assert.equal(field.children[1], number);
+  }
+});
+
+test("unbounded signed solar offsets keep their original domain and receive no artificial annotation", (t) => {
+  const harness = panelHarness(t, "init");
+  for (const name of ["sunrise_offset_minutes", "sunset_offset_minutes"]) {
+    const { field, number, range } = harness.addField({ name, type: "integer" }, -60);
+    assert.equal(field.querySelector(".field-range"), undefined);
+    assert.equal(range, undefined);
+    assert.equal(number.min, undefined);
+    assert.equal(number.max, undefined);
+    for (const value of [-1441, 0, 1441]) {
+      number.value = value;
+      number.dispatchEvent(new Event("input"));
+      assert.equal(number.checkValidity(), true);
+      assert.equal(harness.panel.readValues()[name], value);
+    }
+  }
+});
+
+test("range annotations do not trigger preview, persistence, or duplicate draft updates", (t) => {
+  const harness = panelHarness(t);
+  let solarUpdates = 0, chartUpdates = 0, submissions = 0;
+  harness.panel.solarContext = { update() { solarUpdates++; } };
+  harness.panel.timingChart = { update() { chartUpdates++; } };
+  harness.panel.flow.next = () => { submissions++; };
+  const { field, number, range } = harness.add("cal_rgb_neutral_r", 42, 0, 255);
+  assert.equal(field.querySelector(".field-range").textContent, "0–255");
+  assert.deepEqual([harness.refreshes(), solarUpdates, chartUpdates, submissions], [0, 0, 0, 0]);
+  assert.deepEqual(harness.panel.settings, {});
+  assert.deepEqual(harness.panel.readValues(), { cal_rgb_neutral_r: 42 });
+  range.value = "128";
+  range.dispatchEvent(new Event("input"));
+  assert.equal(number.value, "128");
+  assert.deepEqual(harness.panel.readValues(), { cal_rgb_neutral_r: 128 });
+  assert.deepEqual([harness.refreshes(), solarUpdates, chartUpdates, submissions], [1, 1, 1, 0]);
+});
+
 test("general brightness fields expose the canonical 1–100 range and keep invalid zero drafts editable", (t) => {
   const harness = panelHarness(t, "init");
   harness.panel.copy.brightnessRangeHint = "Rango: 1–100 %.";
@@ -230,17 +332,17 @@ test("general brightness fields expose the canonical 1–100 range and keep inva
   for (const name of ["min_brightness", "max_brightness", "sleep_brightness"]) {
     const { field, number } = harness.add(name, 50, 0, 100);
     assert.deepEqual([Number(number.min), Number(number.max), Number(number.step)], [1, 100, 1]);
+    const range = field.querySelector(".field-range");
+    assert.equal(range.textContent, "1–100");
+    assert.equal(field.children[0].children[0], range, "range stays inside the title line");
     const hint = field.querySelector(".brightness-range-help");
     if (name === "sleep_brightness") {
-      assert.equal(hint.textContent, `${harness.panel.translations.step.init.data_description[name]} Rango: 1–100 %.`);
-      assert.equal(number.getAttribute("aria-describedby"), hint.id);
+      assert.equal(hint.textContent, harness.panel.translations.step.init.data_description[name]);
+      assert.deepEqual(number.getAttribute("aria-describedby").split(/\s+/), [range.id, hint.id]);
       assert.deepEqual(field.children.map((node) => node.tag), ["span", "input", "small"]);
     } else {
       assert.equal(hint, undefined, "minimum and maximum brightness do not repeat their title in a description");
       assert.deepEqual(field.children.map((node) => node.tag), ["span", "input"], "compact brightness limits have only a title and control row");
-      const range = field.querySelector(".brightness-limit-range");
-      assert.equal(range.textContent, "1–100");
-      assert.equal(field.children[0].children[0], range, "range stays inside the title line");
       assert.equal(number.getAttribute("aria-describedby"), range.id);
       assert.match(field.className, /brightness-limit/);
     }

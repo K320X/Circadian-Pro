@@ -138,10 +138,10 @@
         "submit": "Next",
         "description": "Adjust RGB for your 4000K visual reference. RGBW lights add one white intensity control; RGB+CCT lights also add the warm/cold white mixture temperature. The Circadian Pro panel provides an immediate preview while editing.",
         "data": {
-          "cal_rgb_neutral_r": "Red intensity (0–255)",
-          "cal_rgb_neutral_g": "Green intensity (0–255)",
-          "cal_rgb_neutral_b": "Blue intensity (0–255)",
-          "cal_white_intensity_neutral": "White intensity (0–100%)",
+          "cal_rgb_neutral_r": "Red intensity",
+          "cal_rgb_neutral_g": "Green intensity",
+          "cal_rgb_neutral_b": "Blue intensity",
+          "cal_white_intensity_neutral": "White intensity (%)",
           "cal_white_kelvin_neutral": "White mixture temperature (K)"
         },
         "data_description": {
@@ -154,10 +154,10 @@
         "submit": "Finish",
         "description": "Adjust RGB for your 1000K visual reference. White intensity appears only when a selected light supports RGBW or RGB+CCT; keeping it low lets RGB create a warm/orange appearance. The Circadian Pro panel provides an immediate preview while editing.",
         "data": {
-          "cal_rgb_warm_r": "Red intensity (0–255)",
-          "cal_rgb_warm_g": "Green intensity (0–255)",
-          "cal_rgb_warm_b": "Blue intensity (0–255)",
-          "cal_white_intensity_warm": "White intensity (0–100%)"
+          "cal_rgb_warm_r": "Red intensity",
+          "cal_rgb_warm_g": "Green intensity",
+          "cal_rgb_warm_b": "Blue intensity",
+          "cal_white_intensity_warm": "White intensity (%)"
         },
         "data_description": {
           "cal_white_intensity_warm": "White intensity at the 1000K visual reference. In RGB+CCT, only warm white is used here; normally keep white low so RGB can produce the warm/orange appearance."

@@ -539,7 +539,6 @@ const COPY = {
     checkStep: "Comprobar estado",
     choose: "Selecciona un perfil", next: "Siguiente", back: "Atrás", finish: "Terminar",
     warmWhite: "Cálido", coldWhite: "Frío",
-    brightnessRangeHint: "Rango: 1–100 %.",
     timingDiagram: {
       sunrise: "Amanecer", sunset: "Atardecer", minimum: "Mín.", maximum: "Máx.",
       title: "Vista de la curva", brightness: "Brillo", temperature: "Temperatura de color",
@@ -601,7 +600,6 @@ const COPY = {
     checkStep: "Check status",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
     warmWhite: "Warm", coldWhite: "Cold",
-    brightnessRangeHint: "Range: 1–100%.",
     timingDiagram: {
       sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
       title: "Curve preview", brightness: "Brightness", temperature: "Color temperature",
@@ -1748,13 +1746,23 @@ export class CircadianCalibrationPanel extends HTMLElement {
       input.min = 1;
       input.max = 100;
       input.step = 1;
-      if (brightnessLimit) {
-        wrapper.className += " brightness-limit";
-        label.className += " brightness-limit-title";
-        const range = element("span", "1–100", "brightness-limit-range");
+      if (brightnessLimit) wrapper.className += " brightness-limit";
+    }
+    let rangeDescription;
+    if (input.type === "number") {
+      // Use the same schema bounds as the input, including dynamic WW/CW.
+      // An absent bound is not zero and must never invent a restriction.
+      const [minimum, maximum] = [input.min, input.max].map((bound) =>
+        bound != null && String(bound).trim() !== "" && Number.isFinite(Number(bound)) ? Number(bound) : null);
+      const rangeText = minimum !== null && maximum !== null ? `${minimum}–${maximum}`
+        : minimum !== null ? `≥ ${minimum}` : maximum !== null ? `≤ ${maximum}` : "";
+      if (rangeText) {
+        label.className += " field-title-with-range";
+        const range = element("span", rangeText, "field-range");
         range.id = `field-${name}-range`;
         label.append(range);
-        input.setAttribute("aria-describedby", range.id);
+        rangeDescription = range.id;
+        input.setAttribute("aria-describedby", rangeDescription);
       }
     }
     if (timingPortion) input.setAttribute("aria-labelledby", label.id);
@@ -1792,6 +1800,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       slider.step = input.step;
       slider.value = input.value;
       slider.setAttribute("aria-labelledby", label.id);
+      if (rangeDescription) slider.setAttribute("aria-describedby", rangeDescription);
       const endpoints = element("div", undefined, "range-endpoints");
       endpoints.setAttribute("aria-hidden", "true");
       endpoints.append(
@@ -1816,14 +1825,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       wrapper.append(input);
     }
     const description = text.data_description?.[name];
-    if (brightnessField && !brightnessLimit) {
-      // Paired fields share three subgrid rows: title, control, help. Keep the
-      // range in the same help element so it cannot create an overlapping row.
-      const help = element("small", [description, this.copy.brightnessRangeHint || "1–100 %"].filter(Boolean).join(" "), "brightness-range-help");
-      help.id = `field-${name}-help`;
-      input.setAttribute("aria-describedby", help.id);
-      wrapper.append(help);
-    } else if (description && name === "brightness_mode") {
+    if (description && name === "brightness_mode") {
       const help = element("small", undefined, "mode-description");
       const modeNames = Object.values(this.translations.selector?.brightness_mode?.options || this.copy.timingDiagram?.modes || {});
       for (const line of description.split("\n")) {
@@ -1835,7 +1837,14 @@ export class CircadianCalibrationPanel extends HTMLElement {
         help.append(paragraph);
       }
       wrapper.append(help);
-    } else if (description && !brightnessLimit) wrapper.append(element("small", description));
+    } else if (description && !brightnessLimit) {
+      const help = element("small", description, brightnessField ? "brightness-range-help" : undefined);
+      if (input.type === "number") {
+        help.id = `field-${name}-help`;
+        input.setAttribute("aria-describedby", [rangeDescription, help.id].filter(Boolean).join(" "));
+      }
+      wrapper.append(help);
+    }
     return wrapper;
   }
 
@@ -1915,8 +1924,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .settings-row.paired { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .settings-row.paired > .field { grid-template-rows:subgrid; grid-row:span 3; }
       .settings-row.paired > .brightness-limit { grid-row:span 2; }
-      .brightness-limit-title { display:flex; justify-content:flex-start; align-items:baseline; gap:8px; }
-      .brightness-limit-range { flex-shrink:0; font-weight:400; color:var(--secondary-text-color,#606770); font-variant-numeric:tabular-nums; }
+      .field-title-with-range { display:block; }
+      .field-range { display:inline-block; margin-inline-start:8px; white-space:nowrap; font-weight:400; color:var(--secondary-text-color,#606770); font-variant-numeric:tabular-nums; }
       .settings-group .label,.settings-group small { overflow-wrap:anywhere; }
       .settings-group .checkbox-field { grid-template-columns:20px minmax(0,1fr); align-items:center; }
       .settings-group .checkbox-field .label { grid-column:2; grid-row:1; }

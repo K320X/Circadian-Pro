@@ -146,10 +146,10 @@
         "submit": "Siguiente",
         "description": "Ajusta RGB para tu referencia visual de 4000K. Las luces RGBW añaden un control de intensidad blanca; las RGB+CCT añaden también la temperatura de mezcla entre blanco cálido y frío. El panel Circadian Pro permite previsualizar los cambios al instante mientras editas.",
         "data": {
-          "cal_rgb_neutral_r": "Intensidad rojo (0–255)",
-          "cal_rgb_neutral_g": "Intensidad verde (0–255)",
-          "cal_rgb_neutral_b": "Intensidad azul (0–255)",
-          "cal_white_intensity_neutral": "Intensidad blanca (0–100%)",
+          "cal_rgb_neutral_r": "Intensidad rojo",
+          "cal_rgb_neutral_g": "Intensidad verde",
+          "cal_rgb_neutral_b": "Intensidad azul",
+          "cal_white_intensity_neutral": "Intensidad blanca (%)",
           "cal_white_kelvin_neutral": "Temperatura de la mezcla blanca (K)"
         },
         "data_description": {
@@ -162,10 +162,10 @@
         "submit": "Terminar",
         "description": "Ajusta RGB para tu referencia visual de 1000K. La intensidad blanca aparece solo si alguna luz seleccionada admite RGBW o RGB+CCT; con poco blanco, RGB puede producir un tono cálido o naranja. El panel Circadian Pro permite previsualizar los cambios al instante mientras editas.",
         "data": {
-          "cal_rgb_warm_r": "Intensidad rojo (0–255)",
-          "cal_rgb_warm_g": "Intensidad verde (0–255)",
-          "cal_rgb_warm_b": "Intensidad azul (0–255)",
-          "cal_white_intensity_warm": "Intensidad blanca (0–100%)"
+          "cal_rgb_warm_r": "Intensidad rojo",
+          "cal_rgb_warm_g": "Intensidad verde",
+          "cal_rgb_warm_b": "Intensidad azul",
+          "cal_white_intensity_warm": "Intensidad blanca (%)"
         },
         "data_description": {
           "cal_white_intensity_warm": "Intensidad blanca en la referencia visual de 1000K. En RGB+CCT se usa aquí solo blanco cálido; normalmente conviene bajar el blanco para que RGB produzca el tono cálido o naranja."

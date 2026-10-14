@@ -24,13 +24,15 @@
     cal_rgb_neutral_r:255, cal_rgb_neutral_g:255, cal_rgb_neutral_b:255,
     cal_rgb_warm_r:255, cal_rgb_warm_g:56, cal_rgb_warm_b:0,
     cal_white_intensity_neutral:100, cal_white_intensity_warm:0,
-    sleep_rgb_color:[255,0,0],sleep_rgb_or_color_temp:'rgb_color',sleep_color_temp:1500,sleep_brightness:80,sleep_transition:90,
+    sleep_rgb_color:[255,0,0],sleep_rgb_or_color_temp:'rgb_color',sleep_color_temp:1500,sleep_brightness:80,
     sleep_activation_mode:'schedule',sleep_schedule_start:'21:00:00',sleep_schedule_end:'06:00:00',sunrise_time:'None',
+    sunrise_offset_minutes:0,sunset_offset_minutes:0,adapt_delay:0,autoreset_control_seconds:0,send_split_delay:0,
   };
   const steps = ['init','white_channels','cal_neutral','cal_warm'];
   const names = [
-    ['lights','interval','transition','min_color_temp','max_color_temp','min_brightness','max_brightness','brightness_mode','apply_temperature_curve','brightness_mode_time_light_minutes','brightness_mode_time_dark_minutes',
-      'sleep_activation_mode','sleep_schedule_start','sleep_schedule_end','sleep_brightness','sleep_transition','sleep_rgb_or_color_temp','sleep_color_temp','sleep_rgb_color','sunrise_time'],
+    ['lights','interval','transition','initial_transition','min_color_temp','max_color_temp','min_brightness','max_brightness','brightness_mode','apply_temperature_curve','brightness_mode_time_light_minutes','brightness_mode_time_dark_minutes',
+      'sleep_activation_mode','sleep_schedule_start','sleep_schedule_end','sleep_brightness','sleep_rgb_or_color_temp','sleep_color_temp','sleep_rgb_color','sunrise_time',
+      'sunrise_offset_minutes','sunset_offset_minutes','adapt_delay','autoreset_control_seconds','send_split_delay'],
     ['white_w_kelvin','white_cw_kelvin'],
     ['cal_rgb_neutral_r','cal_rgb_neutral_g','cal_rgb_neutral_b','cal_white_intensity_neutral','cal_white_kelvin_neutral'],
     ['cal_rgb_warm_r','cal_rgb_warm_g','cal_rgb_warm_b','cal_white_intensity_warm'],
@@ -50,6 +52,33 @@
   };
   let sequence = 0;
   const commands = [];
+  // Match production's serialized validators as well as explicit selectors;
+  // an unspecified maximum must stay unspecified in this visual fixture.
+  const numericFields = {
+    interval:{type:'integer',valueMin:0},
+    transition:{type:'float',valueMin:0,valueMax:6553},
+    initial_transition:{type:'float',valueMin:0,valueMax:6553},
+    adapt_delay:{type:'float',valueMin:0},
+    autoreset_control_seconds:{type:'integer',valueMin:0,valueMax:31536000},
+    send_split_delay:{type:'integer',valueMin:0,valueMax:10000},
+    min_brightness:{type:'integer',valueMin:1,valueMax:100},
+    max_brightness:{type:'integer',valueMin:1,valueMax:100},
+    sleep_brightness:{type:'integer',valueMin:1,valueMax:100},
+    min_color_temp:{type:'integer',valueMin:1000,valueMax:10000},
+    max_color_temp:{type:'integer',valueMin:1000,valueMax:10000},
+    sleep_color_temp:{type:'integer',valueMin:1000,valueMax:10000},
+  };
+  const numericSchema = (name, defaults) => {
+    if (numericFields[name]) return numericFields[name];
+    const number = (limits) => ({selector:{number:{mode:'box',step:1,...limits}}});
+    if (['sunrise_offset_minutes','sunset_offset_minutes'].includes(name)) return number({});
+    if (name.startsWith('brightness_mode_time_')) return number({min:0,max:240});
+    if (['white_w_kelvin','white_cw_kelvin'].includes(name)) return number({min:1000,max:10000,step:50});
+    if (name.startsWith('cal_rgb_')) return number({min:0,max:255,mode:'slider'});
+    if (name.startsWith('cal_white_intensity_')) return number({min:0,max:100,mode:'slider'});
+    if (name === 'cal_white_kelvin_neutral') return number({min:defaults.white_w_kelvin,max:defaults.white_cw_kelvin});
+    throw Error(`Faltan los metadatos de prueba del campo ${name}.`);
+  };
   const form = (id, index, errors = {}, defaults = original) => ({
     flow_id:id, type:'form', step_id:steps[index], last_step:index === 3, errors,
     data_schema:names[index].map((name) => ({ name, default:defaults[name],
@@ -60,11 +89,8 @@
         : name === 'sleep_rgb_or_color_temp' ? {selector:{select:{options:['rgb_color','color_temp'],translation_key:'sleep_rgb_or_color_temp'}}}
         : name.startsWith('sleep_schedule_') ? {selector:{time:{}}}
         : name === 'apply_temperature_curve' ? {selector:{boolean:{}}}
-        : name.startsWith('brightness_mode_time_') ? {selector:{number:{min:0,max:240,step:1}}}
-        : ['min_brightness','max_brightness','sleep_brightness'].includes(name) ? {selector:{number:{min:1,max:100,step:1}}}
         : name === 'sunrise_time' ? {type:'string'}
-        : {selector:{number:{min:name === 'cal_white_kelvin_neutral' ? defaults.white_w_kelvin : 0,
-          max:name === 'cal_white_kelvin_neutral' ? defaults.white_cw_kelvin : name.startsWith('cal_rgb') ? 255 : name.startsWith('cal_white_intensity') ? 100 : 10000,step:1}}}),
+        : numericSchema(name, defaults)),
     })),
   });
   const panel = document.querySelector('circadian-pro-calibration');
