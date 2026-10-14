@@ -14,3 +14,13 @@ Completed updates should be reflected in GitHub as part of the normal project wo
 Keep private backups, Home Assistant credentials, local installation records and live configuration out of Git. Do not rewrite existing release tags or replace an older version's ZIP with changed runtime code.
 
 For rollback, restore the preserved component and restart Home Assistant Core. Use the native backup if configuration also requires recovery; do not overwrite `.storage` files while Home Assistant is running.
+
+## Deployment retention
+
+Keep the active verified version and exactly two distinct previous verified versions for local/Home Assistant recovery. Count successful installed versions, not upload attempts or candidate builds. Before pruning, verify the retained packages/components, their versions and hashes, and the matching configuration/state snapshots. Never remove the active component directory.
+
+Create the normal pre-update backup first. Only rotate recovery versions after the new installation passes the checks above. If installation fails or rollback occurs, keep the last known good version and its recovery data; do not prune during failure recovery.
+
+After successful verification, remove older Circadian Pro component backups, uploaded ZIPs, staging folders and duplicate candidate copies. Retain one native backup for each of the two recovery points when available. Delete only identified Circadian Pro deployment backups; leave unrelated Home Assistant backups and its general backup schedule unchanged. Apply the same three-version limit to local installation packages while retaining small verification/publication records.
+
+Inventory exact paths and native-backup IDs before deletion. Keep operations confined to the verified deployment directories; do not use broad name matching as the deletion target. Record retained and removed versions privately. Published GitHub releases, tags and Git history are not deployment clutter and remain immutable.

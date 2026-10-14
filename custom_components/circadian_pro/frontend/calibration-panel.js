@@ -1915,7 +1915,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       .settings-row.paired { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .settings-row.paired > .field { grid-template-rows:subgrid; grid-row:span 3; }
       .settings-row.paired > .brightness-limit { grid-row:span 2; }
-      .brightness-limit-title { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+      .brightness-limit-title { display:flex; justify-content:flex-start; align-items:baseline; gap:8px; }
       .brightness-limit-range { flex-shrink:0; font-weight:400; color:var(--secondary-text-color,#606770); font-variant-numeric:tabular-nums; }
       .settings-group .label,.settings-group small { overflow-wrap:anywhere; }
       .settings-group .checkbox-field { grid-template-columns:20px minmax(0,1fr); align-items:center; }
