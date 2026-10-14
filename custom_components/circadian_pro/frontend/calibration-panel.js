@@ -551,7 +551,7 @@ const COPY = {
       linear: "Cada transición dura {total} min.",
       tanh: "Cada tramo principal (5–95 %) dura {total} min. La curva se prolonga suavemente a ambos lados.",
       step: "Con ambos tiempos a 0, el objetivo cambia al amanecer y al atardecer. Se conserva la transición configurada para las luces.",
-      invalid: "Introduce dos tiempos válidos entre 0 y 240 minutos para ver la curva.",
+      invalid: "Introduce dos tiempos enteros entre 0 y 240 minutos para ver la curva.",
     },
     groups: { adaptation: "Ritmo de adaptación", limits: "Brillo y temperatura", night: "Modo noche",
       solar: "Amanecer y atardecer", manual: "Cambios manuales", compatibility: "Compatibilidad y envío", other: "Otros ajustes" },
@@ -601,7 +601,7 @@ const COPY = {
       linear: "Each transition lasts {total} min.",
       tanh: "Each main portion (5–95%) lasts {total} min. The curve continues gently beyond both ends.",
       step: "With both times at 0, the target changes at sunrise and sunset. The configured light transition still applies.",
-      invalid: "Enter two valid times between 0 and 240 minutes to see the curve.",
+      invalid: "Enter two whole-minute times between 0 and 240 to see the curve.",
     },
     groups: { adaptation: "Adaptation timing", limits: "Brightness and temperature", night: "Sleep mode",
       solar: "Sunrise and sunset", manual: "Manual changes", compatibility: "Compatibility and commands", other: "Other settings" },
@@ -642,7 +642,7 @@ export function brightnessTimingValue(minute, mode, light, dark) {
 
 export function brightnessTimingPoints(mode, light, dark) {
   if (!["default", "linear", "tanh"].includes(mode)) return null;
-  if (mode !== "default" && [light, dark].some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 240)) return null;
+  if (mode !== "default" && [light, dark].some((value) => !Number.isInteger(value) || value < 0 || value > 240)) return null;
   if (mode !== "default" && light + dark === 0) {
     // Repeated x coordinates draw true vertical target changes, without a
     // sampling-dependent diagonal across a short nonzero interval.
@@ -656,7 +656,7 @@ export function brightnessTimingPoints(mode, light, dark) {
       const midpoint = (start + end) / 2;
       for (const minute of [start, midpoint, end]) times.add(minute);
       if (mode === "tanh") {
-        // Resolve even sub-minute windows, preserving their 5%, 50%, 95%
+        // Resolve even one-minute windows, preserving their 5%, 50%, 95%
         // reference points and asymptotic tails rather than faking an S path.
         for (let index = -64; index <= 64; index++) {
           const minute = midpoint + total * index / 32;
@@ -716,7 +716,7 @@ function brightnessTimingDiagram(copy) {
     if (!points) { path.removeAttribute("d"); return; }
     path.setAttribute("d", points.map(([minute, value], index) => `${index ? "L" : "M"}${minute / 1440 * 600} ${168 - value * 160}`).join(" "));
     // Updating only the figure retains the edited input, focus and scroll.
-    const format = (template) => template.replaceAll("{light}", String(light)).replaceAll("{dark}", String(dark)).replaceAll("{total}", String(Math.round((light + dark) * 1e6) / 1e6));
+    const format = (template) => template.replaceAll("{light}", String(light)).replaceAll("{dark}", String(dark)).replaceAll("{total}", String(light + dark));
     rise.hidden = fall.hidden = mode === "default" || light + dark === 0;
     rise.textContent = format(copy.rise);
     fall.textContent = format(copy.fall);

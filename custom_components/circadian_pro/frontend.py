@@ -69,7 +69,7 @@ def _validated_draft(entry: Any, draft: dict[str, Any]) -> dict[str, Any]:
 
     merged = _serializable_settings(validate_entry(entry))
     ignored_legacy = _LEGACY_CALIBRATION_OPTIONS.intersection(merged)
-    merged.update(options_from_form(deepcopy(draft)))
+    merged.update(options_from_form(deepcopy(draft), merged))
     merged.pop("preview_light", None)
     # Old profiles retain these inactive options for compatibility. They must
     # not make a temporary preview fail the current strict schema; newly

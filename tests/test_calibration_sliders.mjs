@@ -211,27 +211,48 @@ test("timing controls share one figure rather than embedding figures inside fiel
   }
 });
 
-test("timing sliders preserve fractional typed values and reject invalid drafts without clamping", (t) => {
+test("timing sliders use whole minutes and retain invalid fractional drafts for correction", (t) => {
   const harness = panelHarness(t, "init");
-  const { field, number, range } = harness.add("brightness_mode_time_dark_minutes", 160, 0, 240, "any");
+  const { field, number, range } = harness.add("brightness_mode_time_dark_minutes", 160, 0, 240, 1);
   assert.ok(range);
+  assert.equal(Number(range.step), 1);
+  assert.equal(Number(number.step), 1);
   assert.equal(range.getAttribute("aria-labelledby"), number.getAttribute("aria-labelledby"));
   assert.equal(field.querySelectorAll("[data-field]").length, 1);
-  number.value = "200.125";
+  number.value = "200";
   number.dispatchEvent(new Event("input"));
-  assert.equal(range.value, "200.125");
-  assert.equal(range.getAttribute("aria-valuetext"), "200.125 min");
-  for (const value of ["", "-1", "240.5"]) {
+  assert.equal(range.value, "200");
+  assert.equal(range.getAttribute("aria-valuetext"), "200 min");
+  for (const value of ["", "-1", "200.125", "240.5"]) {
     number.value = value;
     number.dispatchEvent(new Event("input"));
     assert.equal(number.value, value);
-    assert.equal(range.value, "200.125");
+    assert.equal(range.value, "200");
     assert.throws(() => harness.panel.readValues(), /Invalid value/);
   }
   range.value = "240";
   range.dispatchEvent(new Event("input"));
   assert.equal(number.value, "240");
   assert.equal(harness.panel.readValues().brightness_mode_time_dark_minutes, 240);
+});
+
+test("solar offset number fields accept signed whole minutes and retain fractional errors", (t) => {
+  const harness = panelHarness(t, "init");
+  for (const name of ["sunrise_offset_minutes", "sunset_offset_minutes"]) {
+    const { number, range } = harness.add(name, -60, -720, 720, 1);
+    assert.equal(range, undefined);
+    assert.equal(Number(number.step), 1);
+    number.value = "-61";
+    number.dispatchEvent(new Event("input"));
+    assert.equal(harness.panel.readValues()[name], -61);
+    number.value = "-61.5";
+    number.dispatchEvent(new Event("input"));
+    assert.equal(number.value, "-61.5");
+    assert.throws(() => harness.panel.readValues(), /Invalid value/);
+    number.value = "0";
+    number.dispatchEvent(new Event("input"));
+    assert.equal(harness.panel.readValues()[name], 0);
+  }
 });
 
 function generalSettingsHarness(t, fields) {
@@ -265,7 +286,7 @@ function brightnessSettingsHarness(t, mode = "default", checked = false, omitted
     { name: "brightness_mode", default: mode, selector: { select: { options: ["default", "linear", "tanh"] } } },
     { name: "apply_temperature_curve", default: checked, selector: { boolean: {} } },
     ...["light", "dark"].map((portion) => ({ name: `brightness_mode_time_${portion}_minutes`, default: 0,
-      selector: { number: { min: 0, max: 240, step: "any" } } })),
+      selector: { number: { min: 0, max: 240, step: 1 } } })),
   ].filter((field) => !omitted.includes(field.name)));
 }
 
@@ -307,7 +328,7 @@ test("one accessible chart updates in place from times, mode and temperature che
 test("invalid timing drafts hide the plot until corrected without changing the input", (t) => {
   const { panel, input, edit } = brightnessSettingsHarness(t, "linear");
   const figure = panel.shadowRoot.querySelector("figure");
-  for (const value of ["", "-1", "240.01"]) {
+  for (const value of ["", "-1", "100.5", "240.01"]) {
     edit("brightness_mode_time_dark_minutes", value);
     assert.equal(input("brightness_mode_time_dark_minutes").value, value);
     assert.equal(figure.querySelector(".timing-plot").hidden, true);
@@ -322,7 +343,7 @@ test("invalid timing drafts hide the plot until corrected without changing the i
 test("Natural hides timing controls and retains their draft when returning to a timed mode", (t) => {
   const { panel, input, edit } = brightnessSettingsHarness(t, "linear", true);
   edit("brightness_mode_time_light_minutes", "200");
-  edit("brightness_mode_time_dark_minutes", "166.25");
+  edit("brightness_mode_time_dark_minutes", "166");
   const timeInput = input("brightness_mode_time_light_minutes");
   const timingRow = panel.shadowRoot.querySelectorAll(".settings-row").find((row) => row.descendants().includes(timeInput));
   edit("brightness_mode", "default");
@@ -330,7 +351,7 @@ test("Natural hides timing controls and retains their draft when returning to a 
   assert.ok(timingRow.querySelectorAll("input").every((control) => control.disabled));
   assert.equal(input("apply_temperature_curve"), undefined);
   assert.equal(panel.readValues().brightness_mode_time_light_minutes, 200);
-  assert.equal(panel.readValues().brightness_mode_time_dark_minutes, 166.25);
+  assert.equal(panel.readValues().brightness_mode_time_dark_minutes, 166);
   assert.match(panel.shadowRoot.querySelector("svg").getAttribute("aria-label"), /Temperature follows its own solar curve/);
   assert.equal(panel.shadowRoot.querySelector(".timing-plot").hidden, false);
   CircadianCalibrationPanel.prototype.updateControls.call(panel);
@@ -356,13 +377,13 @@ test("invalid visible timing edits cannot be concealed by switching to Natural",
 test("legacy Natural windows above the panel limit stay untouched until a timed mode is selected", (t) => {
   const { panel, input, edit } = generalSettingsHarness(t, [
     { name: "brightness_mode", default: "default", selector: { select: { options: ["default", "linear", "tanh"] } } },
-    ...["light", "dark"].map((portion) => ({ name: `brightness_mode_time_${portion}_minutes`, default: 300.25,
-      selector: { number: { min: 0, max: 240, step: "any" } } })),
+    ...["light", "dark"].map((portion) => ({ name: `brightness_mode_time_${portion}_minutes`, default: 300,
+      selector: { number: { min: 0, max: 240, step: 1 } } })),
   ]);
-  assert.equal(panel.readValues().brightness_mode_time_light_minutes, 300.25);
+  assert.equal(panel.readValues().brightness_mode_time_light_minutes, 300);
   assert.equal(panel.shadowRoot.querySelector(".timing-plot").hidden, false);
   edit("brightness_mode", "linear");
-  assert.equal(input("brightness_mode_time_light_minutes").value, "300.25");
+  assert.equal(input("brightness_mode_time_light_minutes").value, "300");
   assert.equal(input("brightness_mode_time_light_minutes").disabled, false);
   assert.equal(panel.shadowRoot.querySelector(".timing-plot").hidden, true);
   assert.throws(() => panel.readValues(), /Invalid value/);
@@ -373,7 +394,7 @@ test("chart formula matches linear and sigmoid endpoints, asymmetric timing and 
   for (const mode of ["linear", "tanh"]) {
     const lower = mode === "linear" ? 0 : 0.05;
     const upper = mode === "linear" ? 1 : 0.95;
-    for (const [light, dark] of [[200, 200], [1, 166], [0, 240], [240, 0], [0.01, 0.125]]) {
+    for (const [light, dark] of [[200, 200], [1, 166], [0, 240], [240, 0], [1, 0]]) {
       for (const [minute, expected] of [[360 - dark, lower], [360 + (light - dark) / 2, 0.5], [360 + light, upper],
         [1080 - light, upper], [1080 + (dark - light) / 2, 0.5], [1080 + dark, lower]]) {
         close(brightnessTimingValue(minute, mode, light, dark), expected);
@@ -400,7 +421,7 @@ test("chart draws zero windows as vertical steps and Natural as the runtime nigh
     assert.equal(brightnessTimingValue(minute, "default", 0, 0), value);
   }
   assert.deepEqual(brightnessTimingPoints("default", 0, 0), brightnessTimingPoints("default", 300, null), "Natural ignores hidden timing values");
-  for (const invalid of [null, "", -1, 240.01, NaN, Infinity, "200"]) assert.equal(brightnessTimingPoints("linear", 100, invalid), null);
+  for (const invalid of [null, "", -1, 0.5, 239.5, 240.01, NaN, Infinity, "200"]) assert.equal(brightnessTimingPoints("linear", 100, invalid), null);
 });
 
 test("shared temperature curve is opt-in and only offered for Linear and Sigmoid", async (t) => {
@@ -439,12 +460,15 @@ test("an enabled saved temperature curve is retained while opening Natural", (t)
   assert.equal(input("apply_temperature_curve").checked, true);
 });
 
-test("both durations accept zero and fractional minutes without hiding invalid drafts", (t) => {
+test("both durations accept zero and require whole minutes without hiding invalid drafts", (t) => {
   const { panel, input, edit } = brightnessSettingsHarness(t, "linear", true);
   assert.equal(panel.readValues().brightness_mode_time_light_minutes, 0);
   assert.equal(panel.readValues().brightness_mode_time_dark_minutes, 0);
   edit("brightness_mode_time_light_minutes", "0.5");
-  assert.equal(panel.readValues().brightness_mode_time_light_minutes, 0.5);
+  assert.equal(input("brightness_mode_time_light_minutes").value, "0.5");
+  assert.throws(() => panel.readValues(), /Invalid value/);
+  edit("brightness_mode_time_light_minutes", "1");
+  assert.equal(panel.readValues().brightness_mode_time_light_minutes, 1);
   edit("brightness_mode_time_dark_minutes", "-1");
   edit("brightness_mode", "tanh");
   assert.equal(input("brightness_mode_time_dark_minutes").value, "-1");

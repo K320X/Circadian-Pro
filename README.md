@@ -15,16 +15,16 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.16`
+**Current stable version:** `0.21.17`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.16 replaces the two static timing diagrams with one interactive curve and adds 0–240 minute sliders; see the [release notes](docs/release-0.21.16.md).
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.17 provides one interactive timing curve and 0–240 minute sliders, with whole-minute controls; see the [release notes](docs/release-0.21.17.md).
 
 ## Features
 
 - Automatic brightness and color-temperature adaptation.
 - Multiple independent Circadian Pro instances.
 - Natural, Linear and Sigmoid brightness modes, with optional shared color-temperature timing in Linear and Sigmoid.
-- Transition windows with synchronized sliders and editable numbers from 0 to 240 minutes, including fractional values. Both windows can be zero for a step in the target at sunrise and sunset. Existing values are preserved exactly; YAML and service durations retain their seconds-based format.
+- Transition windows with synchronized sliders and editable whole numbers from 0 to 240 minutes. Both windows can be zero for a step in the target at sunrise and sunset. Existing values are preserved exactly; YAML and service durations retain their seconds-based format.
 - One interactive curve showing how the selected mode and the two windows affect the transition around sunrise and sunset. Natural hides the two unused windows and shows its own curve.
 - Manual and automatic sleep mode.
 - Sunrise and sunset offsets in minutes in the settings UI. Existing values convert automatically: 3600 seconds appears as 60 minutes. YAML and service values keep their existing seconds-based format.
@@ -113,11 +113,13 @@ The panel includes general settings, physical white channels, and both calibrati
 
 Color temperature normally follows its own solar curve, reaching its maximum around solar noon. In Linear or Sigmoid mode, **Apply also to temperature** (`apply_temperature_curve`, default `false`) makes brightness and Kelvin follow the same progress between their respective configured limits. The checkbox is hidden in Natural mode, which ignores it. Existing profiles keep their previous behavior until you enable the option.
 
-The panel displays one interactive curve below the mode controls. It updates while dragging either time slider or editing its number, without saving settings or changing lights. Each active window accepts 0–240 minutes. Equal windows place the midpoint at sunrise and sunset; unequal windows move more of the transition before or after the events. Natural hides both duration controls as well as the temperature checkbox, retaining their draft values when you switch back.
+The panel displays one interactive curve below the mode controls. It updates while dragging either time slider or editing its number, without saving settings or changing lights. Each active window accepts 0–240 whole minutes. Equal windows place the midpoint at sunrise and sunset; unequal windows move more of the transition before or after the events. Natural hides both duration controls as well as the temperature checkbox, retaining their draft values when you switch back.
 
 The graph uses normalized minimum/maximum bounds and a reference day with 12 hours of daylight and 12 hours of night. It illustrates the actual curve formula and chosen durations, rather than the day's real astronomical schedule or measured light output. It remains useful when the profile's minimum and maximum brightness are equal. The caption identifies whether the curve applies to brightness alone or also to temperature.
 
 The update does not migrate or clamp saved durations. A legacy duration above 240 minutes remains unchanged and can still be retained while Natural ignores it; selecting Linear or Sigmoid in the panel exposes that value and requires reducing it to the supported UI range before saving. Canonical YAML and service durations retain their previous validation.
+
+Minute fields, including sunrise/sunset offsets, display whole numbers. Older seconds-based values are shown rounded to the nearest minute, without rewriting the stored value when that field is left unchanged. Choosing a different integer saves that many whole minutes. The chart uses the displayed minutes; a preserved legacy sub-minute remainder can cause a small difference in the actual timing.
 
 Shared progress is independent of the brightness range: temperature still changes when minimum and maximum brightness are equal. Color calibration and the separate brightness/color switches continue to apply. Explicit sleep mode always uses its own configured values. While shared temperature timing is enabled, it replaces the independent solar color curve, including `adapt_until_sleep` color blending before sleep mode activates.
 

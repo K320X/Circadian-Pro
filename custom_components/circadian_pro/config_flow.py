@@ -49,8 +49,21 @@ from .const import (  # pylint: disable=unused-import
 _LOGGER = logging.getLogger(__name__)
 
 
-def options_from_form(user_input: dict[str, Any]) -> dict[str, Any]:
-    """Convert UI-only minute values to stored seconds without altering a draft."""
+def minutes_for_form(name: str, seconds: Any) -> int:
+    """Show whole minutes while keeping an over-limit legacy window visible."""
+    if isinstance(seconds, timedelta):
+        seconds = seconds.total_seconds()
+    minutes = float(seconds) / 60
+    rounded = int(minutes + 0.5) if minutes >= 0 else int(minutes - 0.5)
+    if name.startswith("brightness_mode_time_") and minutes > 240:
+        return max(241, rounded)
+    return rounded
+
+
+def options_from_form(
+    user_input: dict[str, Any], current_options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Convert edited whole minutes, preserving unchanged legacy seconds."""
     options = dict(user_input)
     for name in (
         "sunrise_offset", "sunset_offset",
@@ -63,21 +76,22 @@ def options_from_form(user_input: dict[str, Any]) -> dict[str, Any]:
         try:
             if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
                 raise ValueError("A numeric duration is required")
+            if not isfinite(minutes) or minutes != int(minutes):
+                raise ValueError("A whole number of minutes is required")
             if name.startswith("brightness_mode_time_"):
                 # Natural does not use these windows and hides their controls.
                 # Preserve inactive legacy values rather than creating an
                 # invisible validation error; active controls stay at 0–240.
                 if minutes < 0 or (options.get("brightness_mode") != "default" and minutes > 240):
                     raise ValueError("Brightness windows must be between 0 and 240 minutes")
-            seconds = float(minutes) * 60
-            if not isfinite(seconds):
-                raise ValueError("A finite duration is required")
-            # Solar offsets retain whole-second rounding. Brightness windows
-            # also support fractional seconds; remove only conversion noise
-            # near an integer so legacy values survive reopening and saving.
-            nearest_second = round(seconds)
-            if name in ("sunrise_offset", "sunset_offset") or abs(seconds - nearest_second) < 1e-9:
-                seconds = nearest_second
+            seconds = int(minutes) * 60
+            # Compare with the server's original values, never client-supplied
+            # canonical fields. Opening, replaying or saving an untouched form
+            # must not round existing second-level settings in storage.
+            if current_options is not None and name in current_options:
+                original = current_options[name]
+                if minutes == minutes_for_form(name, original):
+                    seconds = original.total_seconds() if isinstance(original, timedelta) else original
             timedelta(seconds=seconds)  # Reject durations the runtime cannot use.
         except (ValueError, TypeError, OverflowError) as err:
             raise vol.Invalid("option_error") from err
@@ -280,7 +294,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                submitted_options = options_from_form(user_input)
+                submitted_options = options_from_form(user_input, data)
             except vol.Invalid:
                 errors["base"] = "option_error"
             else:
@@ -397,13 +411,10 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 if user_input is not None and form_name in user_input:
                     selected_default = user_input[form_name]
                 else:
-                    persisted = data.get(name, default)
-                    if isinstance(persisted, timedelta):
-                        persisted = persisted.total_seconds()
-                    selected_default = persisted / 60
+                    selected_default = minutes_for_form(name, data.get(name, default))
                 options_schema[vol.Optional(form_name, default=selected_default)] = (
                     selector.NumberSelector(selector.NumberSelectorConfig(
-                        mode=selector.NumberSelectorMode.BOX, step="any",
+                        mode=selector.NumberSelectorMode.BOX, step=1,
                         **({"min": 0, "max": 240} if is_brightness_window else {}),
                     ))
                 )

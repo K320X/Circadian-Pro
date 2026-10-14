@@ -112,9 +112,9 @@ def load_api_module():
     config_flow = ModuleType("calibration_api_tests_package.config_flow")
     config_flow.validate_entry = lambda entry: deepcopy(entry.options)
     flow_tree = ast.parse((COMPONENT / "config_flow.py").read_text(encoding="utf-8"))
-    converter = next(node for node in flow_tree.body if getattr(node, "name", None) == "options_from_form")
+    converters = [node for node in flow_tree.body if getattr(node, "name", None) in {"minutes_for_form", "options_from_form"}]
     converter_namespace = {"vol": SimpleNamespace(Invalid=Invalid), "timedelta": timedelta, "isfinite": isfinite}
-    converter_module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), converter], type_ignores=[])
+    converter_module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *converters], type_ignores=[])
     exec(compile(ast.fix_missing_locations(converter_module), "<real form unit conversion>", "exec"), converter_namespace)
     config_flow.options_from_form = converter_namespace["options_from_form"]
     calibration = ModuleType("calibration_api_tests_package.calibration")
@@ -312,10 +312,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.results[-1][1], {"active": True, "expires_in": 60})
 
     def test_preview_converts_minute_drafts_once_and_keeps_stored_seconds_unchanged(self):
-        self.entry.options.update(sunrise_offset=3600, sunset_offset=-3600)
+        self.entry.options.update(sunrise_offset=3600, sunset_offset=-61)
         original = deepcopy(self.entry.options)
         draft = {"sunrise_offset": 3600, "sunrise_offset_minutes": 20,
-                 "sunset_offset_minutes": -61 / 60}
+                 "sunset_offset_minutes": -1}
         original_draft = deepcopy(draft)
         for _ in range(2):
             self.invoke(self.api.websocket_preview, entry_id="loaded", settings=draft, kelvin=4000)
@@ -334,7 +334,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.calibration.calls[-1][1]["sunset_offset"], -61)
 
     def test_invalid_minute_offset_cannot_start_a_preview(self):
-        for value in (True, None, "60", float("inf"), float("nan"), 1e100):
+        for value in (True, None, "60", float("inf"), float("nan"), 1e100, 1.5, -1.5):
             with self.subTest(value=value):
                 self.invoke(self.api.websocket_preview, entry_id="loaded",
                             settings={"sunrise_offset_minutes": value}, kelvin=1000)
@@ -342,13 +342,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.calibration.calls, [])
 
     def test_preview_brightness_minute_drafts_roundtrip_without_mutating_stored_seconds(self):
-        self.entry.options.update(brightness_mode_time_light=1, brightness_mode_time_dark=10000)
-        original = deepcopy(self.entry.options)
-        for light, dark in ((60, 10000), (60, 60), (60.25, 10000.75), (1200, 1800), (0, 0), (1, 0.25), (14400, 14400)):
+        for light, dark, light_minutes, dark_minutes in (
+            (60, 10000, 1, 167), (60, 60, 1, 1), (60.25, 10000.75, 1, 167),
+            (1200, 1800, 20, 30), (0, 0, 0, 0), (1, 0.25, 0, 0), (14400, 14400, 240, 240),
+        ):
             with self.subTest(light=light, dark=dark):
-                draft = {"brightness_mode_time_light": 1, "brightness_mode_time_dark": 10000,
-                         "brightness_mode": "linear", "brightness_mode_time_light_minutes": light / 60,
-                         "brightness_mode_time_dark_minutes": dark / 60}
+                self.entry.options.update(brightness_mode_time_light=light, brightness_mode_time_dark=dark)
+                original = deepcopy(self.entry.options)
+                draft = {"brightness_mode_time_light": 333, "brightness_mode_time_dark": 444,
+                         "brightness_mode": "linear", "brightness_mode_time_light_minutes": light_minutes,
+                         "brightness_mode_time_dark_minutes": dark_minutes}
                 original_draft = deepcopy(draft)
                 for _ in range(2):
                     self.invoke(self.api.websocket_preview, entry_id="loaded", settings=draft, kelvin=4000)
@@ -358,14 +361,26 @@ class ApiTests(unittest.TestCase):
                     self.assertNotIn("brightness_mode_time_light_minutes", settings)
                     self.assertNotIn("brightness_mode_time_dark_minutes", self.const.schema_calls[-1])
                 self.assertEqual(draft, original_draft)
-        self.assertEqual(self.entry.options, original)
+                self.assertEqual(self.entry.options, original)
+        self.entry.options.update(brightness_mode_time_light=1, brightness_mode_time_dark=10000)
         self.invoke(self.api.websocket_preview, entry_id="loaded", settings={}, kelvin=1000)
         self.assertEqual(self.calibration.calls[-1][1]["brightness_mode_time_light"], 1)
         self.assertEqual(self.calibration.calls[-1][1]["brightness_mode_time_dark"], 10000)
 
+    def test_preview_edited_integer_minutes_change_only_the_edited_legacy_window(self):
+        self.entry.options.update(brightness_mode_time_light=1, brightness_mode_time_dark=10000)
+        original = deepcopy(self.entry.options)
+        draft = {"brightness_mode": "linear", "brightness_mode_time_light_minutes": 1,
+                 "brightness_mode_time_dark_minutes": 167}
+        self.invoke(self.api.websocket_preview, entry_id="loaded", settings=draft, kelvin=1000)
+        settings = self.calibration.calls[-1][1]
+        self.assertEqual(settings["brightness_mode_time_light"], 60)
+        self.assertEqual(settings["brightness_mode_time_dark"], 10000)
+        self.assertEqual(self.entry.options, original)
+
     def test_invalid_brightness_minute_draft_cannot_start_preview(self):
         for name in ("brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"):
-            for value in (True, None, "60", float("inf"), float("nan"), 1e100, -1, -0.001, 240.001, 240.5):
+            for value in (True, None, "60", float("inf"), float("nan"), 1e100, -1, -0.001, 240.001, 240.5, 0.5, 166.5):
                 with self.subTest(name=name, value=value):
                     self.invoke(self.api.websocket_preview, entry_id="loaded", settings={
                         "brightness_mode": "linear", "brightness_mode_time_light_minutes": 20,
@@ -388,7 +403,7 @@ class ApiTests(unittest.TestCase):
                                   brightness_mode_time_dark=18000.25)
         original = deepcopy(self.entry.options)
         draft = {"brightness_mode": "default", "brightness_mode_time_light_minutes": 300,
-                 "brightness_mode_time_dark_minutes": 18000.25 / 60}
+                 "brightness_mode_time_dark_minutes": 300}
         self.invoke(self.api.websocket_preview, entry_id="loaded", settings=draft, kelvin=1000)
         settings = self.calibration.calls[-1][1]
         self.assertEqual(settings["brightness_mode_time_light"], 18000)

@@ -131,7 +131,7 @@ def production_namespace():
     namespace["EntitySelector"] = lambda config: config
     namespace["EntitySelectorConfig"] = lambda **config: SimpleNamespace(**config)
     load_nodes(namespace, "const.py", {"box_int", "replace_none_str", "_duration_seconds", "_time_value", "validate_cross_options"})
-    load_nodes(namespace, "config_flow.py", {"options_from_form", "validate_entry", "validate_options"})
+    load_nodes(namespace, "config_flow.py", {"minutes_for_form", "options_from_form", "validate_entry", "validate_options"})
 
     tree = ast.parse((COMPONENT / "config_flow.py").read_text(encoding="utf-8"))
     handler = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "OptionsFlowHandler")
@@ -405,10 +405,10 @@ class CalibrationFlowTests(unittest.TestCase):
         self.assertNotIn("preview_light", result["data"])
 
     def test_final_save_keeps_solar_offsets_in_seconds_without_form_aliases(self):
-        flow = self.flow(mode="rgb", sunrise_offset=3600, sunset_offset=-3600)
+        flow = self.flow(mode="rgb", sunrise_offset=3600, sunset_offset=-61)
         original = deepcopy(flow.config_entry.options)
         draft = {"lights": ["light.strip"], "sunrise_offset_minutes": 20,
-                 "sunset_offset_minutes": -61 / 60}
+                 "sunset_offset_minutes": -1}
         self.assertEqual(immediate(flow.async_step_init(draft))["step_id"], "cal_neutral")
         immediate(flow.async_step_cal_neutral(self.neutral()))
         result = immediate(flow.async_step_cal_warm(self.warm()))
@@ -429,14 +429,17 @@ class CalibrationFlowTests(unittest.TestCase):
             result = immediate(flow.async_step_cal_warm(self.warm()))
         self.assertEqual(result["type"], "create_entry")
 
-    def test_final_save_converts_brightness_minutes_without_persisting_form_aliases(self):
-        for light, dark in ((60, 10000), (60, 60), (60.25, 10000.75), (1200, 1800), (0, 0), (1, 0.25), (14400, 14400)):
+    def test_final_save_preserves_legacy_seconds_without_persisting_form_aliases(self):
+        for light, dark, light_minutes, dark_minutes in (
+            (60, 10000, 1, 167), (60, 60, 1, 1), (60.25, 10000.75, 1, 167),
+            (1200, 1800, 20, 30), (0, 0, 0, 0), (1, 0.25, 0, 0), (14400, 14400, 240, 240),
+        ):
             with self.subTest(light=light, dark=dark):
-                flow = self.flow(mode="rgb", brightness_mode_time_light=1, brightness_mode_time_dark=10000)
+                flow = self.flow(mode="rgb", brightness_mode_time_light=light, brightness_mode_time_dark=dark)
                 original = deepcopy(flow.config_entry.options)
                 draft = {"lights": ["light.strip"], "brightness_mode": "linear",
-                         "brightness_mode_time_light_minutes": light / 60,
-                         "brightness_mode_time_dark_minutes": dark / 60}
+                         "brightness_mode_time_light_minutes": light_minutes,
+                         "brightness_mode_time_dark_minutes": dark_minutes}
                 self.assertEqual(immediate(flow.async_step_init(draft))["step_id"], "cal_neutral")
                 immediate(flow.async_step_cal_neutral(self.neutral()))
                 result = immediate(flow.async_step_cal_warm(self.warm()))
@@ -446,13 +449,26 @@ class CalibrationFlowTests(unittest.TestCase):
                 self.assertNotIn("brightness_mode_time_light_minutes", result["data"])
                 self.assertNotIn("brightness_mode_time_dark_minutes", result["data"])
                 self.assertEqual(flow.config_entry.options, original)
-                self.assertEqual(draft["brightness_mode_time_dark_minutes"], dark / 60)
+                self.assertEqual(draft["brightness_mode_time_dark_minutes"], dark_minutes)
+
+    def test_final_save_edited_integer_updates_only_the_changed_legacy_window(self):
+        flow = self.flow(mode="rgb", brightness_mode_time_light=1, brightness_mode_time_dark=10000)
+        original = deepcopy(flow.config_entry.options)
+        draft = {"lights": ["light.strip"], "brightness_mode": "linear",
+                 "brightness_mode_time_light_minutes": 1, "brightness_mode_time_dark_minutes": 167}
+        self.assertEqual(immediate(flow.async_step_init(draft))["step_id"], "cal_neutral")
+        immediate(flow.async_step_cal_neutral(self.neutral()))
+        result = immediate(flow.async_step_cal_warm(self.warm()))
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(result["data"]["brightness_mode_time_light"], 60)
+        self.assertEqual(result["data"]["brightness_mode_time_dark"], 10000)
+        self.assertEqual(flow.config_entry.options, original)
 
     def test_final_save_preserves_temperature_curve_choice_and_zero_windows(self):
         for brightness_mode in ("linear", "tanh", "default"):
             for enabled in (False, True):
                 with self.subTest(brightness_mode=brightness_mode, enabled=enabled):
-                    flow = self.flow(mode="rgb")
+                    flow = self.flow(mode="rgb", brightness_mode_time_light=60, brightness_mode_time_dark=60)
                     original = deepcopy(flow.config_entry.options)
                     draft = {"lights": ["light.strip"], "brightness_mode": brightness_mode,
                              "apply_temperature_curve": enabled,
@@ -475,7 +491,7 @@ class CalibrationFlowTests(unittest.TestCase):
         original = deepcopy(flow.config_entry.options)
         draft = {"lights": ["light.strip"], "brightness_mode": "default",
                  "brightness_mode_time_light_minutes": 300,
-                 "brightness_mode_time_dark_minutes": 18000.25 / 60}
+                 "brightness_mode_time_dark_minutes": 300}
         self.assertEqual(immediate(flow.async_step_init(draft))["step_id"], "cal_neutral")
         immediate(flow.async_step_cal_neutral(self.neutral()))
         result = immediate(flow.async_step_cal_warm(self.warm()))
