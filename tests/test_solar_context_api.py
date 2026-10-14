@@ -119,8 +119,8 @@ class SolarContextApiTests(unittest.TestCase):
             for days in range(-2, 3)
             for event, timestamp in self.sun.sun_events(datetime(2026, 10, 14).date() + timedelta(days=days))
         ], key=lambda item: item["timestamp"])
-        first = max(index for index, event in enumerate(expected) if event["timestamp"] <= result["day_start"] - 7200)
-        last = next(index for index, event in enumerate(expected) if event["timestamp"] > result["day_end"] + 7200)
+        first = max(index for index, event in enumerate(expected) if event["timestamp"] <= result["day_start"] - 14400)
+        last = next(index for index, event in enumerate(expected) if event["timestamp"] > result["day_end"] + 14400)
         self.assertEqual(result["events"], expected[first:last + 1])
         self.assertLess(expected[0]["timestamp"], result["day_start"])
         self.assertGreater(expected[-1]["timestamp"], result["day_end"])
@@ -302,6 +302,25 @@ class SolarContextApiTests(unittest.TestCase):
                     if result["day_start"] <= window["start"] < result["day_end"]]
         self.assertEqual(relevant, [{"start": datetime(2026, 10, 14, 13, 10, 30, tzinfo=UTC).timestamp(),
                                     "end": datetime(2026, 10, 14, 15, 20, 45, tzinfo=UTC).timestamp()}])
+
+    def test_curve_history_preserves_an_interrupted_night_entry_source_before_midnight(self):
+        result = self.solar(settings={"sunrise_time": "01:00", "sunset_time": "18:00",
+                                     "sleep_activation_mode": "schedule", "sleep_schedule_start": "21:00",
+                                     "sleep_schedule_end": "22:30"})
+        window = [value for value in result["sleep_windows"] if value["end"] < result["day_start"]][-1]
+        # A 6553-second entry at 21:00 is interrupted at 22:30. At midnight its
+        # exit still carries part of that original source, over two hours old.
+        self.assertLess(window["end"] - window["start"], 6553)
+        self.assertLess(result["day_start"] - window["end"], 6553)
+        self.assertGreater(result["day_start"] - window["start"], 7200)
+        before = [event for event in result["events"] if event["timestamp"] <= window["start"]][-1]
+        after = next(event for event in result["events"] if event["timestamp"] > window["start"])
+        self.assertEqual(before["event"], "sunset")
+        self.assertEqual(after["event"], "solar_midnight")
+        self.assertEqual(before["timestamp"], datetime(2026, 10, 13, 17, tzinfo=UTC).timestamp())
+        self.assertEqual(after["timestamp"], datetime(2026, 10, 13, 20, 30, tzinfo=UTC).timestamp())
+        self.assertLessEqual(result["events"][0]["timestamp"], result["day_start"] - 2 * 6553)
+        self.assertGreater(result["events"][-1]["timestamp"], result["day_end"] + 2 * 6553)
 
     def test_equal_schedule_endpoints_match_runtime_all_day_membership(self):
         result = self.solar(settings={"sleep_activation_mode": "schedule",

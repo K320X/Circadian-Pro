@@ -220,9 +220,10 @@ def _solar_context(
 
     timestamps = [timestamp for _event, timestamp in events]
     # A night transition can begin before the plotted day. Its initial normal
-    # target must use that earlier solar pair, not the first in-day value. Two
-    # hours cover HA's longest supported light transition (6553 seconds).
-    curve_start, curve_end = start - 2 * 3600, end + 2 * 3600
+    # target must use that earlier solar pair, not the first in-day value. Four
+    # hours cover two consecutive maximum HA light transitions (6553 seconds
+    # each), including an unfinished night entry interrupted by the exit.
+    curve_start, curve_end = start - 4 * 3600, end + 4 * 3600
     first = max(0, bisect_right(timestamps, curve_start) - 1)
     last = bisect_right(timestamps, curve_end) + 1
     events = events[first:last]

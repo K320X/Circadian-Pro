@@ -1075,6 +1075,21 @@ test("long carry-in fade starts from the real previous evening curve rather than
   assert.ok(Math.abs(points[0][1] - expected) < 1e-12);
 });
 
+test("an interrupted long entry and exit retain their original evening source through midnight", () => {
+  const context = nightContext([{ start: -10800, end: -5400 }, { start: 75600, end: 81000 }], {
+    sunrise: { timestamp: 3600, local_time: "01:00" }, sunset: { timestamp: 64800, local_time: "18:00" },
+    // The 4-hour context includes the sunset before the previous 21:00 entry.
+    events: [["sunset", -6], ["solar_midnight", -2.5], ["sunrise", 1], ["solar_noon", 9.5],
+      ["sunset", 18], ["solar_midnight", 21.5], ["sunrise", 25], ["solar_noon", 33.5]]
+      .map(([event, hour]) => ({ event, timestamp: hour * 3600 })),
+  });
+  const values = { ...NIGHT_VALUES, min_brightness: 1, max_brightness: 100, sleep_brightness: 1,
+    brightness_mode_time_dark_minutes: 240, transition: 6553, apply_temperature_curve: true };
+  const midnight = nightTimingPoints(values, context)[0];
+  assert.equal(midnight[0], 0);
+  assert.ok(Math.abs(midnight[1] - 0.6948407822956411) < 1e-12);
+});
+
 test("a short night interrupted before its fade finishes resumes from the current intermediate brightness", () => {
   const points = nightTimingPoints({ ...NIGHT_VALUES, transition: 120 }, nightContext([{ start: 36000, end: 36060 }]));
   const boundary = points.filter(([minute]) => minute === 601).at(-1);
