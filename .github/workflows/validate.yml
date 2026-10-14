@@ -1,0 +1,38 @@
+name: HACS and Home Assistant validation
+
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate HACS repository
+        uses: hacs/action@main
+        with:
+          category: integration
+          comment: false
+
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate Home Assistant integration
+        uses: home-assistant/actions/hassfest@master

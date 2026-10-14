@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.27`
+**Current stable version:** `0.21.28`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.27 makes the profile list more compact, with smaller configuration buttons, a clearer Profile heading and a divider below the final row; see the [release notes](docs/release-0.21.27.md). It retains the first-profile setup from the sidebar panel introduced in [0.21.26](docs/release-0.21.26.md).
+Version 0.21.28 prepares installation and updates through HACS, adds bundled Home Assistant brand icons and validates the integration with HACS and Hassfest; see the [release notes](docs/release-0.21.28.md). It retains the compact profile list and first-profile setup from the sidebar panel. The [full audit report](docs/auditoria-2026-10-13.md) records the earlier code review and its validation limits.
 
 ## Features
 
@@ -37,6 +37,23 @@ The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced iss
 - Home Assistant services for applying settings and managing manual control.
 
 ## Installation
+
+### HACS
+
+Requires Home Assistant **2026.10.0 or newer** and an installed, configured [HACS](https://www.hacs.xyz/docs/use/).
+
+1. Open **HACS → ⋮ → Custom repositories**.
+2. Add `https://github.com/K320X/Circadian-Pro` with type **Integration**.
+3. Open **Circadian Pro** in HACS and download the latest stable release.
+4. Restart Home Assistant.
+5. Open **Settings → Devices & services → Add integration**, search for **Circadian Pro** and select it once.
+6. Open **Circadian Pro** in the sidebar and choose **Create first profile**.
+
+The sidebar panel is added automatically for administrator users after that one-time integration setup. No YAML, dashboard card or manual sidebar link is needed. HACS downloading the files alone does not activate a new integration.
+
+HACS custom-repository installation works independently of inclusion in its default catalog. Until a catalog submission is accepted, add the repository by URL using the steps above. See [HACS's custom-repository instructions](https://www.hacs.xyz/docs/faq/custom_repositories/).
+
+**En español:** abre **HACS → ⋮ → Repositorios personalizados**, pega el enlace anterior y selecciona **Integración**. Descarga Circadian Pro y reinicia Home Assistant. Después, en **Ajustes → Dispositivos y servicios → Añadir integración**, selecciona Circadian Pro una vez. Su panel aparece en la barra lateral; crea y calibra los perfiles desde allí.
 
 ### Manual installation
 
@@ -76,6 +93,16 @@ Home Assistant still requires that one-time **Add integration** step to load a n
 The panel lists every loaded profile in its own row, with a settings button on the right and **New profile** centered below the table. Sort by recent modification (default), name A–Z or name Z–A. Profile changes refresh automatically. Recent ordering uses Home Assistant's stored configuration-entry dates, with creation date as a fallback; it does not track ordinary light-state changes.
 
 ## Updating
+
+### Installed through HACS
+
+Publishers release updates on GitHub; HACS checks for new releases and exposes available updates in Home Assistant. Open the Circadian Pro update in HACS/Home Assistant, review the release notes, back up your installation, install it and restart Home Assistant. Profiles and calibrations remain in Home Assistant's configuration.
+
+Circadian Pro does not download or install its own updates. HACS replaces the integration files; it does not create a history of version folders. Home Assistant backups are managed separately.
+
+For an existing manual installation, back up first, add the same repository in HACS and download the release. Do not remove the integration entries or profiles. HACS will manage the same `custom_components/circadian_pro` directory after installation.
+
+### Installed manually
 
 1. Download the ZIP from the new release.
 2. Replace the existing folder:
@@ -212,7 +239,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 node --test tests/*.mjs
 ```
 
-GitHub Actions runs the same checks on Python 3.12 and 3.14 for pushes and pull requests. The regression tests execute production logic with Home Assistant I/O doubles; they complement live validation and do not replace testing with real light integrations.
+GitHub Actions runs the same checks on Python 3.12 and 3.14 for pushes and pull requests. HACS and Hassfest workflows separately check distribution metadata and Home Assistant integration structure. The regression tests execute production logic with Home Assistant I/O doubles; they complement live validation and do not replace testing with real light integrations.
 
 Follow the [release procedure](docs/releasing.md) to keep the installed version, GitHub `main`, version tag and downloadable ZIP aligned after each completed update.
 

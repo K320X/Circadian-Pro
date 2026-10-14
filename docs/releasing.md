@@ -13,6 +13,14 @@ Completed updates should be reflected in GitHub as part of the normal project wo
 
 Keep private backups, Home Assistant credentials, local installation records and live configuration out of Git. Do not rewrite existing release tags or replace an older version's ZIP with changed runtime code.
 
+## HACS distribution
+
+HACS uses `hacs.json` and downloads `custom_components/circadian_pro` from the published release tag. Keep the integration manifest version equal to the tag version without its `v` prefix. Run the HACS and Hassfest workflows on the exact candidate revision along with code checks.
+
+Do not enable `zip_release` against the manual `circadian_pro.zip`: that ZIP includes a `circadian_pro/` wrapper, while HACS ZIP extraction expects files at the integration root. Keep the manual ZIP and tagged component byte-identical, including `brand/`, license and notice files.
+
+A new release is how HACS discovers an update; no separate HACS upload is needed. Default-catalog inclusion requires a reviewed submission to `hacs/default` and is independent of installation by custom repository URL.
+
 For rollback, restore the preserved component and restart Home Assistant Core. Use the native backup if configuration also requires recovery; do not overwrite `.storage` files while Home Assistant is running.
 
 When rolling back from 0.21.26 or later to 0.21.25 or earlier, the older code does not recognize the panel-only entry. Prefer restoring the native backup made before this update. For a component-only rollback, first identify and remove only the entry marked `entry_type: panel` through Home Assistant's configuration-entry UI/API while the newer code is still running, then restore the older component and restart. Record its entry ID in the private installation receipt. Do not remove lighting profiles or edit `.storage` directly. Leaving the panel entry in place would make older versions treat it as an extra lighting profile.
