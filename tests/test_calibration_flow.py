@@ -201,7 +201,7 @@ class ConfigCreationTests(unittest.TestCase):
         form = immediate(flow.async_step_user())
         self.assertEqual(form["step_id"], "user")
         result = immediate(flow.async_step_user({"name": " Bedroom "}))
-        self.assertEqual(result, {"type": "create_entry", "title": "Bedroom", "data": {"name": "Bedroom"}, "options": {}})
+        self.assertEqual(result, {"type": "create_entry", "title": "Bedroom", "data": {"name": "Bedroom"}, "options": {"brightness_mode_time_light": 60}})
         entry = SimpleNamespace(data=result["data"], options=result["options"])
         self.assertEqual(self.namespace["validate_entry"](entry)["lights"], [])
         # Store lights in options, not creation data, so later selection wins.
@@ -240,8 +240,28 @@ class ConfigCreationTests(unittest.TestCase):
         form = immediate(flow.async_step_menu({"action": "new"}))
         self.assertEqual(form["step_id"], "user")
         result = immediate(flow.async_step_user({"name": "Desk"}))
-        self.assertEqual(result["options"], {})
+        self.assertEqual(result["options"], {"brightness_mode_time_light": 60})
         self.assertEqual(entry.options, {"lights": ["light.existing"]})
+
+    def test_duplicate_profile_preserves_explicit_and_implicit_legacy_brightness_seconds(self):
+        for source_options in ({}, {"brightness_mode_time_light": 0.25},
+                               {"brightness_mode_time_light": 0, "brightness_mode_time_dark": 10000.75}):
+            with self.subTest(source_options=source_options):
+                entry = SimpleNamespace(entry_id="existing", title="Bedroom", unique_id="Bedroom",
+                                        data={"name": "Bedroom"}, options=deepcopy(source_options))
+                flow = self.Flow([entry])
+                immediate(flow.async_step_menu({"action": "existing"}))
+                expected = deepcopy(flow.source_options)
+                result = immediate(flow.async_step_wait_for_name({"name": "Copy"}))
+                self.assertEqual(result["options"], expected)
+                self.assertEqual(result["options"]["brightness_mode_time_light"],
+                                 source_options.get("brightness_mode_time_light", 1))
+                self.assertEqual(entry.options, source_options)
+                self.assertIsNot(result["options"], flow.source_options)
+        # An empty copied mapping is distinct from a new profile.
+        flow = self.Flow()
+        flow.source_options = {}
+        self.assertEqual(immediate(flow.async_step_wait_for_name({"name": "Copy"}))["options"], {})
 
     def test_creation_errors_have_labels_in_both_languages_and_base_strings(self):
         for filename in ("strings.json", "translations/en.json", "translations/es.json"):
@@ -410,7 +430,7 @@ class CalibrationFlowTests(unittest.TestCase):
         self.assertEqual(result["type"], "create_entry")
 
     def test_final_save_converts_brightness_minutes_without_persisting_form_aliases(self):
-        for light, dark in ((1, 10000), (0.25, 10000.75), (1200, 1800)):
+        for light, dark in ((60, 10000), (60, 60), (60.25, 10000.75), (1200, 1800)):
             with self.subTest(light=light, dark=dark):
                 flow = self.flow(mode="rgb", brightness_mode_time_light=1, brightness_mode_time_dark=10000)
                 original = deepcopy(flow.config_entry.options)

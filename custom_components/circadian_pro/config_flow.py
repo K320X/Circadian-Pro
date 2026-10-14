@@ -63,6 +63,8 @@ def options_from_form(user_input: dict[str, Any]) -> dict[str, Any]:
         try:
             if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
                 raise ValueError("A numeric duration is required")
+            if name.startswith("brightness_mode_time_") and minutes < 1:
+                raise ValueError("Brightness windows require at least one minute")
             seconds = float(minutes) * 60
             if not isfinite(seconds):
                 raise ValueError("A finite duration is required")
@@ -180,7 +182,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_create_entry(
                         title=name,
                         data={CONF_NAME: name},
-                        options=dict(self.source_options or {}),
+                        options=(
+                            {"brightness_mode_time_light": 60}
+                            if self.source_options is None
+                            else deepcopy(self.source_options)
+                        ),
                     )
 
         name_default = user_input.get(CONF_NAME, "") if user_input else ""
@@ -382,6 +388,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 "brightness_mode_time_light", "brightness_mode_time_dark",
             ):
                 form_name = f"{name}_minutes"
+                is_brightness_window = name.startswith("brightness_mode_time_")
                 if user_input is not None and form_name in user_input:
                     selected_default = user_input[form_name]
                 else:
@@ -389,9 +396,14 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     if isinstance(persisted, timedelta):
                         persisted = persisted.total_seconds()
                     selected_default = persisted / 60
+                    if is_brightness_window:
+                        # Offer the UI minimum for old profiles without changing
+                        # their persisted settings until the user saves the flow.
+                        selected_default = max(1, selected_default)
                 options_schema[vol.Optional(form_name, default=selected_default)] = (
                     selector.NumberSelector(selector.NumberSelectorConfig(
                         mode=selector.NumberSelectorMode.BOX, step="any",
+                        **({"min": 1} if is_brightness_window else {}),
                     ))
                 )
                 continue

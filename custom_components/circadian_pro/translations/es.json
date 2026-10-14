@@ -69,8 +69,8 @@
           "brightness_mode": "Modo de brillo",
           "brightness_mode_time_light": "Transición de brillo: tramo diurno (s)",
           "brightness_mode_time_dark": "Transición de brillo: tramo nocturno (s)",
-          "brightness_mode_time_light_minutes": "Transición de brillo: tramo diurno (min)",
-          "brightness_mode_time_dark_minutes": "Transición de brillo: tramo nocturno (min)",
+          "brightness_mode_time_light_minutes": "Después del amanecer / antes del atardecer (min)",
+          "brightness_mode_time_dark_minutes": "Antes del amanecer / después del atardecer (min)",
           "sleep_activation_mode": "Activación automática del modo noche"
         },
         "data_description": {
@@ -107,11 +107,11 @@
           "sunset_time": "Usa esta hora de atardecer todos los días. Déjala vacía para calcular el atardecer según tu ubicación y la fecha.",
           "min_sunset_time": "Impide que el atardecer del perfil ocurra antes de esta hora. Déjala vacía para no aplicar este límite.",
           "max_sunset_time": "Impide que el atardecer del perfil ocurra después de esta hora. Déjala vacía para no aplicar este límite.",
-          "brightness_mode": "Natural: mantiene el brillo máximo durante el día; por la noche, baja gradualmente y vuelve a subir hacia el amanecer.\nLineal: cambia el brillo a ritmo constante alrededor del amanecer y el atardecer.\nSigmoide: usa una curva en S, suave en los extremos y más rápida en el centro.",
+          "brightness_mode": "Natural: mantiene el brillo máximo durante el día; por la noche, baja gradualmente y vuelve a subir hacia el amanecer. Ignora los dos tiempos de transición de abajo.\nLineal: cambia el brillo a ritmo constante alrededor del amanecer y el atardecer. Cada transición dura la suma de los dos tiempos.\nSigmoide: usa una curva en S, suave en los extremos y más rápida en el centro. Los dos tiempos definen la parte principal de la transición.\nMínimo: 1 minuto en cada campo.",
           "brightness_mode_time_dark": "Duración del tramo nocturno de la transición: antes del amanecer y después del atardecer.\nSolo se usa en los modos Lineal y Sigmoide. Un valor mayor alarga ese tramo; Natural lo ignora.",
           "brightness_mode_time_light": "Duración del tramo diurno de la transición: después del amanecer y antes del atardecer.\nSolo se usa en los modos Lineal y Sigmoide. Un valor mayor alarga ese tramo; Natural lo ignora.",
-          "brightness_mode_time_dark_minutes": "Duración en minutos del tramo nocturno de la transición: antes del amanecer y después del atardecer.\nSolo se usa en los modos Lineal y Sigmoide. Un valor mayor alarga ese tramo; Natural lo ignora.",
-          "brightness_mode_time_light_minutes": "Duración en minutos del tramo diurno de la transición: después del amanecer y antes del atardecer.\nSolo se usa en los modos Lineal y Sigmoide. Un valor mayor alarga ese tramo; Natural lo ignora.",
+          "brightness_mode_time_dark_minutes": "Adelanta la subida del brillo antes del amanecer.\nProlonga la bajada del brillo después del atardecer.",
+          "brightness_mode_time_light_minutes": "Prolonga la subida del brillo después del amanecer.\nAdelanta la bajada del brillo antes del atardecer.",
           "sleep_activation_mode": "Desactivado: el modo noche solo se activa con su interruptor manual.\nPor amanecer y atardecer: se activa entre el atardecer y el amanecer del perfil.\nPor franja horaria: se activa durante el horario indicado abajo.\nEl interruptor manual permite activar el modo noche en cualquier momento."
         }
       },

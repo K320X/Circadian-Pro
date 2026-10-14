@@ -344,7 +344,7 @@ class ApiTests(unittest.TestCase):
     def test_preview_brightness_minute_drafts_roundtrip_without_mutating_stored_seconds(self):
         self.entry.options.update(brightness_mode_time_light=1, brightness_mode_time_dark=10000)
         original = deepcopy(self.entry.options)
-        for light, dark in ((1, 10000), (0.25, 10000.75), (1200, 1800)):
+        for light, dark in ((60, 10000), (60, 60), (60.25, 10000.75), (1200, 1800)):
             with self.subTest(light=light, dark=dark):
                 draft = {"brightness_mode_time_light": 1, "brightness_mode_time_dark": 10000,
                          "brightness_mode": "linear", "brightness_mode_time_light_minutes": light / 60,
@@ -365,7 +365,7 @@ class ApiTests(unittest.TestCase):
 
     def test_invalid_brightness_minute_draft_cannot_start_preview(self):
         for name in ("brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"):
-            for value in (True, None, "60", float("inf"), float("nan"), 1e100, -1):
+            for value in (True, None, "60", float("inf"), float("nan"), 1e100, -1, 0, 0.999):
                 with self.subTest(name=name, value=value):
                     self.invoke(self.api.websocket_preview, entry_id="loaded", settings={
                         "brightness_mode": "linear", "brightness_mode_time_light_minutes": 20,
