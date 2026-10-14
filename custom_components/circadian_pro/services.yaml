@@ -72,6 +72,38 @@ set_manual_control:
 change_switch_settings:
   description: Change any settings you'd like in the switch. All options here are the same as in the config flow.
   fields:
+    brightness_mode:
+      description: Choose the brightness curve. Linear and Sigmoid can also control color temperature when apply_temperature_curve is enabled. Natural keeps its independent solar temperature behavior.
+      required: false
+      selector:
+        select:
+          options:
+          - default
+          - linear
+          - tanh
+          translation_key: brightness_mode
+    apply_temperature_curve:
+      description: Apply the Linear or Sigmoid curve to color temperature using its own minimum and maximum. Ignored in Natural mode. Disabled by default.
+      required: false
+      example: false
+      selector:
+        boolean: null
+    brightness_mode_time_light:
+      description: Duration in seconds after sunrise and before sunset, for Linear or Sigmoid. If both durations are zero, targets switch at sunrise and sunset; the configured light transition still applies.
+      required: false
+      selector:
+        number:
+          min: 0
+          step: 1
+          mode: box
+    brightness_mode_time_dark:
+      description: Duration in seconds before sunrise and after sunset, for Linear or Sigmoid. If both durations are zero, targets switch at sunrise and sunset; the configured light transition still applies.
+      required: false
+      selector:
+        number:
+          min: 0
+          step: 1
+          mode: box
     entity_id:
       description: Entity ID of the switch. 
       required: true

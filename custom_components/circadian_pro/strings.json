@@ -66,7 +66,8 @@
           "sleep_transition": "Sleep transition (s)",
           "sleep_schedule_start": "Sleep schedule start",
           "sleep_schedule_end": "Sleep schedule end",
-          "brightness_mode": "Brightness mode",
+          "brightness_mode": "Brightness / temperature mode",
+          "apply_temperature_curve": "Also apply to temperature",
           "brightness_mode_time_light": "Brightness transition: daytime portion (s)",
           "brightness_mode_time_dark": "Brightness transition: nighttime portion (s)",
           "brightness_mode_time_light_minutes": "After sunrise / before sunset (min)",
@@ -100,11 +101,12 @@
           "max_sunset_time": "Prevent the profile sunset from occurring after this time. Leave it empty to apply no upper limit.",
           "brightness_mode_time_dark": "Duration of the nighttime portion of the transition: before sunrise and after sunset.\nUsed only in Linear and Sigmoid modes. A higher value lengthens this portion; Natural ignores it.",
           "brightness_mode_time_light": "Duration of the daytime portion of the transition: after sunrise and before sunset.\nUsed only in Linear and Sigmoid modes. A higher value lengthens this portion; Natural ignores it.",
-          "brightness_mode_time_dark_minutes": "Starts increasing brightness earlier, before sunrise.\nExtends the decrease in brightness after sunset.",
-          "brightness_mode_time_light_minutes": "Extends the increase in brightness after sunrise.\nStarts decreasing brightness earlier, before sunset.",
+          "brightness_mode_time_dark_minutes": "Starts the increase earlier, before sunrise.\nExtends the decrease after sunset.\nAffects brightness and, when checked, temperature too.",
+          "brightness_mode_time_light_minutes": "Extends the increase after sunrise.\nStarts the decrease earlier, before sunset.\nAffects brightness and, when checked, temperature too.",
           "sleep_activation_mode": "Disabled: sleep mode is activated only by its manual switch.\nBy sunrise and sunset: active between the profile sunset and sunrise.\nBy schedule: active during the schedule below.\nThe manual switch can activate sleep mode at any time.",
           "autoreset_control_seconds": "Time before Circadian Pro resumes control after a manual change. Use 0 to disable automatic resumption.",
-          "brightness_mode": "Natural: keeps maximum brightness during the day; at night, brightness gradually falls and rises again towards sunrise. It ignores the two transition times below.\nLinear: changes brightness at a constant rate around sunrise and sunset. Each transition lasts the sum of the two times.\nSigmoid: uses an S curve, gentle at the ends and faster in the middle. The two times set the main part of the transition.\nMinimum: 1 minute in each field."
+          "brightness_mode": "Natural: keeps maximum brightness during the day; at night, brightness falls and rises again towards sunrise. It does not apply to temperature, which follows its independent solar curve. It ignores the two times below.\nLinear: changes brightness at a constant rate. Each transition lasts the sum of the two times.\nSigmoid: uses an S curve, gentle at the ends and faster in the middle. The two times set the main part of the transition.\nIn Linear and Sigmoid, temperature also follows its solar curve unless you check “Also apply to temperature”.\nBoth times can be 0: the target changes at sunrise and sunset. The new target is applied at the next adaptation; the configured transition smooths it if the light supports it.",
+          "apply_temperature_curve": "Shares the curve and timing between brightness and temperature, each within its own limits. This also replaces the nighttime temperature progression. Sleep mode keeps its own settings."
         }
       },
       "white_w_kelvin": {
@@ -167,7 +169,7 @@
       "entity_missing": "A configured light entity no longer exists.",
       "invalid_brightness_range": "Minimum brightness cannot be greater than maximum brightness.",
       "invalid_color_temp_range": "Minimum color temperature cannot be greater than maximum color temperature.",
-      "invalid_brightness_window": "For Linear or Sigmoid mode, the combined light and dark transition window must be greater than zero.",
+      "invalid_brightness_window": "Transition times must be numbers greater than or equal to zero.",
       "invalid_sunrise_bounds": "Earliest sunrise cannot be later than latest sunrise.",
       "invalid_sunset_bounds": "Earliest sunset cannot be later than latest sunset.",
       "invalid_white_channel_range": "The warm white WW temperature must be lower than the cold white CW temperature.",

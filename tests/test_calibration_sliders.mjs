@@ -37,6 +37,12 @@ class Node {
     this.children[index] = child;
     return previous;
   }
+  removeChild(child) {
+    const index = this.children.indexOf(child);
+    if (index < 0) throw new Error("The removed node is not a child");
+    this.children.splice(index, 1);
+    return child;
+  }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] ?? null; }
   removeAttribute(name) { delete this.attributes[name]; }
@@ -201,8 +207,8 @@ test("general settings keep their existing number controls", (t) => {
 test("brightness timing diagrams highlight opposite sides of the same solar events", (t) => {
   const harness = panelHarness(t, "init");
   harness.panel.copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "es" });
-  const light = harness.add("brightness_mode_time_light_minutes", 1, 1, undefined, "any");
-  const dark = harness.add("brightness_mode_time_dark_minutes", 160, 1, undefined, "any");
+  const light = harness.add("brightness_mode_time_light_minutes", 1, 0, undefined, "any");
+  const dark = harness.add("brightness_mode_time_dark_minutes", 160, 0, undefined, "any");
   for (const { field, number } of [light, dark]) {
     assert.equal(field.tag, "div", "figure must not be nested inside an implicit input label");
     assert.ok(field.querySelector(`#${number.getAttribute("aria-labelledby")}`));
@@ -210,7 +216,7 @@ test("brightness timing diagrams highlight opposite sides of the same solar even
     assert.equal(svg.namespaceURI, "http://www.w3.org/2000/svg");
     assert.equal(svg.getAttribute("role"), "img");
     assert.equal(svg.getAttribute("focusable"), "false");
-    assert.match(field.querySelector("figcaption").textContent, /no representa el brillo de este perfil/);
+    assert.match(field.querySelector("figcaption").textContent, /no representa los valores de este perfil/);
     assert.deepEqual(svg.querySelectorAll("text").map((node) => node.textContent), ["Amanecer", "Atardecer", "Máx.", "Mín."]);
     assert.equal(field.querySelectorAll("input").length, 1, "the illustration must not add another submitted control");
   }
@@ -226,18 +232,21 @@ test("brightness timing diagrams highlight opposite sides of the same solar even
 test("timing figures remain illustrative after an edit and preserve the numeric validation", (t) => {
   const harness = panelHarness(t, "init");
   harness.panel.copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "en" });
-  const { field, number } = harness.add("brightness_mode_time_dark_minutes", 160, 1, undefined, "any");
+  const { field, number } = harness.add("brightness_mode_time_dark_minutes", 160, 0, undefined, "any");
   const path = field.querySelector(".timing-adjustable").getAttribute("d");
   number.value = "240.5";
   number.dispatchEvent(new Event("input"));
   assert.deepEqual(harness.panel.readValues(), { brightness_mode_time_dark_minutes: 240.5 });
   assert.equal(field.querySelector(".timing-adjustable").getAttribute("d"), path);
   assert.match(field.querySelector("svg").getAttribute("aria-label"), /before sunrise.*after sunset/);
-  assert.match(field.querySelector("figcaption").textContent, /does not show this profile's brightness/);
+  assert.match(field.querySelector("figcaption").textContent, /does not show this profile's values/);
   number.value = "0";
   number.dispatchEvent(new Event("input"));
+  assert.deepEqual(harness.panel.readValues(), { brightness_mode_time_dark_minutes: 0 });
+  number.value = "-1";
+  number.dispatchEvent(new Event("input"));
   assert.throws(() => harness.panel.readValues(), /Check the indicated values/);
-  assert.equal(number.value, "0", "the figure must not silently clamp invalid user input");
+  assert.equal(number.value, "-1", "the figure must not silently clamp invalid user input");
 });
 
 test("only the two general brightness minute fields receive explanatory figures", (t) => {
@@ -249,18 +258,13 @@ test("only the two general brightness minute fields receive explanatory figures"
   assert.equal(harness.add("brightness_mode_time_light_minutes", 1, 1, 600).field.querySelector("figure"), undefined);
 });
 
-function nightSettingsHarness(t, mode = "rgb_color", omitted = []) {
+function generalSettingsHarness(t, fields) {
   const harness = panelHarness(t, "init");
   const { panel } = harness;
-  const defaults = { sleep_rgb_or_color_temp: mode, sleep_color_temp: 2200, sleep_rgb_color: [255, 56, 0] };
-  const fields = [
-    { name: "sleep_rgb_or_color_temp", selector: { select: { options: ["rgb_color", "color_temp"] } } },
-    { name: "sleep_color_temp", selector: { number: { min: 1000, max: 10000, step: 1 } } },
-    { name: "sleep_rgb_color", selector: { color_rgb: {} } },
-  ].filter((field) => !omitted.includes(field.name)).map((field) => ({ ...field, default: defaults[field.name] }));
   panel.flow = { current: { type: "form", step_id: "init", data_schema: fields }, index: 0, drafts: {} };
   Object.assign(panel, { totalSteps: 4, entry: { title: "Office" }, error: "", initialized: true });
-  Object.assign(panel.copy, { next: "Next", back: "Back", groups: { night: "Sleep mode", other: "Other settings" } });
+  Object.assign(panel.copy, { next: "Next", back: "Back", groups: { limits: "Brightness and temperature", night: "Sleep mode", other: "Other settings" } });
+  panel.copy.timingDiagram = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language: "en" }).timingDiagram;
   panel.field = CircadianCalibrationPanel.prototype.field.bind(panel);
   panel.render = CircadianCalibrationPanel.prototype.render.bind(panel);
   panel.showStep = CircadianCalibrationPanel.prototype.showStep.bind(panel);
@@ -278,6 +282,81 @@ function nightSettingsHarness(t, mode = "rgb_color", omitted = []) {
     return control;
   };
   return { ...harness, fields, input, edit };
+}
+
+function brightnessSettingsHarness(t, mode = "default", checked = false, omitted = []) {
+  return generalSettingsHarness(t, [
+    { name: "brightness_mode", default: mode, selector: { select: { options: ["default", "linear", "tanh"] } } },
+    { name: "apply_temperature_curve", default: checked, selector: { boolean: {} } },
+    ...["light", "dark"].map((portion) => ({ name: `brightness_mode_time_${portion}_minutes`, default: 0,
+      selector: { number: { min: 0, step: "any" } } })),
+  ].filter((field) => !omitted.includes(field.name)));
+}
+
+test("shared temperature curve is opt-in and only offered for Linear and Sigmoid", async (t) => {
+  for (const mode of ["default", "linear", "tanh"]) {
+    await t.test(mode, (t) => {
+      const { panel, input } = brightnessSettingsHarness(t, mode);
+      assert.equal(Boolean(input("apply_temperature_curve")), mode !== "default");
+      if (mode !== "default") assert.equal(input("apply_temperature_curve").checked, false);
+      assert.deepEqual(panel.readValues(), { brightness_mode: mode, apply_temperature_curve: false,
+        brightness_mode_time_light_minutes: 0, brightness_mode_time_dark_minutes: 0 });
+    });
+  }
+});
+
+test("changing curve modes preserves the checkbox draft even while Natural hides it", (t) => {
+  const { panel, input, edit } = brightnessSettingsHarness(t, "linear");
+  // Mode input must capture the outgoing checkbox even before its input event.
+  input("apply_temperature_curve").checked = true;
+  edit("brightness_mode", "default");
+  assert.equal(input("apply_temperature_curve"), undefined);
+  assert.equal(panel.readValues().apply_temperature_curve, true);
+  edit("brightness_mode", "tanh");
+  assert.equal(input("apply_temperature_curve").checked, true);
+  input("apply_temperature_curve").checked = false;
+  input("apply_temperature_curve").dispatchEvent(new Event("input"));
+  edit("brightness_mode", "linear");
+  assert.equal(input("apply_temperature_curve").checked, false);
+  assert.equal(panel.settings.apply_temperature_curve, false);
+});
+
+test("an enabled saved temperature curve is retained while opening Natural", (t) => {
+  const { panel, input, edit } = brightnessSettingsHarness(t, "default", true);
+  assert.equal(input("apply_temperature_curve"), undefined);
+  assert.equal(panel.readValues().apply_temperature_curve, true);
+  edit("brightness_mode", "linear");
+  assert.equal(input("apply_temperature_curve").checked, true);
+});
+
+test("both durations accept zero and fractional minutes without hiding invalid drafts", (t) => {
+  const { panel, input, edit } = brightnessSettingsHarness(t, "linear", true);
+  assert.equal(panel.readValues().brightness_mode_time_light_minutes, 0);
+  assert.equal(panel.readValues().brightness_mode_time_dark_minutes, 0);
+  edit("brightness_mode_time_light_minutes", "0.5");
+  assert.equal(panel.readValues().brightness_mode_time_light_minutes, 0.5);
+  edit("brightness_mode_time_dark_minutes", "-1");
+  edit("brightness_mode", "tanh");
+  assert.equal(input("brightness_mode_time_dark_minutes").value, "-1");
+  assert.throws(() => panel.readValues(), /Invalid value/);
+  edit("brightness_mode_time_dark_minutes", "0");
+  assert.equal(panel.readValues().brightness_mode_time_dark_minutes, 0);
+});
+
+test("older schemas without a shared temperature option still expose the mode selector", (t) => {
+  const { panel, input } = brightnessSettingsHarness(t, "linear", false, ["apply_temperature_curve"]);
+  assert.equal(input("brightness_mode").value, "linear");
+  assert.equal(input("apply_temperature_curve"), undefined);
+  assert.equal(Object.hasOwn(panel.readValues(), "apply_temperature_curve"), false);
+});
+
+function nightSettingsHarness(t, mode = "rgb_color", omitted = []) {
+  const defaults = { sleep_rgb_or_color_temp: mode, sleep_color_temp: 2200, sleep_rgb_color: [255, 56, 0] };
+  return generalSettingsHarness(t, [
+    { name: "sleep_rgb_or_color_temp", selector: { select: { options: ["rgb_color", "color_temp"] } } },
+    { name: "sleep_color_temp", selector: { number: { min: 1000, max: 10000, step: 1 } } },
+    { name: "sleep_rgb_color", selector: { color_rgb: {} } },
+  ].filter((field) => !omitted.includes(field.name)).map((field) => ({ ...field, default: defaults[field.name] })));
 }
 
 test("sleep color initially exposes only the selected color control while retaining both saved values", async (t) => {

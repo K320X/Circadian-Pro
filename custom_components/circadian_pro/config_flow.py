@@ -63,8 +63,8 @@ def options_from_form(user_input: dict[str, Any]) -> dict[str, Any]:
         try:
             if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
                 raise ValueError("A numeric duration is required")
-            if name.startswith("brightness_mode_time_") and minutes < 1:
-                raise ValueError("Brightness windows require at least one minute")
+            if name.startswith("brightness_mode_time_") and minutes < 0:
+                raise ValueError("Brightness windows cannot be negative")
             seconds = float(minutes) * 60
             if not isfinite(seconds):
                 raise ValueError("A finite duration is required")
@@ -375,6 +375,7 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
             "sleep_schedule_start",
             "sleep_schedule_end",
             "brightness_mode",
+            "apply_temperature_curve",
             "brightness_mode_time_light",
             "brightness_mode_time_dark",
         }
@@ -396,14 +397,10 @@ class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     if isinstance(persisted, timedelta):
                         persisted = persisted.total_seconds()
                     selected_default = persisted / 60
-                    if is_brightness_window:
-                        # Offer the UI minimum for old profiles without changing
-                        # their persisted settings until the user saves the flow.
-                        selected_default = max(1, selected_default)
                 options_schema[vol.Optional(form_name, default=selected_default)] = (
                     selector.NumberSelector(selector.NumberSelectorConfig(
                         mode=selector.NumberSelectorMode.BOX, step="any",
-                        **({"min": 1} if is_brightness_window else {}),
+                        **({"min": 0} if is_brightness_window else {}),
                     ))
                 )
                 continue

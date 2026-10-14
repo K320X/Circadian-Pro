@@ -3,6 +3,7 @@
 
 from datetime import time, timedelta
 from enum import Enum
+from math import isfinite
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv
@@ -294,6 +295,12 @@ CONF_BRIGHTNESS_MODE, DEFAULT_BRIGHTNESS_MODE = "brightness_mode", "default"
 DOCS[CONF_BRIGHTNESS_MODE] = (
     "Brightness mode to use. Possible values are default, linear, and tanh "
     "(uses brightness_mode_time_dark and brightness_mode_time_light). "
+    "Linear and tanh can also control color temperature with apply_temperature_curve. "
+)
+CONF_APPLY_TEMPERATURE_CURVE, DEFAULT_APPLY_TEMPERATURE_CURVE = "apply_temperature_curve", False
+DOCS[CONF_APPLY_TEMPERATURE_CURVE] = (
+    "Apply the selected linear or tanh brightness curve to color temperature, "
+    "using its own minimum and maximum. Ignored in default (Natural) mode. "
 )
 CONF_BRIGHTNESS_MODE_TIME_DARK, DEFAULT_BRIGHTNESS_MODE_TIME_DARK = (
     "brightness_mode_time_dark",
@@ -301,7 +308,8 @@ CONF_BRIGHTNESS_MODE_TIME_DARK, DEFAULT_BRIGHTNESS_MODE_TIME_DARK = (
 )
 DOCS[CONF_BRIGHTNESS_MODE_TIME_DARK] = (
     "(Ignored if brightness_mode='default') The duration in seconds to ramp up/down "
-    "the brightness before/after sunrise/sunset. "
+    "before sunrise/after sunset. Also affects temperature when apply_temperature_curve is enabled. "
+    "If both durations are zero, the target switches at sunrise/sunset. "
 )
 CONF_BRIGHTNESS_MODE_TIME_LIGHT, DEFAULT_BRIGHTNESS_MODE_TIME_LIGHT = (
     "brightness_mode_time_light",
@@ -309,7 +317,8 @@ CONF_BRIGHTNESS_MODE_TIME_LIGHT, DEFAULT_BRIGHTNESS_MODE_TIME_LIGHT = (
 )
 DOCS[CONF_BRIGHTNESS_MODE_TIME_LIGHT] = (
     "(Ignored if brightness_mode='default') The duration in seconds to ramp up/down "
-    "the brightness after/before sunrise/sunset. ."
+    "after sunrise/before sunset. Also affects temperature when apply_temperature_curve is enabled. "
+    "If both durations are zero, the target switches at sunrise/sunset. "
 )
 
 CONF_TAKE_OVER_CONTROL, DEFAULT_TAKE_OVER_CONTROL = "take_over_control", False
@@ -611,6 +620,7 @@ VALIDATION_TUPLES: list[tuple[str, Any, Any]] = [
             ),
         ),
     ),
+    (CONF_APPLY_TEMPERATURE_CURVE, DEFAULT_APPLY_TEMPERATURE_CURVE, bool),
     (CONF_BRIGHTNESS_MODE_TIME_DARK, DEFAULT_BRIGHTNESS_MODE_TIME_DARK, int),
     (CONF_BRIGHTNESS_MODE_TIME_LIGHT, DEFAULT_BRIGHTNESS_MODE_TIME_LIGHT, int),
     (CONF_TAKE_OVER_CONTROL, DEFAULT_TAKE_OVER_CONTROL, bool),
@@ -752,11 +762,12 @@ def validate_cross_options(data: dict[str, Any]) -> dict[str, Any]:
         ):
             raise vol.Invalid("invalid_white_neutral_range")
 
-    brightness_mode = data.get(CONF_BRIGHTNESS_MODE, DEFAULT_BRIGHTNESS_MODE)
-    if brightness_mode in ("linear", "tanh"):
-        dark = _duration_seconds(data.get(CONF_BRIGHTNESS_MODE_TIME_DARK, 0))
-        light = _duration_seconds(data.get(CONF_BRIGHTNESS_MODE_TIME_LIGHT, 0))
-        if dark < 0 or light < 0 or dark + light <= 0:
+    for key in (CONF_BRIGHTNESS_MODE_TIME_DARK, CONF_BRIGHTNESS_MODE_TIME_LIGHT):
+        try:
+            seconds = _duration_seconds(data.get(key, 0))
+        except (ValueError, TypeError, OverflowError) as err:
+            raise vol.Invalid("invalid_brightness_window") from err
+        if not isfinite(seconds) or seconds < 0:
             raise vol.Invalid("invalid_brightness_window")
 
     min_sunrise = _time_value(data.get(CONF_MIN_SUNRISE_TIME))

@@ -265,7 +265,7 @@ class ConfigAuditTests(unittest.TestCase):
         self.assertEqual(draft["sunrise_offset_minutes"], 20)
 
     def test_brightness_windows_display_minutes_and_roundtrip_legacy_seconds_on_back(self):
-        for light, dark in ((60, 10000), (60, 60), (61, 123), (60.25, 10000.75)):
+        for light, dark in ((60, 10000), (60, 60), (61, 123), (60.25, 10000.75), (0, 0), (1, 0.25)):
             with self.subTest(light=light, dark=dark):
                 options = {"brightness_mode": "linear", "brightness_mode_time_light": light,
                            "brightness_mode_time_dark": dark}
@@ -278,7 +278,7 @@ class ConfigAuditTests(unittest.TestCase):
                     self.assertEqual(fields[form_name][0], seconds / 60)
                     self.assertEqual(fields[form_name][1].step, "any")
                     self.assertEqual(fields[form_name][1].mode, "box")
-                    self.assertEqual(fields[form_name][1].min, 1)
+                    self.assertEqual(fields[form_name][1].min, 0)
                     draft[form_name] = fields[form_name][0]
                 original_draft = dict(draft)
                 # Back and forward replay a UI draft through fresh options flows.
@@ -289,21 +289,21 @@ class ConfigAuditTests(unittest.TestCase):
                     self.assertEqual(flow.config_entry.options, options)
                     self.assertEqual(draft, original_draft)
 
-    def test_brightness_form_uses_one_minute_but_legacy_canonical_defaults_stay_valid(self):
+    def test_brightness_form_preserves_legacy_canonical_defaults(self):
         flow = self.options_flow({})
         fields = flow_fixtures.form_fields(immediate(flow.async_step_init()))
         self.assertEqual(self.namespace["DEFAULT_BRIGHTNESS_MODE_TIME_LIGHT"], 1)
-        self.assertEqual(fields["brightness_mode_time_light_minutes"][0], 1)
+        self.assertEqual(fields["brightness_mode_time_light_minutes"][0], 1 / 60)
         self.assertEqual(fields["brightness_mode_time_dark_minutes"][0], 10000 / 60)
         for name in ("brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"):
-            self.assertEqual(fields[name][1].min, 1)
+            self.assertEqual(fields[name][1].min, 0)
             self.assertEqual(fields[name][1].step, "any")
         self.assertEqual(flow.config_entry.options, {})
         self.assertIsNone(flow._base_options)
         legacy_settings = self.namespace["validate_entry"](flow.config_entry)
         self.assertEqual(legacy_settings["brightness_mode_time_light"].total_seconds(), 1)
         convert = self.namespace["options_from_form"]
-        for light, dark in ((0, 10000), (1, 30), (0.25, 10000.75)):
+        for light, dark in ((0, 0), (0, 10000), (1, 30), (0.25, 10000.75)):
             with self.subTest(light=light, dark=dark):
                 canonical = {"brightness_mode": "linear", "brightness_mode_time_light": light,
                              "brightness_mode_time_dark": dark}
@@ -315,21 +315,21 @@ class ConfigAuditTests(unittest.TestCase):
                 self.assertEqual(settings["brightness_mode_time_dark"].total_seconds(), dark)
                 self.assertEqual(legacy_flow.config_entry.options, canonical)
 
-    def test_brightness_form_clamps_legacy_display_without_changing_persisted_values(self):
+    def test_brightness_form_preserves_legacy_subminute_display_and_persisted_values(self):
         for light, dark in ((1, 10000), (0, 3600), (60, 0.25), (59.99, 30)):
             with self.subTest(light=light, dark=dark):
                 options = {"brightness_mode": "linear", "brightness_mode_time_light": light,
                            "brightness_mode_time_dark": dark}
                 flow = self.options_flow(options)
                 fields = flow_fixtures.form_fields(immediate(flow.async_step_init()))
-                self.assertEqual(fields["brightness_mode_time_light_minutes"][0], max(1, light / 60))
-                self.assertEqual(fields["brightness_mode_time_dark_minutes"][0], max(1, dark / 60))
+                self.assertEqual(fields["brightness_mode_time_light_minutes"][0], light / 60)
+                self.assertEqual(fields["brightness_mode_time_dark_minutes"][0], dark / 60)
                 self.assertEqual(flow.config_entry.options, options)
                 self.assertIsNone(flow._base_options)
 
     def test_invalid_brightness_minutes_preserve_draft_and_validate_in_seconds(self):
         for mode in ("default", "linear", "tanh"):
-            for light, dark in ((-1, 20), (20, -1), (0, 0), (0.999, 20), (20, 0.999)):
+            for light, dark in ((-1, 20), (20, -1), (-0.001, 0), (0, -0.001)):
                 with self.subTest(mode=mode, light=light, dark=dark):
                     flow = self.options_flow({"brightness_mode_time_light": 1, "brightness_mode_time_dark": 10000})
                     draft = {"brightness_mode": mode, "brightness_mode_time_light_minutes": light,
@@ -366,6 +366,30 @@ class ConfigAuditTests(unittest.TestCase):
         self.assertEqual(convert(draft), {**canonical, "brightness_mode_time_light": 1207.5})
         self.assertEqual(draft["brightness_mode_time_light"], 1.25)
         self.assertEqual(draft["brightness_mode_time_light_minutes"], 20.125)
+
+    def test_temperature_curve_is_opt_in_for_legacy_profiles_and_preserves_explicit_choice(self):
+        for options, expected in (({}, False), ({"apply_temperature_curve": True}, True),
+                                  ({"apply_temperature_curve": False}, False)):
+            with self.subTest(options=options):
+                flow = self.options_flow(options)
+                fields = flow_fixtures.form_fields(immediate(flow.async_step_init()))
+                self.assertIs(fields["apply_temperature_curve"][0], expected)
+                self.assertIs(self.namespace["validate_entry"](flow.config_entry)["apply_temperature_curve"], expected)
+                self.assertEqual(flow.config_entry.options, options)
+
+    def test_canonical_brightness_windows_allow_zero_pair_and_reject_invalid_durations(self):
+        validate = self.namespace["validate_cross_options"]
+        for mode in ("default", "linear", "tanh"):
+            for light, dark in ((0, 0), (0, 10000), (0.25, 0), (60, 9600)):
+                data = {"brightness_mode": mode, "brightness_mode_time_light": light,
+                        "brightness_mode_time_dark": dark, "apply_temperature_curve": True}
+                with self.subTest(data=data):
+                    self.assertIs(validate(data), data)
+            for key in ("brightness_mode_time_light", "brightness_mode_time_dark"):
+                for value in (-1, -0.001, float("nan"), float("inf"), None, []):
+                    with self.subTest(mode=mode, key=key, value=value):
+                        with self.assertRaisesRegex(Invalid, "invalid_brightness_window"):
+                            validate({"brightness_mode": mode, key: value})
 
     def test_yaml_schema_infers_legacy_before_new_defaults_and_keeps_explicit_mode(self):
         undefined = object()

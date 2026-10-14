@@ -291,6 +291,7 @@ class SunLightSettings:
     brightness_mode_time_dark: datetime.timedelta
     brightness_mode_time_light: datetime.timedelta
     brightness_mode: Literal["default", "linear", "tanh"] = "default"
+    apply_temperature_curve: bool = False
     sunrise_offset: datetime.timedelta = datetime.timedelta()
     sunset_offset: datetime.timedelta = datetime.timedelta()
     timezone: datetime.tzinfo = UTC
@@ -321,61 +322,59 @@ class SunLightSettings:
         delta_brightness = self.max_brightness - self.min_brightness
         return (delta_brightness * (1 + sun_position)) + self.min_brightness
 
-    def _brightness_pct_tanh(self, dt: datetime.datetime, events: list[tuple[SunEvent, float]] | None = None) -> float:
+    def _timed_curve_value(
+        self,
+        dt: datetime.datetime,
+        mode: Literal["linear", "tanh"],
+        events: list[tuple[SunEvent, float]] | None = None,
+        minimum: float = 0.0,
+        maximum: float = 1.0,
+    ) -> float:
+        """Sample a timed curve, independently of brightness or Kelvin limits.
+
+        A zero-length window is an explicit step: sunrise includes the daytime
+        value and sunset includes the nighttime value. Positive sigmoid windows
+        retain their historical 5%-95% reference points and asymptotic tails.
+        """
         event, ts_event = self.sun.closest_event(dt, events)
         dark = self.brightness_mode_time_dark.total_seconds()
         light = self.brightness_mode_time_light.total_seconds()
+        elapsed = dt.timestamp() - ts_event
         if event == SunEvent.SUNRISE:
-            brightness = scaled_tanh(
-                dt.timestamp() - ts_event,
-                x1=-dark,
-                x2=+light,
-                y1=0.05,  # be at 5% of range at x1
-                y2=0.95,  # be at 95% of range at x2
-                y_min=self.min_brightness,
-                y_max=self.max_brightness,
-            )
+            x1, x2 = -dark, light
+            y1, y2 = minimum, maximum
+            tanh_y1, tanh_y2 = 0.05, 0.95
+            daytime = elapsed >= 0
         elif event == SunEvent.SUNSET:
-            brightness = scaled_tanh(
-                dt.timestamp() - ts_event,
-                x1=-light,  # shifted timestamp for the start of sunset
-                x2=+dark,  # shifted timestamp for the end of sunset
-                y1=0.95,  # be at 95% of range at the start of sunset
-                y2=0.05,  # be at 5% of range at the end of sunset
-                y_min=self.min_brightness,
-                y_max=self.max_brightness,
-            )
+            x1, x2 = -light, dark
+            y1, y2 = maximum, minimum
+            tanh_y1, tanh_y2 = 0.95, 0.05
+            daytime = elapsed < 0
         else:
             msg = "Unsupported sun event"
             raise ValueError(msg)
-        return clamp(brightness, self.min_brightness, self.max_brightness)
+        if dark == 0 and light == 0:
+            return maximum if daytime else minimum
+        if mode == "linear":
+            value = lerp(elapsed, x1, x2, y1, y2)
+        else:
+            value = scaled_tanh(elapsed, x1, x2, tanh_y1, tanh_y2, minimum, maximum)
+        return clamp(value, minimum, maximum)
+
+    def _brightness_pct_tanh(self, dt: datetime.datetime, events: list[tuple[SunEvent, float]] | None = None) -> float:
+        return self._timed_curve_value(dt, "tanh", events, self.min_brightness, self.max_brightness)
 
     def _brightness_pct_linear(self, dt: datetime.datetime, events: list[tuple[SunEvent, float]] | None = None) -> float:
-        event, ts_event = self.sun.closest_event(dt, events)
-        # at ts_event - dt_start, brightness == start_brightness
-        # at ts_event + dt_end, brightness == end_brightness
-        dark = self.brightness_mode_time_dark.total_seconds()
-        light = self.brightness_mode_time_light.total_seconds()
-        if event == SunEvent.SUNRISE:
-            brightness = lerp(
-                dt.timestamp() - ts_event,
-                x1=-dark,
-                x2=+light,
-                y1=self.min_brightness,
-                y2=self.max_brightness,
-            )
-        elif event == SunEvent.SUNSET:
-            brightness = lerp(
-                dt.timestamp() - ts_event,
-                x1=-light,
-                x2=+dark,
-                y1=self.max_brightness,
-                y2=self.min_brightness,
-            )
-        else:
-            msg = "Unsupported sun event"
-            raise ValueError(msg)
-        return clamp(brightness, self.min_brightness, self.max_brightness)
+        return self._timed_curve_value(dt, "linear", events, self.min_brightness, self.max_brightness)
+
+    def _curve_color_temp_kelvin(self, progress: float) -> int:
+        """Map shared progress to Kelvin without rounding outside its limits."""
+        if progress <= 0:
+            return self.min_color_temp
+        if progress >= 1:
+            return self.max_color_temp
+        kelvin = self.min_color_temp + (self.max_color_temp - self.min_color_temp) * progress
+        return int(clamp(5 * round(kelvin / 5), self.min_color_temp, self.max_color_temp))
 
     def brightness_pct(
         self,
@@ -429,7 +428,17 @@ class SunLightSettings:
         rgb_color: tuple[int, int, int]
         # Variable force_rgb_color is needed for RGB color after sunset (if enabled)
         force_rgb_color = False
-        if events is None and not is_sleep:
+        shared_progress = None
+        if (
+            self.apply_temperature_curve
+            and self.brightness_mode in ("linear", "tanh")
+            and not is_sleep
+            and events is not None
+        ):
+            shared_progress = self._timed_curve_value(dt, self.brightness_mode, events)
+        if shared_progress is not None:
+            brightness_pct = self.min_brightness + (self.max_brightness - self.min_brightness) * shared_progress
+        elif events is None and not is_sleep:
             # Linear/tanh have no sunrise/sunset window on uninterrupted days.
             brightness_pct = self.max_brightness if sun_position > 0 else self.min_brightness
         else:
@@ -440,6 +449,12 @@ class SunLightSettings:
         elif events is None:
             # Keep the exact configured endpoints, including non-multiples of 5.
             color_temp_kelvin = self.max_color_temp if sun_position > 0 else self.min_color_temp
+            r, g, b = color_temperature_to_rgb(color_temp_kelvin)
+            rgb_color = (round(r), round(g), round(b))
+        elif shared_progress is not None:
+            # Synchronization replaces the independent night/sleep blend while
+            # awake. Explicit sleep mode above still has priority.
+            color_temp_kelvin = self._curve_color_temp_kelvin(shared_progress)
             r, g, b = color_temperature_to_rgb(color_temp_kelvin)
             rgb_color = (round(r), round(g), round(b))
         elif (
@@ -487,7 +502,18 @@ class SunLightSettings:
 
         Calculating all values takes <0.5ms.
         """
-        dt = utcnow() + timedelta(seconds=transition or 0)
+        dt = utcnow()
+        instant_targets = (
+            not is_sleep
+            and self.brightness_mode in ("linear", "tanh")
+            and not self.brightness_mode_time_dark
+            and not self.brightness_mode_time_light
+        )
+        # Continuous curves look ahead to the end of the light's transition.
+        # A step must not change its target before the configured solar event;
+        # the light can still fade to that new target using its transition.
+        if not instant_targets:
+            dt += timedelta(seconds=transition or 0)
         return self.brightness_and_color(dt, is_sleep)
 
 

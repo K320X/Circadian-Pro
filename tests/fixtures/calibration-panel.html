@@ -14,11 +14,12 @@
 <circadian-pro-calibration></circadian-pro-calibration>
 <script type="module">
   import '../../custom_components/circadian_pro/frontend/calibration-panel.js';
-  const translations = (await (await fetch('../../custom_components/circadian_pro/translations/es.json')).json()).options;
+  const translationDocument = await (await fetch('../../custom_components/circadian_pro/translations/es.json')).json();
+  const translations = {...translationDocument.options, selector:translationDocument.selector};
   const original = {
     lights:['light.example_a'], interval:60, transition:5, initial_transition:0,
     min_color_temp:1200, max_color_temp:4000, min_brightness:100, max_brightness:100,
-    brightness_mode:'linear', brightness_mode_time_light_minutes:1, brightness_mode_time_dark_minutes:160,
+    brightness_mode:'linear', apply_temperature_curve:false, brightness_mode_time_light_minutes:1, brightness_mode_time_dark_minutes:160,
     white_w_kelvin:3000, white_cw_kelvin:6500, cal_white_kelvin_neutral:4000,
     cal_rgb_neutral_r:255, cal_rgb_neutral_g:255, cal_rgb_neutral_b:255,
     cal_rgb_warm_r:255, cal_rgb_warm_g:56, cal_rgb_warm_b:0,
@@ -27,7 +28,7 @@
   };
   const steps = ['init','white_channels','cal_neutral','cal_warm'];
   const names = [
-    ['lights','interval','transition','min_color_temp','max_color_temp','min_brightness','max_brightness','brightness_mode','brightness_mode_time_light_minutes','brightness_mode_time_dark_minutes','sleep_rgb_color','sunrise_time'],
+    ['lights','interval','transition','min_color_temp','max_color_temp','min_brightness','max_brightness','brightness_mode','apply_temperature_curve','brightness_mode_time_light_minutes','brightness_mode_time_dark_minutes','sleep_rgb_color','sunrise_time'],
     ['white_w_kelvin','white_cw_kelvin'],
     ['cal_rgb_neutral_r','cal_rgb_neutral_g','cal_rgb_neutral_b','cal_white_intensity_neutral','cal_white_kelvin_neutral'],
     ['cal_rgb_warm_r','cal_rgb_warm_g','cal_rgb_warm_b','cal_white_intensity_warm'],
@@ -53,7 +54,8 @@
       ...(name === 'lights' ? {selector:{entity:{domain:'light',multiple:true}}}
         : name === 'sleep_rgb_color' ? {selector:{color_rgb:{}}}
         : name === 'brightness_mode' ? {selector:{select:{options:['default','linear','tanh'],translation_key:'brightness_mode'}}}
-        : name.startsWith('brightness_mode_time_') ? {selector:{number:{min:1,step:'any'}}}
+        : name === 'apply_temperature_curve' ? {selector:{boolean:{}}}
+        : name.startsWith('brightness_mode_time_') ? {selector:{number:{min:0,step:'any'}}}
         : name === 'sunrise_time' ? {type:'string'}
         : {selector:{number:{min:name === 'cal_white_kelvin_neutral' ? defaults.white_w_kelvin : 0,
           max:name === 'cal_white_kelvin_neutral' ? defaults.white_cw_kelvin : name.startsWith('cal_rgb') ? 255 : name.startsWith('cal_white_intensity') ? 100 : 10000,step:1}}}),

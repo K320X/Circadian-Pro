@@ -15,16 +15,16 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.14`
+**Current stable version:** `0.21.15`
 
-The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.14 adds explanatory brightness diagrams beneath both transition-duration fields, showing which parts of the day each setting affects; see the [release notes](docs/release-0.21.14.md).
+The [full audit report](docs/auditoria-2026-10-13.md) records the reproduced issues, fixes and validation limits from 0.21.4. Version 0.21.15 optionally synchronizes color temperature with Linear or Sigmoid brightness curves and supports zero-duration windows; see the [release notes](docs/release-0.21.15.md).
 
 ## Features
 
 - Automatic brightness and color-temperature adaptation.
 - Multiple independent Circadian Pro instances.
-- Natural, Linear and Sigmoid brightness modes.
-- Brightness-transition durations in minutes, with explicit labels for before and after sunrise and sunset and a one-minute minimum in each UI field. Fractional minutes above that minimum remain supported. Existing values below one minute are shown as one minute in the editor and change only when the profile is saved. YAML and service values retain their seconds-based format.
+- Natural, Linear and Sigmoid brightness modes, with optional shared color-temperature timing in Linear and Sigmoid.
+- Transition windows in minutes, including zero and fractional values. Both windows can be zero for a step in the target at sunrise and sunset. Existing values are preserved exactly; YAML and service durations retain their seconds-based format.
 - Manual and automatic sleep mode.
 - Sunrise and sunset offsets in minutes in the settings UI. Existing values convert automatically: 3600 seconds appears as 60 minutes. YAML and service values keep their existing seconds-based format.
 - Fixed or limited sunrise and sunset times.
@@ -108,19 +108,25 @@ The preview checkbox is disabled by default. Checking it applies the draft immed
 
 The panel includes general settings, physical white channels, and both calibration points. The first step has **Next**; intermediate steps have **Back** and **Next**; the final step has **Back** and **Finish**. Only **Finish** saves the settings. Going back preserves your draft. Navigation stops the preview, so each calibration step starts with it disabled. Canceling or closing the panel also stops the preview; the 60-second expiry stops it and clears the checkbox automatically. A light changed manually during the preview keeps the external change. The standard integration options form remains available for editing settings without immediate previews.
 
-## Brightness modes
+## Brightness / temperature modes
+
+Color temperature normally follows its own solar curve, reaching its maximum around solar noon. In Linear or Sigmoid mode, **Apply also to temperature** (`apply_temperature_curve`, default `false`) makes brightness and Kelvin follow the same progress between their respective configured limits. The checkbox is hidden in Natural mode, which ignores it. Existing profiles keep their previous behavior until you enable the option.
+
+Shared progress is independent of the brightness range: temperature still changes when minimum and maximum brightness are equal. Color calibration and the separate brightness/color switches continue to apply. Explicit sleep mode always uses its own configured values. While shared temperature timing is enabled, it replaces the independent solar color curve, including `adapt_until_sleep` color blending before sleep mode activates.
 
 ### Natural
 
-Gradual transition distributed over a long window before and after the solar event.
+Keeps brightness at its maximum during daylight, with gradual changes at night. Temperature retains its independent solar curve. The two transition-window settings do not affect this mode.
 
 ### Linear
 
-Uniform transition distributed linearly within a fixed window around the solar event.
+Changes the target at a constant rate. The nighttime window covers before sunrise and after sunset; the daytime window covers after sunrise and before sunset. Each full transition lasts the sum of the two windows. For example, 166 nighttime minutes and 1 daytime minute produce a 167-minute ramp, from 166 minutes before sunrise to 1 minute after, with the reverse timing around sunset. Events include configured times, bounds and offsets.
 
 ### Sigmoid
 
-Fast transition concentrated within a shorter window around the solar event.
+Uses an S-shaped curve: slower near the ends and faster in the middle. The same windows delimit approximately 5–95% of the change, with gentle tails outside them.
+
+For either Linear or Sigmoid, setting **both windows to zero** selects a step: the target is at its maximum from sunrise (inclusive) until sunset, and at its minimum from sunset (inclusive) until sunrise. Setting just one window to zero keeps the transition on the other side of each event. The adaptation interval determines when commands are sent; the configured device transition can smooth them if the light supports it. These window settings do not replace that transition. No existing profile values are changed by the update.
 
 ## Available services
 

@@ -11,7 +11,7 @@ const OPTIONAL_TIMES = new Set([
 const GENERAL_GROUPS = [
   { id: "adaptation", rows: [["interval", "adapt_delay"], ["transition", "initial_transition"], ["only_once"]] },
   { id: "limits", rows: [["min_brightness", "max_brightness"], ["min_color_temp", "max_color_temp"],
-    ["brightness_mode"], ["brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"]] },
+    ["brightness_mode", "apply_temperature_curve"], ["brightness_mode_time_light_minutes", "brightness_mode_time_dark_minutes"]] },
   { id: "night", rows: [["sleep_activation_mode"], ["sleep_schedule_start", "sleep_schedule_end"],
     ["sleep_brightness", "sleep_transition"], ["sleep_rgb_or_color_temp", "sleep_color_temp", "sleep_rgb_color"]] },
   { id: "solar", rows: [["sunrise_time", "sunrise_offset_minutes"], ["min_sunrise_time", "max_sunrise_time"],
@@ -540,9 +540,9 @@ const COPY = {
     warmWhite: "Cálido", coldWhite: "Frío",
     timingDiagram: {
       sunrise: "Amanecer", sunset: "Atardecer", minimum: "Mín.", maximum: "Máx.",
-      light: "El brillo sube después del amanecer y baja antes del atardecer. Las pendientes destacadas corresponden al tramo dentro del día.",
-      dark: "El brillo sube antes del amanecer y baja después del atardecer. Las pendientes destacadas corresponden al tramo fuera del día.",
-      caption: "Esquema orientativo: no representa el brillo de este perfil.",
+      light: "El valor sube después del amanecer y baja antes del atardecer. Las pendientes destacadas corresponden al tramo dentro del día.",
+      dark: "El valor sube antes del amanecer y baja después del atardecer. Las pendientes destacadas corresponden al tramo fuera del día.",
+      caption: "Esquema orientativo: no representa los valores de este perfil.",
     },
     groups: { adaptation: "Ritmo de adaptación", limits: "Brillo y temperatura", night: "Modo noche",
       solar: "Amanecer y atardecer", manual: "Cambios manuales", compatibility: "Compatibilidad y envío", other: "Otros ajustes" },
@@ -581,9 +581,9 @@ const COPY = {
     warmWhite: "Warm", coldWhite: "Cold",
     timingDiagram: {
       sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
-      light: "Brightness rises after sunrise and falls before sunset. The highlighted slopes show the portion inside daytime.",
-      dark: "Brightness rises before sunrise and falls after sunset. The highlighted slopes show the portion outside daytime.",
-      caption: "Illustrative diagram: it does not show this profile's brightness.",
+      light: "The value rises after sunrise and falls before sunset. The highlighted slopes show the portion inside daytime.",
+      dark: "The value rises before sunrise and falls after sunset. The highlighted slopes show the portion outside daytime.",
+      caption: "Illustrative diagram: it does not show this profile's values.",
     },
     groups: { adaptation: "Adaptation timing", limits: "Brightness and temperature", night: "Sleep mode",
       solar: "Sunrise and sunset", manual: "Manual changes", compatibility: "Compatibility and commands", other: "Other settings" },
@@ -648,6 +648,30 @@ function generalSettings(fields, renderField, titles) {
       const available = names.filter((name) => remaining.has(name));
       if (!available.length) continue;
       const row = element("div", undefined, available.length > 1 ? "settings-row paired" : "settings-row");
+      if (available.length === 2 && available[0] === "brightness_mode") {
+        // Keep the selector and explanation full width. Only Linear and
+        // Sigmoid offer a shared temperature curve; Natural keeps its own
+        // solar color behavior. Unmounted fields remain in readValues' draft.
+        row.className = "settings-row";
+        const choice = renderField(remaining.get("brightness_mode"));
+        const temperatureField = remaining.get("apply_temperature_curve");
+        const selector = choice.querySelector("select");
+        let temperatureControl;
+        row.append(choice);
+        const update = () => {
+          // field() captures the outgoing checkbox before this listener.
+          // Rebuilding from that draft preserves it across mode changes.
+          // Keep the selector mounted so keyboard focus does not move.
+          if (temperatureControl) row.removeChild(temperatureControl);
+          temperatureControl = ["linear", "tanh"].includes(selector.value) ? renderField(temperatureField) : null;
+          if (temperatureControl) row.append(temperatureControl);
+        };
+        selector.addEventListener("input", update);
+        update();
+        for (const name of available) remaining.delete(name);
+        section.append(row);
+        continue;
+      }
       if (available.length === 3 && available[0] === "sleep_rgb_or_color_temp") {
         const fields = new Map(available.map((name) => [name, remaining.get(name)]));
         let activeMode;

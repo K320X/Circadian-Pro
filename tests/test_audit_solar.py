@@ -67,6 +67,27 @@ class SolarAuditTests(unittest.TestCase):
     def test_real_polar_sunrise_and_sunset_failures_use_exact_bounded_endpoints_in_every_mode(self):
         self.assert_polar_endpoints()
 
+    def test_shared_temperature_curve_and_zero_windows_preserve_polar_endpoints_and_sleep(self):
+        for month, expected_kelvin, expected_brightness in ((6, 6503, 91), (12, 2001, 7)):
+            for mode in ("linear", "tanh"):
+                for zero_windows in (False, True):
+                    with self.subTest(month=month, mode=mode, zero_windows=zero_windows):
+                        window = timedelta() if zero_windows else timedelta(hours=1)
+                        settings = self.settings(
+                            brightness_mode=mode, apply_temperature_curve=True,
+                            adapt_until_sleep=True, sleep_rgb_or_color_temp="rgb_color",
+                            brightness_mode_time_dark=window, brightness_mode_time_light=window,
+                        )
+                        sample = datetime(2026, month, 21, 12, tzinfo=UTC)
+                        result = settings.brightness_and_color(sample, False)
+                        self.assertEqual(result["color_temp_kelvin"], expected_kelvin)
+                        self.assertEqual(result["brightness_pct"], expected_brightness)
+                        self.assertFalse(result["force_rgb_color"])
+                        asleep = settings.brightness_and_color(sample, True)
+                        self.assertEqual(asleep["brightness_pct"], 3)
+                        self.assertEqual(asleep["color_temp_kelvin"], 1100)
+                        self.assertEqual(asleep["rgb_color"], (255, 56, 0))
+
     def test_python_314_acos_error_wording_preserves_real_polar_modes_and_manual_sleep(self):
         actual_acos = astral.sun.acos
         absent_cosines = []

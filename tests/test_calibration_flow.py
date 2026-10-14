@@ -430,7 +430,7 @@ class CalibrationFlowTests(unittest.TestCase):
         self.assertEqual(result["type"], "create_entry")
 
     def test_final_save_converts_brightness_minutes_without_persisting_form_aliases(self):
-        for light, dark in ((60, 10000), (60, 60), (60.25, 10000.75), (1200, 1800)):
+        for light, dark in ((60, 10000), (60, 60), (60.25, 10000.75), (1200, 1800), (0, 0), (1, 0.25)):
             with self.subTest(light=light, dark=dark):
                 flow = self.flow(mode="rgb", brightness_mode_time_light=1, brightness_mode_time_dark=10000)
                 original = deepcopy(flow.config_entry.options)
@@ -447,6 +447,27 @@ class CalibrationFlowTests(unittest.TestCase):
                 self.assertNotIn("brightness_mode_time_dark_minutes", result["data"])
                 self.assertEqual(flow.config_entry.options, original)
                 self.assertEqual(draft["brightness_mode_time_dark_minutes"], dark / 60)
+
+    def test_final_save_preserves_temperature_curve_choice_and_zero_windows(self):
+        for brightness_mode in ("linear", "tanh", "default"):
+            for enabled in (False, True):
+                with self.subTest(brightness_mode=brightness_mode, enabled=enabled):
+                    flow = self.flow(mode="rgb")
+                    original = deepcopy(flow.config_entry.options)
+                    draft = {"lights": ["light.strip"], "brightness_mode": brightness_mode,
+                             "apply_temperature_curve": enabled,
+                             "brightness_mode_time_light_minutes": 0,
+                             "brightness_mode_time_dark_minutes": 0}
+                    self.assertEqual(immediate(flow.async_step_init(draft))["step_id"], "cal_neutral")
+                    immediate(flow.async_step_cal_neutral(self.neutral()))
+                    result = immediate(flow.async_step_cal_warm(self.warm()))
+                    self.assertEqual(result["type"], "create_entry")
+                    self.assertIs(result["data"]["apply_temperature_curve"], enabled)
+                    self.assertEqual(result["data"]["brightness_mode_time_light"], 0)
+                    self.assertEqual(result["data"]["brightness_mode_time_dark"], 0)
+                    self.assertEqual(result["data"]["cal_rgb_neutral_r"], self.neutral()["cal_rgb_neutral_r"])
+                    self.assertEqual(result["data"]["hidden_option"], original["hidden_option"])
+                    self.assertEqual(flow.config_entry.options, original)
 
     def test_rgbww_has_physical_and_mixture_fields_rgbw_keeps_legacy_fields(self):
         for mode, physical_step, expected_physical in (
