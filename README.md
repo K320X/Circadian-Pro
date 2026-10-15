@@ -19,6 +19,34 @@ It supports multiple independent instances, manual-control detection, automatic 
 
 Version 0.21.28 prepares installation and updates through HACS, adds bundled Home Assistant brand icons and validates the integration with HACS and Hassfest; see the [release notes](docs/release-0.21.28.md). It retains the compact profile list and first-profile setup from the sidebar panel. The [full audit report](docs/auditoria-2026-10-13.md) records the earlier code review and its validation limits.
 
+## Screenshots
+
+The actual Circadian Pro panel, shown with fictional profiles and lights. These examples use demonstration solar times in UTC; your installation uses Home Assistant's location and time zone.
+
+**Profiles:** create a profile or open its settings and calibration from one compact list.
+
+![Circadian Pro profile list with a configuration button for each example profile](docs/images/profiles.jpg)
+
+**Brightness and color temperature:** preview the daily curve, sunrise and sunset, and the effect of your transition windows and sleep schedule.
+
+![Brightness and color-temperature settings with the interactive daily curve](docs/images/daily-curve.jpg)
+
+**Calibration:** adjust RGB and white channels using sliders or numbers. Light preview is optional.
+
+![RGB and dual-white calibration controls at the neutral 4000 K reference](docs/images/calibration.jpg)
+
+**On mobile:** the same panel adapts to a narrow screen. This example shows the Spanish interface.
+
+<img src="docs/images/mobile-es.jpg" alt="Spanish Circadian Pro profile list on a mobile-sized screen" width="390">
+
+## Languages
+
+The panel and configuration forms support **English and Spanish**, selected automatically from **your Home Assistant interface language**. Spanish locales use Spanish; other languages currently fall back to English. If you change the interface language, reopen or reload the panel.
+
+Profile names and light names stay as you entered them. Some technical switch names and service descriptions remain in English, and a few secondary help texts are currently available only in Spanish. GitHub's README is separate from Home Assistant and does not change language automatically.
+
+**En español:** el panel y los formularios se muestran en español o inglés según el idioma de tu interfaz de Home Assistant. Si lo cambias, vuelve a abrir o recarga el panel. Los nombres de tus perfiles y luces se conservan.
+
 ## Features
 
 - Automatic brightness and color-temperature adaptation.
@@ -57,7 +85,7 @@ HACS custom-repository installation works independently of inclusion in its defa
 
 ### Manual installation
 
-1. Download `circadian_pro.zip` from the [latest release](../../releases/latest).
+1. Download `circadian_pro.zip` from the [latest release](https://github.com/K320X/Circadian-Pro/releases/latest).
 2. Extract the ZIP file.
 3. Copy the resulting `circadian_pro` folder into:
 

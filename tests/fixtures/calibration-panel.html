@@ -9,12 +9,23 @@
   .notice { height:38px; box-sizing:border-box; padding:6px 20px; background:#e8f0fe; color:#204779; font-size:13px; display:flex; align-items:center; gap:8px; }
   .notice button { margin-left:auto; }
   circadian-pro-calibration { height:calc(100vh - 38px); display:block; }
+  body.showcase .notice { display:none; }
+  body.showcase circadian-pro-calibration { height:100vh; }
 </style>
 <div class="notice">Prueba local · No controla tus luces. <span id="demo-status">Vista simulada detenida.</span><button id="theme-toggle" type="button">Tema oscuro</button></div>
 <circadian-pro-calibration></circadian-pro-calibration>
 <script type="module">
   import '../../custom_components/circadian_pro/frontend/calibration-panel.js';
-  const translationDocument = await (await fetch('../../custom_components/circadian_pro/translations/es.json')).json();
+  const params = new URLSearchParams(location.search);
+  const language = params.get('lang') === 'en' ? 'en' : 'es';
+  const showcase = params.get('showcase') === '1';
+  document.documentElement.lang = language;
+  if (language === 'en') document.title = 'Circadian Pro local calibration demo';
+  if (showcase) {
+    document.title = 'Circadian Pro demo';
+    document.body.classList.add('dark', 'showcase');
+  }
+  const translationDocument = await (await fetch(`../../custom_components/circadian_pro/translations/${language}.json`)).json();
   const translations = {...translationDocument.options, selector:translationDocument.selector};
   // Synthetic profiles and lights for UI testing; no installation data.
   const original = {
@@ -29,6 +40,12 @@
     sleep_activation_mode:'schedule',sleep_schedule_start:'21:00:00',sleep_schedule_end:'06:00:00',sunrise_time:'None',
     sunrise_offset_minutes:0,sunset_offset_minutes:0,adapt_delay:0,autoreset_control_seconds:0,send_split_delay:0,
   };
+  // README screenshots use synthetic settings and a fixed date, not a real home.
+  if (showcase) Object.assign(original, {
+    min_brightness:10, max_brightness:100, brightness_mode:'tanh', apply_temperature_curve:true,
+    brightness_mode_time_light_minutes:90, brightness_mode_time_dark_minutes:90,
+    sleep_brightness:5, sleep_schedule_start:'22:00:00', sleep_schedule_end:'06:00:00',
+  });
   const steps = ['init','white_channels','cal_neutral','cal_warm'];
   const names = [
     ['lights','interval','transition','initial_transition','min_color_temp','max_color_temp','min_brightness','max_brightness','brightness_mode','apply_temperature_curve','brightness_mode_time_light_minutes','brightness_mode_time_dark_minutes',
@@ -45,7 +62,14 @@
     ['local-profile-b',{entry_id:'local-profile-b',title:'Profile B',modified_at:'2026-10-12T12:00:00Z',settings:{...original,lights:['light.example_b']}}],
     ['local-profile-c',{entry_id:'local-profile-c',title:'Profile C',modified_at:'2026-10-11T12:00:00Z',settings:{...original,lights:['light.example_c']}}],
   ]);
-  if (new URLSearchParams(location.search).get('empty') === '1') profiles.clear();
+  if (showcase) {
+    const titles = language === 'en' ? ['Living room','Bedroom','Reading corner'] : ['Salón','Dormitorio','Rincón de lectura'];
+    [...profiles.values()].forEach((profile, index) => {
+      profile.title = titles[index];
+      profile.modified_at = `2026-06-${21-index}T12:00:00Z`;
+    });
+  }
+  if (params.get('empty') === '1') profiles.clear();
   const metadataListeners = new Set();
   const connectionListeners = new Map();
   const metadata = (profile) => ({entry_id:profile.entry_id,title:profile.title,domain:'circadian_pro',state:'loaded'});
@@ -97,7 +121,7 @@
   });
   const panel = document.querySelector('circadian-pro-calibration');
   panel.hass = {
-    language:'es',user:{is_admin:true},
+    language,user:{is_admin:true},
     connection:{
       addEventListener:(event,callback) => {connectionListeners.set(event,callback);},
       removeEventListener:(event,callback) => {if(connectionListeners.get(event) === callback) connectionListeners.delete(event);},
@@ -126,7 +150,7 @@
       if(message.type.endsWith('/translations')) return translations;
       if(message.type.endsWith('/solar')) {
         // Explicit demonstration data; production always requests HA's location.
-        const now = new Date();
+        const now = showcase ? new Date('2026-06-21T12:00:00Z') : new Date();
         const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000;
         const time = (value, fallback) => value && value !== 'None'
           ? value.split(':').reduce((total, part, index) => total + Number(part) * [60, 1, 1/60][index], 0) : fallback;
@@ -142,13 +166,14 @@
         const nightMiddle = ((set+rise+1440)/2)%1440;
         return {
           local_date: now.toISOString().slice(0,10), timezone: 'UTC', day_start: start, day_end: start+86400,
-          refresh_after: start+86400-Date.now()/1000,
+          refresh_after: showcase ? 86400 : start+86400-Date.now()/1000,
           sleep_mode:mode,sleep_windows:windows,sleep_all_day:sleepAllDay,
           midpoints:[{kind:'day',timestamp:start+(rise+set)*30,local_time:clock((rise+set)/2)},
             {kind:'night',timestamp:start+nightMiddle*60,local_time:clock(nightMiddle)}].sort((a,b)=>a.timestamp-b.timestamp),
           sunrise: {timestamp:start+rise*60,local_time:clock(rise)}, sunset: {timestamp:start+set*60,local_time:clock(set)},
           events: [-2,-1,0,1,2].flatMap((day) => [
-            ['solar_midnight',50],['sunrise',rise],['solar_noon',770],['sunset',set],
+            ['solar_midnight',showcase ? nightMiddle : 50],['sunrise',rise],
+            ['solar_noon',showcase ? (rise+set)/2 : 770],['sunset',set],
           ].map(([event,minute]) => ({event,timestamp:start+day*86400+minute*60}))),
         };
       }
