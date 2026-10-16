@@ -428,5 +428,6 @@ async def async_setup_frontend(hass: Any) -> None:
                     hass, frontend_url_path=PANEL_PATH, webcomponent_name=data["element_name"],
                     sidebar_title="Circadian Pro", sidebar_icon="mdi:theme-light-dark",
                     module_url=data["module_url"], require_admin=True,
+                    config_panel_domain=DOMAIN,
                 )
             data["panel_registered"] = True

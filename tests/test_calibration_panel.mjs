@@ -1095,7 +1095,7 @@ test("detaching clears closed flow references before the same panel reconnects",
   assert.equal(panel.initialized, false);
   CircadianCalibrationPanel.prototype.connectedCallback.call(panel);
   await flushMicrotasks();
-  assert.deepEqual(events, ["pagehide", "close-options", "close-create", "unsubscribe", "initialize"]);
+  assert.deepEqual(events, ["pagehide", "location-changed", "popstate", "close-options", "close-create", "unsubscribe", "initialize"]);
 });
 
 test("header keeps the mobile menu while New profile appears below the profile table", (t) => {

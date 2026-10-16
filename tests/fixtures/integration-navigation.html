@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Circadian Pro – Home Assistant</title>
+  <style>
+    :root { font-family:Roboto,Arial,sans-serif; color:#e9edf1; background:#080f15; color-scheme:dark; }
+    * { box-sizing:border-box; }
+    body { margin:0; }
+    button,input,a { font:inherit; }
+    button,a { -webkit-tap-highlight-color:transparent; }
+    button { cursor:pointer; }
+    a { color:#00d5b1; }
+    button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible { outline:3px solid #65ccff; outline-offset:3px; }
+    .toolbar { height:56px; display:flex; align-items:center; padding:0 18px; border-bottom:1px solid #1b232b; }
+    .toolbar-icon { display:inline-flex; padding:10px; color:#8595a3; }
+    .toolbar-end { margin-left:auto; display:flex; gap:12px; }
+    svg { width:24px; height:24px; display:block; fill:currentColor; }
+    .container { max-width:1064px; padding:32px; margin:auto; }
+    .header { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:24px; }
+    .identity { display:flex; align-items:center; gap:24px; min-width:0; }
+    .logo { width:80px; height:80px; object-fit:contain; flex:none; }
+    h1 { font-size:32px; line-height:40px; margin:0 0 4px; font-weight:700; }
+    .sub { display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px; color:#bac9d8; font-size:14px; line-height:22px; }
+    .custom { display:inline-flex; gap:8px; align-items:center; color:#00d5b1; }
+    .custom svg { color:#ffbd00; width:22px; height:22px; }
+    .counts { color:#00d5b1; font-size:14px; line-height:24px; margin-top:2px; }
+    .primary { border:0; border-radius:24px; padding:12px 18px; background:#009bc0; color:#fff; white-space:nowrap; font-size:14px; min-height:44px; }
+    .primary:hover { background:#13aed2; }
+    .search { position:relative; margin-bottom:24px; }
+    .search svg { position:absolute; width:20px; height:20px; top:13px; left:14px; color:#c3ccd6; pointer-events:none; }
+    .search input { width:100%; min-height:46px; background:#0e1720; color:inherit; border:1px solid #69737c; border-radius:8px; padding:12px 14px 12px 43px; font-size:14px; }
+    .search input::placeholder { color:#b8c5d2; opacity:1; }
+    h2 { font-size:14px; font-weight:400; color:#b6c9dc; margin:0 16px 10px; }
+    .entry { background:#0e1720; border:1px solid #1f2933; border-radius:20px; margin:0 0 12px; overflow:hidden; }
+    .entry-heading { display:flex; align-items:center; min-height:72px; padding:8px 16px; gap:10px; }
+    .entry-title { font-size:14px; line-height:20px; margin:0; flex:1; min-width:0; overflow-wrap:anywhere; }
+    .entry.anchor .entry-title { padding-left:0; }
+    .collapse,.gear { border:0; padding:10px; background:transparent; color:#929ba3; width:44px; height:44px; flex:none; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; text-decoration:none; }
+    .collapse:hover,.gear:hover { background:#26303a; color:#e7edf3; }
+    .collapse svg { width:20px; height:20px; transition:transform .15s ease; }
+    .entry.collapsed .collapse svg { transform:rotate(180deg); }
+    .menu-decoration { display:inline-flex; align-items:center; justify-content:center; width:24px; height:44px; color:#939ca4; flex:none; }
+    .gear { margin-left:auto; }
+    .device { border-top:1px solid #1b2530; min-height:74px; padding:14px 24px 14px 56px; display:flex; align-items:center; gap:18px; }
+    .device>svg { color:#9ea5ac; flex:none; }
+    .device-label { font-size:14px; line-height:21px; flex:1; overflow-wrap:anywhere; }
+    .device-meta { font-size:12px; color:#adc1d6; }
+    .device-end { display:flex; gap:24px; color:#939ca4; align-items:center; }
+    .device-end svg { width:22px; height:22px; }
+    .device-end .edit { border-left:1px solid #202a34; padding-left:24px; }
+    .entry.collapsed .device { display:none; }
+    .empty { color:#b6c9dc; font-size:14px; padding:24px 16px; }
+    dialog { max-width:min(480px,calc(100vw - 32px)); border:1px solid #354552; border-radius:20px; padding:26px; background:#121e28; color:inherit; }
+    dialog::backdrop { background:#0009; }
+    dialog h2 { color:inherit; font-weight:600; font-size:21px; margin:0 0 16px; }
+    dialog p { font-size:14px; line-height:1.6; color:#bdcddc; margin:0 0 16px; }
+    dialog label { display:block; font-size:14px; margin-bottom:8px; }
+    dialog select { width:100%; min-height:48px; padding:12px; border:1px solid #69737c; border-radius:8px; background:#0e1720; color:inherit; font:inherit; }
+    .dialog-actions { display:flex; justify-content:flex-end; align-items:center; flex-wrap:wrap; gap:18px; margin-top:24px; }
+    .dialog-actions a { font-size:14px; text-decoration:none; padding:10px 0; }
+    .dialog-actions button { background:transparent; color:#82d7ff; border:1px solid #425564; border-radius:22px; padding:10px 16px; min-height:44px; }
+    [hidden] { display:none !important; }
+    @media(max-width:600px) {
+      .toolbar { height:48px; padding:0 6px; }
+      .container { padding:24px 16px; }
+      .header { align-items:flex-start; flex-wrap:wrap; gap:18px; }
+      .identity { gap:16px; }
+      .logo { width:56px; height:56px; }
+      h1 { font-size:25px; line-height:32px; }
+      .sub { gap:3px 12px; font-size:12px; }
+      .custom svg { width:18px; height:18px; }
+      .counts { font-size:12px; }
+      .header>.primary { margin-left:72px; }
+      .entry-heading { gap:4px; padding:8px 10px; min-height:64px; }
+      .entry.anchor .entry-title { padding-left:10px; }
+      .device { min-height:70px; padding:12px 16px 12px 28px; gap:12px; }
+      .device-end { gap:12px; }
+      .device-end .edit { padding-left:12px; }
+    }
+    @media(prefers-reduced-motion:reduce) { .collapse svg { transition:none; } }
+  </style>
+</head>
+<body>
+  <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+    <symbol id="cog" viewBox="0 0 24 24"><path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.03-.66-.08-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.07-.73-1.68-.98l-.38-2.65A.488.488 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.68.98l-2.49-1c-.23-.08-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65C4.53 11.34 4.5 11.67 4.5 12s.03.66.08.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.07.73 1.68.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.58 1.68-.98l2.49 1c.23.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.1-1.65zM12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+    <symbol id="chevron" viewBox="0 0 24 24"><path d="m7 14 5-5 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="next" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="dots" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></symbol>
+    <symbol id="device" viewBox="0 0 24 24"><path d="M6 4h12M6 12h12M6 20h12" fill="none" stroke="currentColor" stroke-width="2"/><rect x="5" y="2" width="4" height="4" rx="1" fill="#0e1720" stroke="currentColor" stroke-width="2"/><rect x="15" y="10" width="4" height="4" rx="1" fill="#0e1720" stroke="currentColor" stroke-width="2"/><rect x="7" y="18" width="4" height="4" rx="1" fill="#0e1720" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="pencil" viewBox="0 0 24 24"><path d="m4 16 11-11 4 4-11 11H4zm13-13 2-2 4 4-2 2z"/></symbol>
+    <symbol id="package" viewBox="0 0 24 24"><path d="m3 7 9-5 9 5v10l-9 5-9-5zm0 0 9 5 9-5m-9 5v10M7.5 4.5l9 5V15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  </svg>
+  <div class="toolbar" aria-hidden="true">
+    <span class="toolbar-icon"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.42-1.41L7.83 13H20z"/></svg></span>
+    <div class="toolbar-end"><span class="toolbar-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 8a3 3 0 0 1 6 0c0 2-3 2-3 5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="17" r="1"/></svg></span><span class="toolbar-icon"><svg><use href="#dots"/></svg></span></div>
+  </div>
+  <main class="container">
+    <div class="header">
+      <div class="identity">
+        <img class="logo" src="../../custom_components/circadian_pro/brand/icon.png" alt="">
+        <div>
+          <h1>Circadian Pro</h1>
+          <div class="sub"><span>Versión 0.21.28</span><span class="custom"><svg aria-hidden="true"><use href="#package"/></svg>Integración personalizada</span></div>
+          <div class="counts">3 servicios · 12 entidades</div>
+        </div>
+      </div>
+      <button class="primary" id="add-entry" type="button">Añadir entrada</button>
+    </div>
+    <div class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.8"/></svg>
+      <input type="search" id="search" placeholder="Buscar" aria-label="Buscar entradas de integración" autocomplete="off">
+    </div>
+    <h2>Entradas de integración</h2>
+    <div id="entries"></div>
+    <p id="empty" class="empty" role="status" hidden>No se encontraron entradas.</p>
+  </main>
+  <dialog id="add-dialog" aria-labelledby="dialog-title">
+    <h2 id="dialog-title">Crear o duplicar</h2>
+    <p>Crea un nuevo perfil o duplica uno existente.</p>
+    <label for="entry-action">Acción</label>
+    <select id="entry-action">
+      <option value="new">Create new instance</option>
+      <option value="local-profile-b">Duplicate 'Dormitorio'</option>
+      <option value="local-profile-c">Duplicate 'Rincón de lectura'</option>
+      <option value="local-profile-a">Duplicate 'Salón'</option>
+    </select>
+    <div class="dialog-actions">
+      <button id="close-dialog" type="button" autofocus>Cerrar</button>
+    </div>
+  </dialog>
+  <script type="module">
+    const profiles = [
+      {id:'local-panel', title:'Circadian Pro'},
+      {id:'local-profile-b', title:'Dormitorio', room:'Dormitorio'},
+      {id:'local-profile-c', title:'Rincón de lectura', room:'Salón'},
+      {id:'local-profile-a', title:'Salón', room:'Salón'},
+    ];
+    const icon = (name) => `<svg aria-hidden="true"><use href="#${name}"/></svg>`;
+    const entries = document.querySelector('#entries');
+    for (const profile of profiles) {
+      const anchor = profile.id === 'local-panel';
+      const entry = document.createElement('section');
+      entry.className = `entry${anchor ? ' anchor' : ''}`;
+      entry.dataset.search = profile.title.toLocaleLowerCase('es');
+      entry.innerHTML = `
+        <div class="entry-heading">
+          ${anchor ? '' : `<button class="collapse" type="button" aria-expanded="true" aria-controls="details-${profile.id}" aria-label="Contraer ${profile.title}">${icon('chevron')}</button>`}
+          <h3 class="entry-title">${profile.title}</h3>
+          <a class="gear" href="calibration-panel.html?lang=es&amp;showcase=1&amp;integration_preview=1&amp;config_entry=${profile.id}" aria-label="Configurar ${profile.title}" title="Abrir ${profile.title} en Circadian Pro">${icon('cog')}</a>
+          <span class="menu-decoration" aria-hidden="true">${icon('dots')}</span>
+        </div>
+        ${anchor ? '' : `<div class="device" id="details-${profile.id}">${icon('device')}<div class="device-label">${profile.title}<div class="device-meta">${profile.room} · 4 entidades</div></div><div class="device-end" aria-hidden="true">${icon('next')}<span class="edit">${icon('pencil')}</span>${icon('dots')}</div></div>`}
+      `;
+      entry.querySelector('.collapse')?.addEventListener('click', (event) => {
+        const collapsed = entry.classList.toggle('collapsed');
+        event.currentTarget.setAttribute('aria-expanded', String(!collapsed));
+        event.currentTarget.setAttribute('aria-label', `${collapsed ? 'Expandir' : 'Contraer'} ${profile.title}`);
+      });
+      entries.append(entry);
+    }
+    document.querySelector('#search').addEventListener('input', (event) => {
+      const query = event.target.value.trim().toLocaleLowerCase('es');
+      for (const entry of entries.children) entry.hidden = !entry.dataset.search.includes(query);
+      document.querySelector('#empty').hidden = [...entries.children].some((entry) => !entry.hidden);
+    });
+    const dialog = document.querySelector('#add-dialog');
+    document.querySelector('#add-entry').addEventListener('click', () => dialog.showModal());
+    document.querySelector('#close-dialog').addEventListener('click', () => dialog.close());
+  </script>
+</body>
+</html>

@@ -9,8 +9,8 @@
   .notice { height:38px; box-sizing:border-box; padding:6px 20px; background:#e8f0fe; color:#204779; font-size:13px; display:flex; align-items:center; gap:8px; }
   .notice button { margin-left:auto; }
   circadian-pro-calibration { height:calc(100vh - 38px); display:block; }
-  body.showcase .notice { display:none; }
-  body.showcase circadian-pro-calibration { height:100vh; }
+  body.showcase .notice, body.integration-preview .notice { display:none; }
+  body.showcase circadian-pro-calibration, body.integration-preview circadian-pro-calibration { height:100vh; }
 </style>
 <div class="notice">Prueba local · No controla tus luces. <span id="demo-status">Vista simulada detenida.</span><button id="theme-toggle" type="button">Tema oscuro</button></div>
 <circadian-pro-calibration></circadian-pro-calibration>
@@ -19,11 +19,27 @@
   const params = new URLSearchParams(location.search);
   const language = params.get('lang') === 'en' ? 'en' : 'es';
   const showcase = params.get('showcase') === '1';
+  const integrationPreview = params.get('integration_preview') === '1';
   document.documentElement.lang = language;
   if (language === 'en') document.title = 'Circadian Pro local calibration demo';
   if (showcase) {
-    document.title = 'Circadian Pro demo';
-    document.body.classList.add('dark', 'showcase');
+    document.body.classList.add('showcase');
+  }
+  if (showcase || integrationPreview) {
+    document.title = 'Circadian Pro';
+    document.body.classList.add('dark');
+    document.querySelector('#demo-status').hidden = true;
+  }
+  if (integrationPreview) {
+    document.body.classList.add('integration-preview');
+    // Keep the production panel's integration shortcut inside this local demo.
+    document.addEventListener('click', (event) => {
+      const link = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+      if (link?.getAttribute('href') === '/config/integrations/integration/circadian_pro') {
+        event.preventDefault();
+        location.href = 'integration-navigation.html';
+      }
+    });
   }
   const translationDocument = await (await fetch(`../../custom_components/circadian_pro/translations/${language}.json`)).json();
   const translations = {...translationDocument.options, selector:translationDocument.selector};
@@ -232,7 +248,7 @@
   };
   // A read-only inspection hook for automated local UI checks.
   window.calibrationDemoCommands = commands;
-  document.querySelector('#theme-toggle').addEventListener('click', (event) => {
+  document.querySelector('#theme-toggle')?.addEventListener('click', (event) => {
     const dark = document.body.classList.toggle('dark');
     event.currentTarget.textContent = dark ? 'Tema claro' : 'Tema oscuro';
   });

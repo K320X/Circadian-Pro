@@ -588,7 +588,7 @@ const COPY = {
     noAvailableProfiles: "No hay perfiles disponibles. Comprueba su estado en la integración o crea un nuevo perfil.",
     admin: "Abre este panel con un usuario administrador.", error: "No se pudo completar la acción.",
     invalid: "Revisa los valores indicados antes de continuar.", missing: "Esta luz no está disponible en Home Assistant.",
-    fallback: "Este formulario contiene un campo que todavía no admite este panel. Usa Configurar en la integración.",
+    fallback: "Este formulario contiene un campo que todavía no admite el panel. Actualiza Circadian Pro o informa del problema.",
   },
   en: {
     title: "Circadian Pro", profile: "Profile", profiles: "Profiles", actions: "Actions", start: "Configure and calibrate", menu: "Open menu",
@@ -651,7 +651,7 @@ const COPY = {
     noAvailableProfiles: "There are no available profiles. Check their status in the integration or create a new profile.",
     admin: "Open this panel as an administrator.", error: "The action could not be completed.",
     invalid: "Check the indicated values before continuing.", missing: "This light is unavailable in Home Assistant.",
-    fallback: "This form contains a field this panel does not yet support. Use Configure on the integration.",
+    fallback: "This form contains a field the panel does not yet support. Update Circadian Pro or report the problem.",
   },
 };
 
@@ -1388,6 +1388,10 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.selectedEntryId = null;
     this.selectedEntryTitle = "";
     this.profileSort = "recent";
+    this.routeEntryId = undefined;
+    this.routeRevision = 0;
+    this.pendingRoute = null;
+    this.onLocationChanged = () => this.syncRoute();
     this.onLeave = () => {
       this.session?.setEnabled(false).catch(() => {});
     };
@@ -1398,6 +1402,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
     if (!this.initialized && this.isConnected) this.initialize();
   }
   get hass() { return this._hass; }
+  set route(value) { this._route = value; this.syncRoute(); }
+  get route() { return this._route; }
   get language() { return this._hass?.language?.startsWith("es") ? "es" : "en"; }
   get copy() { return COPY[this.language]; }
   get totalSteps() {
@@ -1409,11 +1415,18 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   connectedCallback() {
     window.addEventListener("pagehide", this.onLeave);
+    window.addEventListener("location-changed", this.onLocationChanged);
+    window.addEventListener("popstate", this.onLocationChanged);
     if (this._hass && !this.initialized) this.initialize();
   }
 
   disconnectedCallback() {
     window.removeEventListener("pagehide", this.onLeave);
+    window.removeEventListener("location-changed", this.onLocationChanged);
+    window.removeEventListener("popstate", this.onLocationChanged);
+    this.routeRevision++;
+    this.routeEntryId = undefined;
+    this.pendingRoute = null;
     this.solarContext?.close();
     this.solarContext = null;
     this.timingChart?.close();
@@ -1462,6 +1475,40 @@ export class CircadianCalibrationPanel extends HTMLElement {
     });
   }
 
+  syncRoute() {
+    if (!this.isConnected || !this.initialized || !this.catalogLoaded || !this._hass?.user?.is_admin) return;
+    const entryId = new URLSearchParams(window.location?.search || "").get("config_entry") || null;
+    if (entryId !== this.routeEntryId) {
+      const initialCatalog = this.routeEntryId === undefined && entryId === null;
+      this.routeEntryId = entryId;
+      if (initialCatalog) return;
+      const revision = ++this.routeRevision;
+      this.creationRevision++;
+      const creator = this.creator;
+      this.creator = null;
+      this.newProfileOpen = false;
+      // Navigation cancels in-flight work immediately, even while an options
+      // request is pending. The next profile waits for preview restoration.
+      const cleanup = Promise.all([this.closeWizard(), creator?.close()]);
+      cleanup.catch(() => {});
+      this.pendingRoute = { entryId, revision, cleanup };
+    }
+    if (this.busy || !this.pendingRoute) return;
+    const request = this.pendingRoute;
+    this.pendingRoute = null;
+    return this.action(async () => {
+      await request.cleanup;
+      if (!this.isConnected || request.revision !== this.routeRevision) return;
+      this.entry = null;
+      this.createdProfile = this.pendingCreated = null;
+      this.message = "";
+      this.saveUncertain = false;
+      // The panel's own entry and unavailable/deleted profiles are deliberately
+      // absent from this catalog. Their links safely open the profile list.
+      if (request.entryId) await this.openEntry(request.entryId);
+    });
+  }
+
   applyEntries(payload) {
     const entries = Array.isArray(payload) ? payload : payload.entries;
     this.entries = entries;
@@ -1477,6 +1524,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     // Metadata must never replace an unsaved form or its focused inputs.
     if (!this.busy && !this.flow && !this.newProfileOpen) this.render();
     else this.updateControls();
+    this.syncRoute?.();
   }
 
   catalogFailure() {
@@ -1504,6 +1552,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       this.busy = false;
       if (this.isConnected !== false) this.render();
       if (!this.initialized && this.isConnected) this.initialize();
+      else this.syncRoute?.();
     }
   }
 

@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.28`
+**Current stable version:** `0.21.29`
 
-Version 0.21.28 prepares installation and updates through HACS, adds bundled Home Assistant brand icons and validates the integration with HACS and Hassfest; see the [release notes](docs/release-0.21.28.md). It retains the compact profile list and first-profile setup from the sidebar panel. The [full audit report](docs/auditoria-2026-10-13.md) records the earlier code review and its validation limits.
+Version 0.21.29 connects Home Assistant's integration settings buttons directly to the Circadian Pro panel: a profile opens its own configuration, while the panel entry opens the profile list. See the [release notes](docs/release-0.21.29.md). The [full audit report](docs/auditoria-2026-10-13.md) records the earlier code review and its validation limits.
 
 ## Screenshots
 
@@ -163,9 +163,11 @@ General settings are grouped into adaptation timing, brightness and temperature,
 
 The sidebar uses a sun-and-moon icon. The profile-list header has a **Go to integration** shortcut to Circadian Pro's native Home Assistant page, where profile devices, switches and entity IDs are available. While editing, the header retains **Close without saving**. On narrow screens, the panel header provides a button to open Home Assistant's sidebar; it stays hidden on desktop. Primary buttons use the theme's background color for readable text in both light and dark themes.
 
+On the native integration page, the settings button for a loaded profile opens that profile directly in the Circadian Pro panel. The settings button on the separate **Circadian Pro** panel entry opens the profile list. A link to an unavailable or deleted profile also returns to the list. Switching profiles through these links closes the previous wizard without saving its draft and stops any active light preview before opening the next profile. Home Assistant's **Add entry** button and the separate panel entry remain in place.
+
 The preview checkbox is disabled by default. Checking it applies the draft immediately; adjusting RGB or white controls while it is checked updates the lights without saving. Unchecking it stops the preview and restores the previous state.
 
-The panel includes general settings, physical white channels, and both calibration points. The first step has **Next**; intermediate steps have **Back** and **Next**; the final step has **Back** and **Finish**. Only **Finish** saves the settings. Going back preserves your draft. Navigation stops the preview, so each calibration step starts with it disabled. Canceling or closing the panel also stops the preview; the 60-second expiry stops it and clears the checkbox automatically. A light changed manually during the preview keeps the external change. The standard integration options form remains available for editing settings without immediate previews.
+The panel includes general settings, physical white channels, and both calibration points. The first step has **Next**; intermediate steps have **Back** and **Next**; the final step has **Back** and **Finish**. Only **Finish** saves the settings. Going back preserves your draft. Navigation stops the preview, so each calibration step starts with it disabled. Canceling or closing the panel also stops the preview; the 60-second expiry stops it and clears the checkbox automatically. A light changed manually during the preview keeps the external change. The panel uses Home Assistant's existing options flow to validate and save settings.
 
 ## Brightness / temperature modes
 

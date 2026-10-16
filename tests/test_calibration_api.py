@@ -565,6 +565,7 @@ class ApiTests(unittest.TestCase):
         panel = self.panel_custom.calls[0]
         self.assertEqual(panel["frontend_url_path"], "circadian-pro-calibration")
         self.assertEqual(panel["sidebar_title"], "Circadian Pro")
+        self.assertEqual(panel["config_panel_domain"], "circadian_pro")
         self.assertTrue(panel["require_admin"])
         self.assertRegex(panel["module_url"], r"^/circadian_pro_static/calibration-panel-[0-9a-f]{16}\.js$")
         fingerprint = panel["module_url"].removeprefix("/circadian_pro_static/calibration-panel-").removesuffix(".js")
