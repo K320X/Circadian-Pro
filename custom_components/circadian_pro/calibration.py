@@ -33,6 +33,11 @@ _MODE_ATTRIBUTES = {
 class CalibrationPreviewError(HomeAssistantError):
     """A preview cannot safely be started for the requested lights."""
 
+    def __init__(self, message: str, *, code: str = "preview_unavailable") -> None:
+        super().__init__(message)
+        # The panel translates stable codes; diagnostic messages stay in logs/API.
+        self.code = code
+
 
 async def _call_preview_service(hass: Any, *args: Any, **kwargs: Any) -> Any:
     """Bound controller I/O so a stalled device cannot retain a preview lock."""
@@ -40,7 +45,7 @@ async def _call_preview_service(hass: Any, *args: Any, **kwargs: Any) -> Any:
         async with asyncio.timeout(PREVIEW_SERVICE_TIMEOUT):
             return await hass.services.async_call(*args, **kwargs)
     except TimeoutError as err:
-        raise CalibrationPreviewError("The light controller did not finish the calibration command in time.") from err
+        raise CalibrationPreviewError("The light controller did not finish the calibration command in time.", code="preview_timeout") from err
 
 
 @asynccontextmanager
@@ -50,7 +55,7 @@ async def _preview_deadline():
         async with asyncio.timeout(PREVIEW_SECONDS):
             yield
     except TimeoutError as err:
-        raise CalibrationPreviewError("Calibration could not be applied within its time budget.") from err
+        raise CalibrationPreviewError("Calibration could not be applied within its time budget.", code="preview_timeout") from err
 
 
 @dataclass
@@ -381,7 +386,7 @@ async def async_preview_calibration(
 
     switch = hass.data.get(DOMAIN, {}).get(entry_id, {}).get("switch")
     if switch is None:
-        raise CalibrationPreviewError("The Circadian Pro profile must be loaded to preview calibration.")
+        raise CalibrationPreviewError("The Circadian Pro profile must be loaded to preview calibration.", code="not_loaded")
     settings = deepcopy(switch._current_settings)
     settings.update(deepcopy(settings_dict))
     settings.pop("preview_light", None)
@@ -390,16 +395,16 @@ async def async_preview_calibration(
         requested = [item.strip() for item in requested.split(",")]
     lights = _expand_light_groups(hass, list(requested))
     if not lights or any(hass.states.get(light) is None or hass.states.get(light).state not in {STATE_ON, STATE_OFF} for light in lights):
-        raise CalibrationPreviewError("Select available lights before previewing calibration.")
+        raise CalibrationPreviewError("Select available lights before previewing calibration.", code="preview_no_lights")
 
     registry = hass.data.setdefault(PREVIEW_DATA, {})
     for other_id, other in registry.items():
         if other_id != entry_id and set(lights).intersection(other.lights):
-            raise CalibrationPreviewError("Another Circadian Pro profile is already previewing one of these lights.")
+            raise CalibrationPreviewError("Another Circadian Pro profile is already previewing one of these lights.", code="preview_lights_busy")
 
     preview = registry.get(entry_id)
     if preview is not None and preview.session_id != session_id:
-        raise CalibrationPreviewError("Another editor is already previewing this Circadian Pro profile.")
+        raise CalibrationPreviewError("Another editor is already previewing this Circadian Pro profile.", code="preview_editor_busy")
     if preview is None:
         preview = _Preview(switch, session_id=session_id)
         registry[entry_id] = preview
@@ -425,13 +430,13 @@ async def async_preview_calibration(
         preview.remove_listener = remove_listeners
     async with preview.lock, _preview_deadline():
         if hass.data.get(PREVIEW_DATA, {}).get(entry_id) is not preview:
-            raise CalibrationPreviewError("This calibration preview has ended; submit it again to start a new preview.")
+            raise CalibrationPreviewError("This calibration preview has ended; submit it again to start a new preview.", code="preview_expired")
         for other_id, other in registry.items():
             if other_id != entry_id and set(lights).intersection(other.lights):
-                raise CalibrationPreviewError("Another Circadian Pro profile is already previewing one of these lights.")
+                raise CalibrationPreviewError("Another Circadian Pro profile is already previewing one of these lights.", code="preview_lights_busy")
         try:
             if any(hass.states.get(light) is None or hass.states.get(light).state not in {STATE_ON, STATE_OFF} for light in lights):
-                raise CalibrationPreviewError("Select available lights before previewing calibration.")
+                raise CalibrationPreviewError("Select available lights before previewing calibration.", code="preview_no_lights")
             # Reserve every new light atomically before restoration can await
             # I/O and let another profile start a conflicting preview.
             for light in lights:
@@ -468,7 +473,7 @@ async def async_preview_calibration(
                     light, transition=0, adapt_color=True, adapt_brightness=True, force=True, context=context,
                 )
                 if data is None:
-                    raise CalibrationPreviewError(f"The light {light} cannot preview brightness or color.")
+                    raise CalibrationPreviewError(f"The light {light} cannot preview brightness or color.", code="preview_unsupported_light")
                 if preview.lights[light].externally_changed:
                     continue
                 preview.dispatching.add(light)

@@ -541,6 +541,22 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.calibration.preview_sessions, ["editor"])
         self.assertEqual(self.calibration.stop_sessions, ["editor"])
 
+    def test_preview_reason_is_forwarded_for_client_translation_without_saving(self):
+        original = deepcopy(self.entry.options)
+        for code in ("preview_timeout", "preview_no_lights", "preview_lights_busy",
+                     "preview_editor_busy", "preview_expired", "preview_unsupported_light"):
+            with self.subTest(code=code):
+                async def unavailable(*args, **kwargs):
+                    error = self.api.HomeAssistantError("Diagnostic details for logs")
+                    error.code = code
+                    raise error
+
+                self.api.async_preview_calibration = unavailable
+                self.invoke(self.api.websocket_preview, entry_id="loaded", settings={}, kelvin=4000)
+                self.assertEqual(self.errors[-1][1], code)
+                self.assertEqual(self.entry.options, original)
+                self.assertEqual(self.results, [])
+
     def test_legacy_websocket_requests_use_only_the_legacy_preview_session(self):
         self.invoke(self.api.websocket_preview, entry_id="loaded", settings={}, kelvin=4000)
         self.invoke(self.api.websocket_stop, entry_id="loaded")
@@ -564,6 +580,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.executor_calls, [("es",)])
         self.invoke(self.api.websocket_translations, language="../../other")
         self.assertEqual(self.executor_calls[-1], ("en",))
+
+    def test_regional_locales_share_their_catalog_and_unknown_languages_use_english(self):
+        for language in ("es-MX", "ES_es", "es", "ES"):
+            with self.subTest(language=language):
+                self.invoke(self.api.websocket_translations, language=language)
+                self.assertEqual(self.results[-1][1]["config"]["step"]["user"]["data"]["name"], "Nombre")
+        for language in ("en-US", "en_GB", "fr", "et", "estonian"):
+            with self.subTest(language=language):
+                self.invoke(self.api.websocket_translations, language=language)
+                self.assertEqual(self.results[-1][1]["config"]["step"]["user"]["data"]["name"], "Name")
+        self.assertEqual(self.executor_calls, [("es",), ("en",)])
 
     def test_panel_and_api_registration_are_idempotent_and_keep_user_dashboard(self):
         dashboard = object()

@@ -197,14 +197,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "profile_missing"
 
         entries = [entry for entry in self._async_current_entries() if not is_panel_entry(entry)]
-        options = {"new": "Create new instance"}
+        options = [{"value": "new", "label": "new"}]
         for entry in entries:
-            options[entry.entry_id] = f"Duplicate '{entry.title}'"
+            options.append({"value": entry.entry_id, "label": entry.title})
 
         return self.async_show_form(
             step_id="menu",
             data_schema=vol.Schema(
-                {vol.Required("action", default="new"): vol.In(options)},
+                {vol.Required("action", default="new"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=options, translation_key="profile_action",
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    ),
+                )},
             ),
             errors=errors,
         )

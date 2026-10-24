@@ -131,6 +131,40 @@ function panelHarness(t, step = "cal_neutral") {
   };
 }
 
+test("every calibration screen renders the approved labels, help and actions in both languages", async (t) => {
+  for (const language of ["es", "en"]) {
+    const data = JSON.parse(await readFile(new URL(`../custom_components/circadian_pro/translations/${language}.json`, import.meta.url), "utf8"));
+    const copy = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "copy").get.call({ language });
+    for (const step of ["white_channels", "white_w_kelvin", "cal_neutral", "cal_warm"]) {
+      const { panel } = panelHarness(t, step);
+      const text = data.options.step[step];
+      Object.assign(panel, {
+        language, copy, translations: { ...data.options, selector: data.selector }, totalSteps: 4,
+        entry: { title: "User profile unchanged" }, error: "", values: {}, settings: {},
+        flow: { index: 2, current: { type: "form", step_id: step, data_schema: Object.keys(text.data).map((name) => ({
+          name, selector: { number: { min: 0, max: 10000, step: 1 } },
+        })) } },
+        updateControls() {},
+      });
+      panel.field = CircadianCalibrationPanel.prototype.field.bind(panel);
+      CircadianCalibrationPanel.prototype.render.call(panel);
+      assert.equal(panel.shadowRoot.querySelector("h1").textContent, text.title);
+      for (const [name, label] of Object.entries(text.data)) {
+        assert.equal(panel.shadowRoot.querySelector(`#field-${name}-label`).textContent, label, `${language}/${step}/${name}`);
+        const help = text.data_description?.[name];
+        if (help) assert.ok(panel.shadowRoot.querySelectorAll("small").some((node) => node.textContent === help), `${language}/${step}/${name} help`);
+      }
+      const buttons = panel.shadowRoot.querySelectorAll("button").map((node) => node.textContent);
+      assert.ok(buttons.includes(copy.back));
+      assert.ok(buttons.includes(step === "cal_warm" ? copy.finish : copy.next));
+      if (["cal_neutral", "cal_warm"].includes(step)) {
+        assert.ok(panel.shadowRoot.querySelectorAll("span").some((node) => node.textContent === copy.preview));
+        assert.equal(panel.shadowRoot.querySelector("#preview-status").textContent, copy.idle);
+      }
+    }
+  }
+});
+
 test("calibration slider and number share an accessible name and submit one numeric field", (t) => {
   const harness = panelHarness(t);
   harness.panel.translations.step.cal_neutral = { data: { cal_rgb_neutral_r: "Red channel" } };
@@ -1317,7 +1351,7 @@ test("shared graph has arithmetic midpoint hours above and scheduled red boundar
   assert.deepEqual(chart.figure.querySelector(".timing-bounds").children.map((node) => node.textContent), ["100 %", "0 %"]);
   assert.deepEqual(chart.figure.querySelector(".timing-midpoint-labels").children.map((node) => [node.textContent, node.style.left]), [["00:00", "0%"], ["12:00", "50%"]]);
   const labels = chart.figure.querySelector(".timing-night-labels");
-  assert.deepEqual(labels.children.map((label) => [label.children[0].textContent, label.querySelector("time").textContent]), [["OUT · Night", "06:00"], ["IN · Night", "21:00"]]);
+  assert.deepEqual(labels.children.map((label) => [label.children[0].textContent, label.querySelector("time").textContent]), [["OUT · Sleep", "06:00"], ["IN · Sleep", "21:00"]]);
   assert.deepEqual(labels.children.map((label) => label.getAttribute("aria-label")), ["Sleep mode ends 06:00", "Sleep mode starts 21:00"]);
   assert.equal(chart.figure.querySelector(".timing-night-event").getAttribute("d"), "M150 0 V176 M525 0 V176");
   assert.match(chart.figure.querySelector(".timing-night-details").querySelector("p").textContent, /General transition: 5 s.*60 s/);

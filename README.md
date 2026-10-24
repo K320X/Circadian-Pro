@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.30`
+**Current stable version:** `0.21.31`
 
-Version 0.21.30 fixes potentially blocking time-zone loading in the solar chart and adaptation callbacks, while preserving local schedules and daylight-saving behavior. See the [release notes](docs/release-0.21.30.md). The [full audit report](docs/auditoria-2026-10-13.md) records the earlier code review and its validation limits.
+Version 0.21.31 completes the English and Spanish interface, including help, actions, switches and validation messages, and refreshes panel translations when your interface language changes. See the [release notes](docs/release-0.21.31.md). The [full audit report](docs/auditoria-2026-10-13.md) records the earlier code review and its validation limits.
 
 ## Screenshots
 
@@ -41,11 +41,11 @@ The actual Circadian Pro panel, shown with fictional profiles and lights. These 
 
 ## Languages
 
-The panel and configuration forms support **English and Spanish**, selected automatically from **your Home Assistant interface language**. Spanish locales use Spanish; other languages currently fall back to English. If you change the interface language, reopen or reload the panel.
+The panel, configuration forms, help texts, selectors, validation messages and actions support **English and Spanish**. The panel follows **your Home Assistant interface language**, including regional variants such as `es-MX` and `en-GB`; unsupported languages fall back to English. Changing language refreshes the panel's translations without discarding unsaved settings.
 
-Profile names and light names stay as you entered them. Some technical switch names and service descriptions remain in English, and a few secondary help texts are currently available only in Spanish. GitHub's README is separate from Home Assistant and does not change language automatically.
+Native switch names are translated using Home Assistant's **server language**, as required by its entity naming system. Profile names, light names and any names you have customized stay as you entered them. Entity IDs, YAML keys and action identifiers remain stable for existing automations; diagnostic logs retain their technical messages. GitHub's README is separate from Home Assistant and does not change language automatically.
 
-**En español:** el panel y los formularios se muestran en español o inglés según el idioma de tu interfaz de Home Assistant. Si lo cambias, vuelve a abrir o recarga el panel. Los nombres de tus perfiles y luces se conservan.
+**En español:** el panel, los formularios, las ayudas, los selectores, los mensajes de validación y las acciones están disponibles en español e inglés. El panel sigue el idioma de tu interfaz y actualiza sus textos sin perder los ajustes pendientes. Los nombres nativos de los interruptores siguen el idioma del servidor de Home Assistant. Se conservan los nombres que hayas elegido y todos los identificadores que utilizan tus automatizaciones.
 
 ## Features
 

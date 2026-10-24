@@ -185,8 +185,9 @@ class PreviewManagerAudit(unittest.IsolatedAsyncioTestCase):
     async def test_second_editor_cannot_replace_or_stop_an_active_preview(self):
         await self.apply("first")
         count = len(self.hass.calls)
-        with self.assertRaisesRegex(self.preview.CalibrationPreviewError, "Another editor"):
+        with self.assertRaisesRegex(self.preview.CalibrationPreviewError, "Another editor") as caught:
             await self.apply("second")
+        self.assertEqual(caught.exception.code, "preview_editor_busy")
         await self.preview.async_stop_calibration_preview(self.hass, "one", session_id="second")
         self.assertEqual(len(self.hass.calls), count)
         self.assertTrue(self.preview.is_calibration_preview_active(self.hass, "light.one"))
@@ -224,8 +225,9 @@ class PreviewManagerAudit(unittest.IsolatedAsyncioTestCase):
         applying = asyncio.create_task(self.apply())
         await asyncio.wait_for(entered.wait(), 1)
         stopping = asyncio.create_task(self.preview.async_stop_calibration_preview(self.hass, "one"))
-        with self.assertRaisesRegex(self.preview.CalibrationPreviewError, "command in time"):
+        with self.assertRaisesRegex(self.preview.CalibrationPreviewError, "command in time") as caught:
             await asyncio.wait_for(applying, 1)
+        self.assertEqual(caught.exception.code, "preview_timeout")
         await asyncio.wait_for(stopping, 1)
         self.assertNotIn(self.preview.PREVIEW_DATA, self.hass.data)
         self.assertFalse(self.manager.adaptation_tasks_color)
@@ -242,8 +244,9 @@ class PreviewManagerAudit(unittest.IsolatedAsyncioTestCase):
                 await asyncio.Event().wait()
 
         self.hass.services.async_call = stalled
-        with self.assertRaisesRegex(self.preview.CalibrationPreviewError, "time budget"):
+        with self.assertRaisesRegex(self.preview.CalibrationPreviewError, "time budget") as caught:
             await asyncio.wait_for(self.apply(), 1)
+        self.assertEqual(caught.exception.code, "preview_timeout")
         self.assertNotIn(self.preview.PREVIEW_DATA, self.hass.data)
         self.assertEqual(self.hass.states.get("light.one").state, "off")
 

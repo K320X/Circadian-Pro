@@ -356,8 +356,7 @@ CONF_ADAPT_UNTIL_SLEEP, DEFAULT_ADAPT_UNTIL_SLEEP = (
     False,
 )
 DOCS[CONF_ADAPT_UNTIL_SLEEP] = (
-    "Activa el modo noche automático: cuando el sol se pone (o dentro del horario si lo activas),"
-    " las luces pasarán a los valores de modo noche y volverán al modo día al amanecer."
+    "Legacy automatic sleep option. Enables sleep values at sunset and resumes daytime adaptation at sunrise."
 )
 
 
@@ -370,7 +369,7 @@ CONF_SLEEP_ACTIVATION_MODE, DEFAULT_SLEEP_ACTIVATION_MODE = (
 )
 SLEEP_ACTIVATION_MODES = ("disabled", "sun", "schedule")
 DOCS[CONF_SLEEP_ACTIVATION_MODE] = (
-    "Cómo se activa automáticamente el modo noche: desactivado, por amanecer/atardecer o por una franja horaria fija."
+    "Automatic sleep activation: disabled, between sunset and sunrise, or during a fixed schedule."
 )
 
 CONF_ADAPT_DELAY, DEFAULT_ADAPT_DELAY = "adapt_delay", 0
@@ -419,7 +418,7 @@ CONF_SLEEP_SCHEDULE_END, DEFAULT_SLEEP_SCHEDULE_END = (
 )
 
 DOCS[CONF_SLEEP_SCHEDULE_ENABLED] = (
-    "Si lo activas, el modo noche se aplicará según una franja horaria fija en lugar de depender del atardecer/amanecer."
+    "Legacy schedule option. Uses a fixed sleep window instead of sunset and sunrise."
 )
 DOCS[CONF_SLEEP_SCHEDULE_START] = "Sleep window start time (HH:MM[:SS])."
 DOCS[CONF_SLEEP_SCHEDULE_END] = "Sleep window end time (HH:MM[:SS])."
@@ -584,6 +583,7 @@ VALIDATION_TUPLES: list[tuple[str, Any, Any]] = [
         selector.SelectSelector(  # type: ignore[arg-type]
             selector.SelectSelectorConfig(
                 options=["color_temp", "rgb_color"],
+                translation_key=CONF_SLEEP_RGB_OR_COLOR_TEMP,
                 multiple=False,
                 mode=selector.SelectSelectorMode.DROPDOWN,
             ),
@@ -643,6 +643,7 @@ VALIDATION_TUPLES: list[tuple[str, Any, Any]] = [
                     TakeOverControlMode.PAUSE_ALL.value,
                     TakeOverControlMode.PAUSE_CHANGED.value,
                 ],
+                translation_key=CONF_TAKE_OVER_CONTROL_MODE,
                 multiple=False,
                 mode=selector.SelectSelectorMode.DROPDOWN,
             ),

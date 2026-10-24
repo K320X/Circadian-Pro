@@ -987,7 +987,7 @@ test("catalog updates preserve the chosen profile and never replace or save edit
 
 test("ordinary hass property updates do not re-read the profile registry", () => {
   let initializations = 0;
-  const panel = { initialized: true, isConnected: true, initialize: () => { initializations++; } };
+  const panel = { initialized: true, isConnected: true, language: "en", initialize: () => { initializations++; } };
   const setter = Object.getOwnPropertyDescriptor(CircadianCalibrationPanel.prototype, "hass").set;
   for (let index = 0; index < 50; index++) setter.call(panel, { states: { changing: index } });
   assert.equal(initializations, 0);
@@ -1220,20 +1220,20 @@ test("a lost initial subscription ACK does not block panel loading or reconnect 
   };
   const good = [{ entry_id: "one", title: "Office", settings: { lights: [] } }];
   const panel = {
-    initialized: false, busy: false, isConnected: true, entries: [],
+    initialized: false, busy: false, isConnected: true, entries: [], translationRevision: 0,
     _hass: { user: { is_admin: true }, connection: metadata.connection, callWS: async (message) => {
       if (message.type === API + "entries") {
         assert.equal(message.include_status, true);
         reads++;
         return { entries: good, configured_profiles: 2 };
       }
-      if (message.type === API + "translations") return {};
+      if (message.type === API + "translations") return { step: { init: {} }, selector: {} };
       throw new Error("Unexpected message");
     } },
     copy: { admin: "Administrator required", error: "Error", catalogError: "Refresh error" },
     language: "en", render: () => { renders++; }, updateControls: () => {},
   };
-  for (const name of ["initialize", "action", "applyEntries", "catalogFailure"]) {
+  for (const name of ["initialize", "action", "applyEntries", "catalogFailure", "loadTranslations", "applyLocalization"]) {
     panel[name] = CircadianCalibrationPanel.prototype[name].bind(panel);
   }
   await panel.initialize();

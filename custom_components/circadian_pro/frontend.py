@@ -359,7 +359,7 @@ async def websocket_preview(hass: Any, connection: Any, msg: dict[str, Any]) -> 
             hass, entry.entry_id, settings, msg["kelvin"], session_id=msg.get("session_id", ""),
         )
     except HomeAssistantError as err:
-        connection.send_error(msg["id"], "preview_unavailable", str(err))
+        connection.send_error(msg["id"], getattr(err, "code", "preview_unavailable"), str(err))
         return
     connection.send_result(msg["id"], {"active": True, "expires_in": PREVIEW_SECONDS})
 
@@ -396,7 +396,8 @@ def _read_translations(language: str) -> dict[str, Any]:
 @websocket_api.require_admin
 @websocket_api.async_response
 async def websocket_translations(hass: Any, connection: Any, msg: dict[str, Any]) -> None:
-    language = "es" if msg.get("language", "en").lower().startswith("es") else "en"
+    locale = msg.get("language", "en").lower().replace("_", "-").split("-", 1)[0]
+    language = "es" if locale == "es" else "en"
     cache = hass.data.setdefault(FRONTEND_DATA, {}).setdefault("translations", {})
     if language not in cache:
         cache[language] = await hass.async_add_executor_job(_read_translations, language)

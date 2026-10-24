@@ -42,7 +42,7 @@
     });
   }
   const translationDocument = await (await fetch(`../../custom_components/circadian_pro/translations/${language}.json`)).json();
-  const translations = {...translationDocument.options, selector:translationDocument.selector};
+  const translations = {...translationDocument.options, selector:translationDocument.selector, config:translationDocument.config};
   // Synthetic profiles and lights for UI testing; no installation data.
   const original = {
     lights:['light.example_a'], interval:60, transition:5, initial_transition:0,

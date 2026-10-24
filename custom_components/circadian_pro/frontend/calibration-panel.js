@@ -577,7 +577,7 @@ const COPY = {
       step: "Con ambos tiempos a 0, el objetivo cambia al amanecer y al atardecer. Se conserva la transición configurada para las luces.",
       invalid: "Introduce dos tiempos enteros entre 0 y 240 minutos para ver la curva.",
     },
-    groups: { adaptation: "Ritmo de adaptación", limits: "Brillo y temperatura", night: "Modo noche",
+    groups: { adaptation: "Ritmo de adaptación", limits: "Brillo y temperatura de color", night: "Modo noche",
       solar: "Amanecer y atardecer", manual: "Cambios manuales", compatibility: "Compatibilidad y envío", other: "Otros ajustes" },
     selectEntities: "Seleccionar luces",
     close: "Cerrar sin guardar", preview: "Previsualizar luz", active: "Vista previa activa",
@@ -587,7 +587,26 @@ const COPY = {
     loading: "Cargando…", saved: "Configuración guardada.", empty: "Todavía no hay perfiles. Crea el primero para elegir sus luces y configurar la adaptación.",
     noAvailableProfiles: "No hay perfiles disponibles. Comprueba su estado en la integración o crea un nuevo perfil.",
     admin: "Abre este panel con un usuario administrador.", error: "No se pudo completar la acción.",
+    languageError: "No se pudo cargar el idioma solicitado. Vuelve a abrir el panel para reintentarlo.",
+    apiErrors: {
+      not_loaded: "Este perfil de Circadian Pro no está cargado. Comprueba su estado en la integración.",
+      not_found: "Este perfil de Circadian Pro ya no existe. Vuelve a la lista de perfiles.",
+      invalid_options: "Revisa los ajustes del perfil antes de continuar.",
+      solar_unavailable: "No se pudieron calcular los horarios solares. Comprueba la ubicación y la zona horaria de Home Assistant.",
+      preview_unavailable: "No se pudo iniciar la vista previa. Comprueba que las luces están disponibles y vuelve a intentarlo.",
+      preview_timeout: "Las luces tardaron demasiado en responder a la vista previa. Vuelve a intentarlo.",
+      preview_no_lights: "Selecciona al menos una luz disponible para previsualizar la calibración.",
+      preview_lights_busy: "Otro perfil está previsualizando una de estas luces. Finaliza esa vista previa antes de continuar.",
+      preview_editor_busy: "Este perfil tiene una vista previa activa en otro editor. Finalízala antes de continuar.",
+      preview_expired: "La vista previa ha terminado. Marca de nuevo la casilla para iniciarla.",
+      preview_unsupported_light: "Una de las luces seleccionadas no admite la vista previa de brillo o color.",
+      unauthorized: "Necesitas un usuario administrador para realizar esta acción.",
+      unknown_error: "Se ha producido un error inesperado. Vuelve a intentarlo.",
+    },
     invalid: "Revisa los valores indicados antes de continuar.", missing: "Esta luz no está disponible en Home Assistant.",
+    validation: { required: "Completa este campo.", number: "Introduce un número válido.",
+      minimum: "El valor mínimo es {min}.", maximum: "El valor máximo es {max}.",
+      step: "Introduce un valor en incrementos de {step}.", invalid: "Revisa el valor de este campo." },
     fallback: "Este formulario contiene un campo que todavía no admite el panel. Actualiza Circadian Pro o informa del problema.",
   },
   en: {
@@ -613,7 +632,7 @@ const COPY = {
     save_uncertain: "The save could not be confirmed. Check the profile's current configuration before repeating the changes.",
     checkStep: "Check status",
     choose: "Choose a profile", next: "Next", back: "Back", finish: "Finish",
-    warmWhite: "Warm", coldWhite: "Cold",
+    warmWhite: "Warm", coldWhite: "Cool",
     timingDiagram: {
       sunrise: "Sunrise", sunset: "Sunset", minimum: "Min.", maximum: "Max.",
       title: "Curve preview", brightness: "Brightness", temperature: "Color temperature",
@@ -628,7 +647,7 @@ const COPY = {
       nightScale: "The background shows the normal color and selected sleep color. Colors and transitions are illustrative; the line uses brightness from 0 to 100%.",
       transitions: "Transitions", night: "Sleep mode", nightAllDay: "Sleep mode throughout the day.",
       nightStart: "Sleep mode starts", nightEnd: "Sleep mode ends",
-      nightStartShort: "IN · Night", nightEndShort: "OUT · Night",
+      nightStartShort: "IN · Sleep", nightEndShort: "OUT · Sleep",
       nightTiming: "Planned schedule. General transition: {transition} s. Detection may take up to {interval} s, or longer while another transition is running. The light determines how the change is smoothed.",
       nightInvalid: "Check brightness, sleep color and the general transition.",
       brightnessRange: "Enter a whole brightness percentage from 1 to 100%. A value of 0% is not allowed.",
@@ -640,7 +659,7 @@ const COPY = {
       step: "With both times at 0, the target changes at sunrise and sunset. The configured light transition still applies.",
       invalid: "Enter two whole-minute times between 0 and 240 to see the curve.",
     },
-    groups: { adaptation: "Adaptation timing", limits: "Brightness and temperature", night: "Sleep mode",
+    groups: { adaptation: "Adaptation timing", limits: "Brightness and color temperature", night: "Sleep mode",
       solar: "Sunrise and sunset", manual: "Manual changes", compatibility: "Compatibility and commands", other: "Other settings" },
     selectEntities: "Select lights",
     close: "Close without saving", preview: "Preview light", active: "Preview active",
@@ -650,10 +669,73 @@ const COPY = {
     loading: "Loading…", saved: "Settings saved.", empty: "There are no profiles yet. Create the first one to choose its lights and configure adaptation.",
     noAvailableProfiles: "There are no available profiles. Check their status in the integration or create a new profile.",
     admin: "Open this panel as an administrator.", error: "The action could not be completed.",
+    languageError: "The requested language could not be loaded. Reopen the panel to try again.",
+    apiErrors: {
+      not_loaded: "This Circadian Pro profile is not loaded. Check its status in the integration.",
+      not_found: "This Circadian Pro profile no longer exists. Return to the profile list.",
+      invalid_options: "Check the profile settings before continuing.",
+      solar_unavailable: "The solar schedule could not be calculated. Check Home Assistant’s location and time zone.",
+      preview_unavailable: "The preview could not be started. Check that the lights are available and try again.",
+      preview_timeout: "The lights took too long to respond to the preview. Please try again.",
+      preview_no_lights: "Select at least one available light to preview the calibration.",
+      preview_lights_busy: "Another profile is previewing one of these lights. End that preview before continuing.",
+      preview_editor_busy: "This profile has an active preview in another editor. End it before continuing.",
+      preview_expired: "The preview has ended. Check the box again to start it.",
+      preview_unsupported_light: "One of the selected lights does not support brightness or color preview.",
+      unauthorized: "You need an administrator account to perform this action.",
+      unknown_error: "An unexpected error occurred. Please try again.",
+    },
     invalid: "Check the indicated values before continuing.", missing: "This light is unavailable in Home Assistant.",
+    validation: { required: "Complete this field.", number: "Enter a valid number.",
+      minimum: "The minimum value is {min}.", maximum: "The maximum value is {max}.",
+      step: "Enter a value in increments of {step}.", invalid: "Check the value in this field." },
     fallback: "This form contains a field the panel does not yet support. Update Circadian Pro or report the problem.",
   },
 };
+
+/** HA language codes can include a region; unsupported languages use English. */
+export function panelLanguage(language) {
+  return typeof language === "string" && language.toLowerCase().replaceAll("_", "-").split("-")[0] === "es" ? "es" : "en";
+}
+
+function stringLeaves(value, prefix = "", result = new Map()) {
+  for (const [key, item] of Object.entries(value || {})) {
+    const path = `${prefix}.${key}`;
+    if (typeof item === "string") result.set(path, item);
+    else if (item && typeof item === "object") stringLeaves(item, path, result);
+  }
+  return result;
+}
+
+/** Never expose an untranslated server message or a technical error code. */
+export function panelErrorMessage(copy, translations, error) {
+  const reason = error?.code || error?.reason || error?.message;
+  const translated = copy.apiErrors?.[reason] || copy[reason]
+    || translations?.error?.[reason] || translations?.abort?.[reason] || translations?.config?.error?.[reason];
+  if (typeof translated === "string") return translated;
+  // Locally raised validation errors already use the active language.
+  const message = error?.message;
+  if (typeof message === "string" && [...stringLeaves(copy).values(), ...stringLeaves(translations).values()].includes(message)) return message;
+  return copy.error;
+}
+
+export function localizeValidation(input, copy) {
+  if (!input.setCustomValidity) return;
+  input.setCustomValidity("");
+  const validity = input.validity;
+  if (validity.valid) return;
+  const key = validity.valueMissing ? "required" : validity.badInput ? "number"
+    : validity.rangeUnderflow ? "minimum" : validity.rangeOverflow ? "maximum"
+      : validity.stepMismatch ? "step" : "invalid";
+  input.setCustomValidity((copy.validation?.[key] || copy.invalid).replace(/\{(min|max|step)\}/g, (_, name) => input[name]));
+}
+
+function translateVisibleMessage(value, previous, next, fallback) {
+  if (!value) return "";
+  const oldStrings = stringLeaves(previous), newStrings = stringLeaves(next);
+  for (const [key, text] of oldStrings) if (text === value) return newStrings.get(key) || fallback;
+  return fallback;
+}
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -1371,6 +1453,11 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this.entries = [];
     this.translations = {};
+    this.translationRevision = 0;
+    this.translationRequest = null;
+    this.pendingLocalization = null;
+    this.displayLanguage = null;
+    this.translationsReady = false;
     this.busy = false;
     this.initialized = false;
     this.message = "";
@@ -1400,17 +1487,66 @@ export class CircadianCalibrationPanel extends HTMLElement {
   set hass(value) {
     this._hass = value;
     if (!this.initialized && this.isConnected) this.initialize();
+    else if (this.initialized && this.isConnected && panelLanguage(value?.language) !== this.language
+      && panelLanguage(value?.language) !== this.failedLanguage) this.loadTranslations();
   }
   get hass() { return this._hass; }
   set route(value) { this._route = value; this.syncRoute(); }
   get route() { return this._route; }
-  get language() { return this._hass?.language?.startsWith("es") ? "es" : "en"; }
+  get language() { return this.displayLanguage || panelLanguage(this._hass?.language); }
   get copy() { return COPY[this.language]; }
   get totalSteps() {
     const hasWhite = (this.settings?.lights || []).some((light) =>
       (this._hass?.states[light]?.attributes.supported_color_modes || []).some((mode) => ["rgbw", "rgbww"].includes(mode))
     );
     return hasWhite || this.flow?.steps.some((step) => ["white_channels", "white_w_kelvin"].includes(step)) ? 4 : 3;
+  }
+
+  async loadTranslations() {
+    const language = panelLanguage(this._hass?.language);
+    if (this.translationRequest?.language === language) return this.translationRequest.promise;
+    const revision = ++this.translationRevision;
+    const request = { language };
+    this.translationRequest = request;
+    request.promise = (async () => {
+      try {
+        const translations = await this._hass.callWS({ type: API + "translations", language });
+        if (!this.isConnected || revision !== this.translationRevision) return;
+        if (!translations?.step?.init || !translations?.selector) throw new Error("Incomplete panel translations");
+        this.failedLanguage = null;
+        this.pendingLocalization = { language, translations };
+        if (!this.busy && this.applyLocalization()) { this.render(); this.syncRoute?.(); }
+      } catch (error) {
+        if (!this.isConnected || revision !== this.translationRevision) return;
+        this.failedLanguage = language;
+        this.error = this.copy.languageError;
+        if (!this.busy) this.updateControls();
+      } finally {
+        if (this.translationRequest === request) this.translationRequest = null;
+      }
+    })();
+    return request.promise;
+  }
+
+  applyLocalization(preserveDraft = true) {
+    const pending = this.pendingLocalization;
+    if (!pending || pending.language !== panelLanguage(this._hass?.language)) return false;
+    this.pendingLocalization = null;
+    // Read at commit time: a user may keep typing while translations load.
+    // Changing language never submits a flow or changes a live preview.
+    if (preserveDraft && this.flow && this.shadowRoot.querySelector("form")) {
+      this.values = this.readValues(false);
+      Object.assign(this.settings, this.values);
+    }
+    const previous = { copy: this.copy, translations: this.translations };
+    this.translations = pending.translations;
+    this.displayLanguage = pending.language;
+    this.translationsReady = true;
+    const next = { copy: this.copy, translations: this.translations };
+    this.error = translateVisibleMessage(this.error, previous, next, this.copy.error);
+    this.message = translateVisibleMessage(this.message, previous, next, "");
+    if (this.catalogError) this.catalogError = this.copy.catalogError;
+    return true;
   }
 
   connectedCallback() {
@@ -1427,6 +1563,9 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.routeRevision++;
     this.routeEntryId = undefined;
     this.pendingRoute = null;
+    this.translationRevision++;
+    this.translationRequest = this.pendingLocalization = null;
+    this.failedLanguage = null;
     this.solarContext?.close();
     this.solarContext = null;
     this.timingChart?.close();
@@ -1444,6 +1583,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
 
   async initialize() {
     if (this.initialized || this.busy) return;
+    this.displayLanguage ||= panelLanguage(this._hass?.language);
     this.initialized = true;
     if (!this._hass.user?.is_admin) { this.error = this.copy.admin; this.render(); return; }
     this.catalog?.stop();
@@ -1465,18 +1605,17 @@ export class CircadianCalibrationPanel extends HTMLElement {
         if (this.catalog === catalog && this.isConnected) this.catalogFailure();
       });
       if (this.catalog !== catalog || !this.isConnected) return;
-      const [entries, translations] = await Promise.all([
+      const [entries] = await Promise.all([
         catalog.read(),
-        this._hass.callWS({ type: API + "translations", language: this.language }),
+        this.loadTranslations(),
       ]);
       if (this.catalog !== catalog || !this.isConnected) return;
       this.applyEntries(entries);
-      this.translations = translations;
     });
   }
 
   syncRoute() {
-    if (!this.isConnected || !this.initialized || !this.catalogLoaded || !this._hass?.user?.is_admin) return;
+    if (!this.isConnected || !this.initialized || !this.catalogLoaded || this.translationsReady === false || !this._hass?.user?.is_admin) return;
     const entryId = new URLSearchParams(window.location?.search || "").get("config_entry") || null;
     if (entryId !== this.routeEntryId) {
       const initialCatalog = this.routeEntryId === undefined && entryId === null;
@@ -1547,9 +1686,12 @@ export class CircadianCalibrationPanel extends HTMLElement {
     this.error = "";
     this.updateControls();
     try { await job(); }
-    catch (error) { if (error?.reason !== "flow_closed") this.error = error?.message || this.copy.error; }
+    catch (error) { if (error?.reason !== "flow_closed") this.error = panelErrorMessage(this.copy, this.translations, error); }
     finally {
       this.busy = false;
+      // The action may have advanced to another step while the old form is
+      // still mounted. Its inputs must not overwrite the new step's values.
+      this.applyLocalization?.(false);
       if (this.isConnected !== false) this.render();
       if (!this.initialized && this.isConnected) this.initialize();
       else this.syncRoute?.();
@@ -1561,6 +1703,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
   }
 
   async openEntry(entryId, created = false) {
+    if (this.translationsReady === false) { this.error = this.copy.languageError; return; }
     const entry = this.entries.find((item) => item.entry_id === entryId);
     if (!entry) return;
       this.entry = entry;
@@ -1575,7 +1718,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
         (message) => this._hass.callWS(message), entryId,
         () => ({ settings: { ...this.settings, ...this.readValues() }, kelvin: this.flow.current.step_id === "cal_warm" ? 1000 : 4000 }),
         (error) => {
-          if (error) this.error = error?.message || this.copy.error;
+          if (error) this.error = panelErrorMessage(this.copy, this.translations, error);
           this.updateControls();
         },
       );
@@ -1598,6 +1741,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
   }
 
   openNewProfile() {
+    if (this.translationsReady === false) { this.error = this.copy.languageError; this.render(); return; }
     this.creator = new NewProfileFlow((...args) => this._hass.callApi(...args));
     this.newProfileName = "";
     this.newProfileOpen = true;
@@ -1620,7 +1764,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       try { result = await creator.create(this.newProfileName); }
       catch (error) {
         if (revision !== this.creationRevision || this.creator !== creator) return;
-        throw new Error(this.copy[error.reason] || error.message || this.copy.error);
+        throw new Error(panelErrorMessage(this.copy, this.translations, error));
       }
       if (revision !== this.creationRevision || this.creator !== creator) { await creator.close(); return; }
       if (result.type !== "create_entry") { this.error = this.creationError(result); return; }
@@ -1684,7 +1828,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       this.flow = this.session = null;
       this.createdProfile = null;
       this.message = "";
-      this.error = this.translations.abort?.[result.reason] || result.reason || this.copy.error;
+      this.error = panelErrorMessage(this.copy, this.translations, { reason: result.reason });
       return;
     }
     if (["create_entry", "save_uncertain"].includes(result.type)) {
@@ -1698,7 +1842,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       this.initialized = false;
       return;
     }
-    if (result.type !== "form") throw new Error(result.reason || this.copy.error);
+    if (result.type !== "form") throw new Error(panelErrorMessage(this.copy, this.translations, { reason: result.reason }));
     this.values = {};
     for (const field of result.data_schema || []) {
       const saved = this.flow.drafts[result.step_id] || {};
@@ -1741,7 +1885,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     let data;
     try { data = this.readValues(!back); }
     catch (error) {
-      this.error = error?.message || this.copy.error;
+      this.error = panelErrorMessage(this.copy, this.translations, error);
       this.updateControls();
       return;
     }
@@ -1786,7 +1930,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
     } else if (selector.select || field.type === "select") {
       input = element("select");
       const options = selector.select?.options || field.options || [];
-      const optionLabels = this.translations.selector?.[selector.select?.translation_key]?.options || {};
+      const optionLabels = this.translations.selector?.[selector.select?.translation_key || name]?.options || {};
       for (const choice of options) {
         const [id, label] = Array.isArray(choice) ? choice : typeof choice === "string" ? [choice, choice] : [choice.value, choice.label];
         const option = element("option", optionLabels[id] ?? label ?? id);
@@ -1813,6 +1957,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
       }
     }
     input.dataset.field = name;
+    input.addEventListener("invalid", () => localizeValidation(input, this.copy));
+    input.addEventListener("input", () => input.setCustomValidity?.(""));
     const brightnessField = step === "init" && BRIGHTNESS_FIELDS.has(name) && input.type === "number";
     const brightnessLimit = brightnessField && ["min_brightness", "max_brightness"].includes(name);
     if (brightnessField) {
@@ -1888,7 +2034,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
         if (timingPortion) slider.setAttribute("aria-valuetext", `${slider.value} min`);
       };
       syncSlider();
-      slider.addEventListener("input", () => { input.value = slider.value; syncSlider(); changed(); });
+      slider.addEventListener("input", () => { input.value = slider.value; input.setCustomValidity?.(""); syncSlider(); changed(); });
       input.addEventListener("input", () => { syncSlider(); changed(); });
       rail.append(slider, endpoints);
       controls.append(rail, input);
@@ -1939,12 +2085,14 @@ export class CircadianCalibrationPanel extends HTMLElement {
     for (const input of this.shadowRoot.querySelectorAll("input,select")) input.disabled = this.busy || input.dataset.timingInactive === "true";
     for (const button of this.shadowRoot.querySelectorAll("button")) {
       button.disabled = this.busy && !String(button.className || "").split(" ").includes("mobile-menu");
+      if (this.translationsReady === false && button.dataset.requiresTranslations) button.disabled = true;
     }
     const create = this.shadowRoot.querySelector("#create-profile");
     if (create && this.creator?.uncertain) create.disabled = true;
   }
 
   render() {
+    this.setAttribute?.("lang", this.language);
     this.timingChart?.close();
     this.shadowRoot.replaceChildren();
     this.solarContext?.close();
@@ -2096,6 +2244,8 @@ export class CircadianCalibrationPanel extends HTMLElement {
       const label = element("label", undefined, "field");
       label.append(element("span", this.copy.profileName, "label"));
       const name = element("input");
+      name.addEventListener("invalid", () => localizeValidation(name, this.copy));
+      name.addEventListener("input", () => name.setCustomValidity?.(""));
       name.type = "text";
       name.required = true;
       name.autocomplete = "off";
@@ -2128,7 +2278,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       const text = this.translations.step?.[step.step_id] || {};
       article.append(element("p", `${this.flow.index + 1} / ${this.totalSteps} · ${this.entry.title}`, "muted step"), element("h1", text.title || step.step_id));
       if (this.createdProfile) article.append(element("p", this.copy.created, "saved"));
-      const description = text.description?.replace(/ Para previsualizar las luces al instante.*$| El panel Calibración Circadian Pro permite.*$| To preview.*$| The Circadian Pro calibration panel.*$/s, "");
+      const description = text.description;
       if (description) article.append(element("p", description, "muted"));
       const form = element("form");
       form.addEventListener("submit", (event) => { event.preventDefault(); this.navigate(); });
@@ -2155,7 +2305,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
       article.append(form);
       const errors = Object.entries(step.errors || {}).map(([key, value]) => {
         const label = text.data?.[key];
-        return `${label ? label + ": " : ""}${this.translations.error?.[value] || value}`;
+        return `${label ? label + ": " : ""}${panelErrorMessage(this.copy, this.translations, { reason: value })}`;
       });
       if (errors.length) { this.error = errors.join("\n"); error.textContent = this.error; error.hidden = false; }
       if (["cal_neutral", "cal_warm"].includes(step.step_id)) {
@@ -2167,7 +2317,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
         checkbox.checked = this.session.enabled;
         checkbox.addEventListener("change", () => {
           this.error = "";
-          this.session.setEnabled(checkbox.checked).catch((failure) => { this.error = failure?.message || this.copy.error; this.updateControls(); });
+          this.session.setEnabled(checkbox.checked).catch((failure) => { this.error = panelErrorMessage(this.copy, this.translations, failure); this.updateControls(); });
         });
         label.append(checkbox, element("span", this.copy.preview));
         const status = element("p", this.session.enabled ? this.copy.active : this.copy.idle);
@@ -2240,6 +2390,7 @@ export class CircadianCalibrationPanel extends HTMLElement {
           name.setAttribute("scope", "row");
           const actions = element("td");
           const configure = element("button", undefined, "profile-settings");
+          configure.dataset.requiresTranslations = "true";
           configure.type = "button";
           configure.title = `${this.copy.start}: ${entry.title}`;
           configure.setAttribute("aria-label", configure.title);
@@ -2264,12 +2415,19 @@ export class CircadianCalibrationPanel extends HTMLElement {
       if (!this.pendingCreated && this._hass?.user?.is_admin && (this.entries.length || emptyCatalog)) {
         const actions = element("div", undefined, "profile-create");
         const create = element("button", firstProfile ? this.copy.firstProfile : this.copy.newProfile, "primary");
+        create.dataset.requiresTranslations = "true";
         create.type = "button";
         create.addEventListener("click", () => this.openNewProfile());
         actions.append(create);
         article.append(actions);
       }
       article.append(error);
+      if (this.translationsReady === false) {
+        const retry = element("button", this.copy.retry, "secondary");
+        retry.type = "button";
+        retry.addEventListener("click", () => this.action(() => this.loadTranslations()));
+        article.append(retry);
+      }
     }
     main.append(article);
     this.shadowRoot.append(style, header, main);

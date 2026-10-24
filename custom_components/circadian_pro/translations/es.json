@@ -4,16 +4,19 @@
     "step": {
       "user": {
         "title": "Elige un nombre",
-        "description": "Crea un perfil de Circadian Pro. Después, selecciona sus luces desde el panel Circadian Pro o los ajustes de la integración.",
+        "description": "Crea un perfil de Circadian Pro. Después, selecciona sus luces desde el panel Circadian Pro.",
         "data": {
           "name": "Nombre"
         }
       },
       "menu": {
-        "title": "Crear o duplicar",
-        "description": "Crea un nuevo perfil o duplica uno existente.",
+        "title": "Crear o duplicar un perfil",
+        "description": "Selecciona «Nuevo perfil» para empezar de cero o el nombre de un perfil existente para duplicar sus ajustes.",
         "data": {
           "action": "Acción"
+        },
+        "data_description": {
+          "action": "El perfil original se conserva al duplicarlo."
         }
       }
     },
@@ -25,7 +28,8 @@
     "abort": {
       "already_configured": "Ya existe un perfil con este nombre.",
       "panel_already_configured": "El panel de Circadian Pro ya está activo.",
-      "panel_name_reserved": "Este nombre está reservado por el panel de Circadian Pro. Elige otro nombre para el perfil."
+      "panel_name_reserved": "Este nombre está reservado por el panel de Circadian Pro. Elige otro nombre para el perfil.",
+      "no_data": "No se ha recibido ninguna configuración para importar."
     },
     "create_entry": {
       "default": "El panel de la barra lateral está listo. [Abre Circadian Pro](/circadian-pro-calibration) para crear y configurar tus perfiles."
@@ -36,30 +40,30 @@
       "init": {
         "title": "Ajustes generales",
         "submit": "Siguiente",
-        "description": "Configura el comportamiento general y después las referencias visuales de 4000K y 1000K. Los ajustes de canales blancos aparecen automáticamente para las luces RGBW o RGB+CCT seleccionadas. Para previsualizar las luces al instante mientras editas, abre el panel Circadian Pro.",
+        "description": "Configura el comportamiento general y después las referencias visuales de 4000 K y 1000 K. Los ajustes de canales blancos aparecen automáticamente para las luces RGBW o RGB+CCT seleccionadas.",
         "data": {
           "lights": "Luces",
-          "interval": "Frecuencia de adaptación (s)",
+          "interval": "Intervalo de adaptación (s)",
           "transition": "Transición (s)",
           "initial_transition": "Transición inicial (s)",
           "min_brightness": "Brillo mínimo (%)",
           "max_brightness": "Brillo máximo (%)",
-          "min_color_temp": "Kelvin mínimo (K)",
-          "max_color_temp": "Kelvin máximo (K)",
-          "only_once": "Adaptar solo una vez",
+          "min_color_temp": "Temperatura de color mínima (K)",
+          "max_color_temp": "Temperatura de color máxima (K)",
+          "only_once": "Adaptar solo al encender",
           "detect_non_ha_changes": "Detectar cambios fuera de Home Assistant",
-          "intercept": "Interceptar light.turn_on",
-          "multi_light_intercept": "Interceptación multi-luz",
-          "separate_turn_on_commands": "Separar comandos turn_on",
-          "send_split_delay": "Retraso entre comandos (ms)",
+          "intercept": "Adaptar inmediatamente al encender",
+          "multi_light_intercept": "Adaptar comandos para varias luces",
+          "separate_turn_on_commands": "Enviar brillo y color por separado",
+          "send_split_delay": "Retardo entre comandos separados (ms)",
           "skip_redundant_commands": "Omitir comandos redundantes",
-          "take_over_control": "Ceder control ante cambios manuales",
-          "autoreset_control_seconds": "Auto-reset del control manual (s)",
-          "adapt_delay": "Retardo tras encender (s)",
+          "take_over_control": "Pausar la adaptación ante cambios manuales",
+          "autoreset_control_seconds": "Reanudar el control automático tras (s)",
+          "adapt_delay": "Retardo de adaptación tras encender (s)",
           "sunrise_time": "Hora fija de amanecer",
           "sunset_time": "Hora fija de atardecer",
-          "sunrise_offset_minutes": "Offset amanecer (min)",
-          "sunset_offset_minutes": "Offset atardecer (min)",
+          "sunrise_offset_minutes": "Desplazamiento del amanecer (min)",
+          "sunset_offset_minutes": "Desplazamiento del atardecer (min)",
           "min_sunrise_time": "Amanecer más temprano",
           "max_sunrise_time": "Amanecer más tardío",
           "min_sunset_time": "Atardecer más temprano",
@@ -68,43 +72,51 @@
           "sleep_rgb_or_color_temp": "Modo noche: definir con",
           "sleep_color_temp": "Modo noche: temperatura de color (K)",
           "sleep_rgb_color": "Modo noche: color RGB",
-          "sleep_transition": "Transición modo noche (s)",
-          "sleep_schedule_start": "Inicio horario modo noche",
-          "sleep_schedule_end": "Fin horario modo noche",
+          "sleep_transition": "Transición manual del modo noche (s)",
+          "sleep_schedule_start": "Inicio de la franja del modo noche",
+          "sleep_schedule_end": "Fin de la franja del modo noche",
           "brightness_mode": "Modo de brillo / temperatura de color",
           "apply_temperature_curve": "Aplicar también a la temperatura de color",
           "brightness_mode_time_light": "Transición de brillo: tramo diurno (s)",
           "brightness_mode_time_dark": "Transición de brillo: tramo nocturno (s)",
           "brightness_mode_time_light_minutes": "Después del amanecer / antes del atardecer (min)",
           "brightness_mode_time_dark_minutes": "Antes del amanecer / después del atardecer (min)",
-          "sleep_activation_mode": "Activación automática del modo noche"
+          "sleep_activation_mode": "Activación automática del modo noche",
+          "prefer_rgb_color": "Preferir color RGB",
+          "take_over_control_mode": "Qué pausar ante cambios manuales",
+          "adapt_only_on_bare_turn_on": "Adaptar solo encendidos sin brillo ni color",
+          "include_config_in_attributes": "Mostrar la configuración en los atributos de la entidad",
+          "transition_until_sleep": "Modo noche automático (ajuste anterior)",
+          "sleep_schedule_enabled": "Usar una franja de modo noche (ajuste anterior)",
+          "sunrise_offset": "Desplazamiento del amanecer (s)",
+          "sunset_offset": "Desplazamiento del atardecer (s)"
         },
         "data_description": {
           "lights": "Luces que controlará este perfil. Puedes dejar la lista vacía.",
-          "interval": "Frecuencia con la que se recalculan y aplican ajustes.",
+          "interval": "Tiempo entre cada cálculo y aplicación de los ajustes de las luces.",
           "transition": "Duración de las transiciones durante la adaptación habitual, incluida la entrada y salida automática del modo noche.",
           "initial_transition": "Duración de la primera transición al pasar de apagado a encendido.",
           "min_brightness": "Brillo mínimo permitido.",
           "max_brightness": "Brillo máximo permitido.",
-          "min_color_temp": "Kelvin mínimo del ciclo (más cálido).",
-          "max_color_temp": "Kelvin máximo del ciclo (más frío).",
+          "min_color_temp": "Temperatura de color más baja del ciclo diario. Los valores más bajos producen tonos más cálidos.",
+          "max_color_temp": "Temperatura de color más alta del ciclo diario. Los valores más altos producen tonos más fríos.",
           "sleep_rgb_or_color_temp": "Cómo se define el color en modo noche.",
           "sleep_brightness": "Brillo objetivo en modo noche.",
-          "sleep_color_temp": "Temperatura de color en modo noche (si eliges “temperatura de color”).",
-          "sleep_rgb_color": "Color RGB en modo noche (si eliges “RGB”). En este modo el canal W se fuerza a 0.",
+          "sleep_color_temp": "Temperatura de color del modo noche cuando seleccionas «Definir con temperatura de color».",
+          "sleep_rgb_color": "Color RGB del modo noche cuando seleccionas «Definir con RGB». En luces RGBW o RGB+CCT, los canales blancos dedicados se apagan.",
           "sleep_transition": "Duración de la transición al activar/desactivar manualmente el modo noche con su interruptor. El modo noche automático usa la transición general.",
           "sleep_schedule_start": "Inicio de la franja automática. Solo se usa con «Por franja horaria».\nFormato HH:MM:SS; por ejemplo, 23:00:00.",
           "sleep_schedule_end": "Fin de la franja automática. Solo se usa con «Por franja horaria».\nPuede cruzar medianoche; por ejemplo, de 23:00:00 a 05:00:00.",
-          "take_over_control": "Si está activo, detiene adaptaciones cuando detecta un ajuste manual.",
-          "detect_non_ha_changes": "Si está activo, detecta cambios de estado que no provienen de Home Assistant. Requiere “Ceder control ante cambios manuales” para funcionar.",
+          "take_over_control": "Pausa la adaptación de una luz cuando otra acción cambia su brillo o color.",
+          "detect_non_ha_changes": "Detecta cambios hechos directamente en la luz o desde otro sistema. Requiere «Pausar la adaptación ante cambios manuales». Solicita el estado de la luz en cada intervalo de adaptación; desactívalo si la luz informa de estados incorrectos.",
           "autoreset_control_seconds": "Tiempo para devolver el control a Circadian Pro tras un ajuste manual. Usa 0 para desactivar la recuperación automática.",
-          "only_once": "Si está activo, adapta las luces solo al encenderse. Si está desactivado, las mantiene adaptadas de forma continua.",
-          "separate_turn_on_commands": "Usa llamadas separadas a light.turn_on para color y brillo. Útil para ciertas luces que no soportan ambos a la vez.",
-          "send_split_delay": "Retraso (ms) entre los comandos separados cuando “Separar comandos turn_on” está activo.",
-          "adapt_delay": "Espera en segundos entre encender la luz y aplicar la adaptación. Puede evitar parpadeos.",
-          "skip_redundant_commands": "Evita enviar comandos si el estado objetivo ya coincide con el estado registrado. Reduce tráfico y mejora respuesta. Desactiva si tu luz se desincroniza.",
-          "intercept": "Intercepta llamadas a light.turn_on para adaptar color y brillo al instante. Desactiva si tu luz no soporta light.turn_on con color y brillo.",
-          "multi_light_intercept": "Si “Interceptar light.turn_on” está activo, también intercepta llamadas que apuntan a varias luces, pudiendo dividir una llamada en varias.",
+          "only_once": "Adapta las luces al encenderlas y después mantiene esos ajustes. Si lo desactivas, la adaptación continúa mientras las luces están encendidas.",
+          "separate_turn_on_commands": "Envía llamadas separadas a light.turn_on para el brillo y el color. Útil para luces que no pueden aplicar ambos en un solo comando.",
+          "send_split_delay": "Espera estos milisegundos entre los comandos separados de brillo y color.",
+          "adapt_delay": "Espera estos segundos tras encender la luz antes de adaptarla. Puede ayudar a evitar parpadeos.",
+          "skip_redundant_commands": "Omite los comandos si el objetivo ya coincide con el estado que la luz comunica a Home Assistant. Reduce el tráfico de red. Desactívalo si el estado comunicado no coincide con el estado real.",
+          "intercept": "Añade el brillo y el color adaptados a las llamadas a light.turn_on antes de que lleguen a la luz. Desactívalo si la luz no admite el comando combinado.",
+          "multi_light_intercept": "Intercepta también los comandos dirigidos a varias luces. Una llamada puede dividirse en varias. Requiere «Adaptar inmediatamente al encender».",
           "sunrise_offset_minutes": "Ajusta el amanecer en minutos enteros. Un valor positivo lo retrasa y uno negativo lo adelanta. Por ejemplo, 30 lo retrasa media hora.",
           "sunset_offset_minutes": "Ajusta el atardecer en minutos enteros. Un valor positivo lo retrasa y uno negativo lo adelanta. Por ejemplo, 60 lo retrasa una hora.",
           "sunrise_time": "Usa esta hora de amanecer todos los días. Déjala vacía para calcular el amanecer según tu ubicación y la fecha.",
@@ -119,61 +131,75 @@
           "brightness_mode_time_dark_minutes": "Adelanta la subida antes del amanecer.\nProlonga la bajada después del atardecer.\nAfecta al brillo y, si marcas la casilla, también a la temperatura de color.",
           "brightness_mode_time_light_minutes": "Prolonga la subida después del amanecer.\nAdelanta la bajada antes del atardecer.\nAfecta al brillo y, si marcas la casilla, también a la temperatura de color.",
           "sleep_activation_mode": "Desactivado: el modo noche solo se activa con su interruptor manual.\nPor amanecer y atardecer: se activa entre el atardecer y el amanecer del perfil.\nPor franja horaria: se activa durante el horario indicado abajo.\nEl interruptor manual permite activar el modo noche en cualquier momento.",
-          "apply_temperature_curve": "Comparte la curva y los tiempos entre brillo y temperatura de color, cada uno entre sus límites. Sustituye también la evolución nocturna de la temperatura de color. El modo noche conserva sus propios ajustes."
+          "apply_temperature_curve": "Comparte la curva y los tiempos entre brillo y temperatura de color, cada uno entre sus límites. Sustituye también la evolución nocturna de la temperatura de color. El modo noche conserva sus propios ajustes.",
+          "prefer_rgb_color": "Usa RGB en lugar del modo nativo de temperatura de color cuando la luz admite ambos.",
+          "take_over_control_mode": "Pausa el brillo y el color, o solo el ajuste modificado manualmente. Requiere «Pausar la adaptación ante cambios manuales».",
+          "adapt_only_on_bare_turn_on": "Al encender una luz, adáptala solo si el comando no indica brillo ni color. Ayuda a respetar las escenas. Requiere «Pausar la adaptación ante cambios manuales».",
+          "include_config_in_attributes": "Muestra los ajustes del perfil en los atributos del interruptor principal para consultarlos o usarlos en automatizaciones.",
+          "transition_until_sleep": "Ajuste de compatibilidad con perfiles antiguos. Usa «Activación automática del modo noche» para elegir cómo se activa.",
+          "sleep_schedule_enabled": "Ajuste de compatibilidad con perfiles antiguos. Usa «Por franja horaria» en «Activación automática del modo noche».",
+          "sunrise_offset": "Desplaza el amanecer estos segundos. Los valores positivos lo retrasan y los negativos lo adelantan.",
+          "sunset_offset": "Desplaza el atardecer estos segundos. Los valores positivos lo retrasan y los negativos lo adelantan."
         }
       },
       "white_w_kelvin": {
         "title": "Canal blanco (W)",
         "submit": "Siguiente",
-        "description": "Indica el Kelvin real del canal blanco dedicado (W) de tu tira RGBW (por ejemplo, 3000K).",
+        "description": "Indica la temperatura de color real del canal blanco dedicado (W) de tu tira RGBW, por ejemplo 3000 K.",
         "data": {
-          "white_w_kelvin": "Kelvin del canal W (K)"
+          "white_w_kelvin": "Temperatura de color del canal blanco (K)"
         },
         "data_description": {
-          "white_w_kelvin": "Kelvin real del LED blanco dedicado (W) de tu tira. Desde 4000K hasta este valor, el canal W se mantiene al nivel de 4000K; por debajo, se reduce progresivamente hacia la calibración de 1000K."
+          "white_w_kelvin": "Temperatura de color real del LED blanco. Determina cuándo W empieza a pasar del nivel de blanco calibrado a 4000 K al nivel calibrado a 1000 K. Este punto de cambio se limita al intervalo entre ambas referencias."
         }
       },
       "white_channels": {
-        "title": "Canales blanco cálido y blanco frío",
+        "title": "Canales de blanco cálido y blanco frío",
         "submit": "Siguiente",
-        "description": "Indica las temperaturas físicas de los LED blanco cálido (WW) y blanco frío (CW) de tu tira RGB+CCT. Son valores de la tira, independientes de las referencias visuales de 4000K y 1000K.",
+        "description": "Indica las temperaturas de color reales de los LED de blanco cálido (WW) y blanco frío (CW) de tu tira RGB+CCT. Estos valores físicos son independientes de las referencias visuales de 4000 K y 1000 K.",
         "data": {
-          "white_w_kelvin": "Temperatura del blanco cálido WW (K)",
-          "white_cw_kelvin": "Temperatura del blanco frío CW (K)"
+          "white_w_kelvin": "Temperatura del blanco cálido (WW, K)",
+          "white_cw_kelvin": "Temperatura del blanco frío (CW, K)"
         },
         "data_description": {
-          "white_w_kelvin": "Temperatura real del LED blanco cálido. Se conserva el valor W existente, normalmente 3000K. Debe ser menor que CW.",
-          "white_cw_kelvin": "Temperatura real del LED blanco frío, por ejemplo 6500K. Si se omite en YAML o en el servicio de ajustes, se usa el máximo de la luz o 6500K si no está disponible."
+          "white_w_kelvin": "Temperatura de color real del LED blanco cálido. Debe ser menor que la del blanco frío.",
+          "white_cw_kelvin": "Temperatura de color real del LED blanco frío, por ejemplo 6500 K. Si se omite en YAML o en la acción de ajustes, se usa la temperatura máxima de la luz, o 6500 K si no está disponible."
         }
       },
       "cal_neutral": {
-        "title": "Calibración 4000K",
+        "title": "Calibración a 4000 K",
         "submit": "Siguiente",
-        "description": "Ajusta RGB para tu referencia visual de 4000K. Las luces RGBW añaden un control de intensidad blanca; las RGB+CCT añaden también la temperatura de mezcla entre blanco cálido y frío. El panel Circadian Pro permite previsualizar los cambios al instante mientras editas.",
+        "description": "Ajusta RGB para tu referencia visual de 4000 K. Las luces RGBW añaden un control de intensidad blanca; las RGB+CCT añaden también la temperatura de mezcla entre blanco cálido y frío.",
         "data": {
-          "cal_rgb_neutral_r": "Intensidad rojo",
-          "cal_rgb_neutral_g": "Intensidad verde",
-          "cal_rgb_neutral_b": "Intensidad azul",
+          "cal_rgb_neutral_r": "Intensidad del rojo",
+          "cal_rgb_neutral_g": "Intensidad del verde",
+          "cal_rgb_neutral_b": "Intensidad del azul",
           "cal_white_intensity_neutral": "Intensidad blanca (%)",
           "cal_white_kelvin_neutral": "Temperatura de la mezcla blanca (K)"
         },
         "data_description": {
           "cal_white_intensity_neutral": "RGBW: intensidad del canal W.\nRGB+CCT: intensidad total de blanco cálido y frío, con la mezcla definida por separado.",
-          "cal_white_kelvin_neutral": "Temperatura de la mezcla blanca en la referencia visual de 4000K, entre las temperaturas físicas WW y CW. Los canales RGB se ajustan de forma independiente."
+          "cal_white_kelvin_neutral": "Temperatura de la mezcla blanca en la referencia visual de 4000 K, entre las temperaturas físicas WW y CW. Los canales RGB se ajustan de forma independiente.",
+          "cal_rgb_neutral_r": "Intensidad del canal rojo en la referencia visual de 4000 K, de 0 (apagado) a 255 (intensidad máxima).",
+          "cal_rgb_neutral_g": "Intensidad del canal verde en la referencia visual de 4000 K, de 0 (apagado) a 255 (intensidad máxima).",
+          "cal_rgb_neutral_b": "Intensidad del canal azul en la referencia visual de 4000 K, de 0 (apagado) a 255 (intensidad máxima)."
         }
       },
       "cal_warm": {
-        "title": "Calibración 1000K",
+        "title": "Calibración a 1000 K",
         "submit": "Terminar",
-        "description": "Ajusta RGB para tu referencia visual de 1000K. La intensidad blanca aparece solo si alguna luz seleccionada admite RGBW o RGB+CCT; con poco blanco, RGB puede producir un tono cálido o naranja. El panel Circadian Pro permite previsualizar los cambios al instante mientras editas.",
+        "description": "Ajusta RGB para tu referencia visual de 1000 K. La intensidad blanca aparece solo si alguna luz seleccionada admite RGBW o RGB+CCT; con poco blanco, RGB puede producir un tono cálido o naranja.",
         "data": {
-          "cal_rgb_warm_r": "Intensidad rojo",
-          "cal_rgb_warm_g": "Intensidad verde",
-          "cal_rgb_warm_b": "Intensidad azul",
+          "cal_rgb_warm_r": "Intensidad del rojo",
+          "cal_rgb_warm_g": "Intensidad del verde",
+          "cal_rgb_warm_b": "Intensidad del azul",
           "cal_white_intensity_warm": "Intensidad blanca (%)"
         },
         "data_description": {
-          "cal_white_intensity_warm": "Intensidad blanca en la referencia visual de 1000K. En RGB+CCT se usa aquí solo blanco cálido; normalmente conviene bajar el blanco para que RGB produzca el tono cálido o naranja."
+          "cal_white_intensity_warm": "Intensidad blanca en la referencia visual de 1000 K. En RGB+CCT se usa aquí solo blanco cálido; normalmente conviene bajar el blanco para que RGB produzca el tono cálido o naranja.",
+          "cal_rgb_warm_r": "Intensidad del canal rojo en la referencia visual de 1000 K, de 0 (apagado) a 255 (intensidad máxima).",
+          "cal_rgb_warm_g": "Intensidad del canal verde en la referencia visual de 1000 K, de 0 (apagado) a 255 (intensidad máxima).",
+          "cal_rgb_warm_b": "Intensidad del canal azul en la referencia visual de 1000 K, de 0 (apagado) a 255 (intensidad máxima)."
         }
       }
     },
@@ -181,7 +207,7 @@
       "option_error": "Uno o varios ajustes no son válidos.",
       "entity_missing": "Una de las luces configuradas ya no existe.",
       "invalid_brightness_range": "El brillo mínimo no puede ser mayor que el brillo máximo.",
-      "invalid_color_temp_range": "El Kelvin mínimo no puede ser mayor que el Kelvin máximo.",
+      "invalid_color_temp_range": "La temperatura de color mínima no puede ser mayor que la máxima.",
       "invalid_brightness_window": "Los tiempos de transición deben ser números iguales o mayores que cero.",
       "invalid_sunrise_bounds": "El amanecer más temprano no puede ser posterior al amanecer más tardío.",
       "invalid_sunset_bounds": "El atardecer más temprano no puede ser posterior al atardecer más tardío.",
@@ -223,6 +249,309 @@
         "brightness": "Pausar solo brillo",
         "color": "Pausar solo color"
       }
+    },
+    "profile_action": {
+      "options": {
+        "new": "Nuevo perfil"
+      }
+    },
+    "use_defaults": {
+      "options": {
+        "current": "Conservar los ajustes actuales",
+        "configuration": "Usar los ajustes guardados del perfil",
+        "factory": "Usar los valores de fábrica"
+      }
+    },
+    "take_over_control_mode": {
+      "options": {
+        "pause_all": "Pausar brillo y color",
+        "pause_changed": "Pausar solo lo modificado"
+      }
+    }
+  },
+  "services": {
+    "apply": {
+      "name": "Aplicar los ajustes actuales",
+      "description": "Aplica los ajustes actuales de brillo y color de un perfil a las luces seleccionadas.",
+      "fields": {
+        "entity_id": {
+          "name": "Interruptor del perfil",
+          "description": "Interruptor principal de Circadian Pro del perfil cuyos ajustes quieres utilizar."
+        },
+        "lights": {
+          "name": "Luces",
+          "description": "Luces que quieres controlar. Si lo dejas vacío, se usan todas las luces asignadas al perfil."
+        },
+        "transition": {
+          "name": "Transición (s)",
+          "description": "Duración en segundos de la transición a los ajustes aplicados por esta acción, si la luz admite transiciones."
+        },
+        "adapt_brightness": {
+          "name": "Adaptar brillo",
+          "description": "Aplica el brillo objetivo actual del perfil."
+        },
+        "adapt_color": {
+          "name": "Adaptar color",
+          "description": "Aplica el color objetivo actual del perfil a las luces que admiten ajustes de color."
+        },
+        "prefer_rgb_color": {
+          "name": "Preferir color RGB",
+          "description": "Usa RGB en lugar del modo nativo de temperatura de color cuando la luz admite ambos."
+        },
+        "turn_on_lights": {
+          "name": "Encender las luces",
+          "description": "Enciende también las luces que están apagadas. Si lo desactivas, solo se adaptan las luces que ya están encendidas."
+        }
+      }
+    },
+    "set_manual_control": {
+      "name": "Establecer el control manual",
+      "description": "Pausa o reanuda la adaptación automática de las luces seleccionadas.",
+      "fields": {
+        "entity_id": {
+          "name": "Interruptor del perfil",
+          "description": "Interruptor principal de Circadian Pro del perfil cuyos ajustes quieres utilizar."
+        },
+        "lights": {
+          "name": "Luces",
+          "description": "Luces que quieres controlar. Si lo dejas vacío, se usan todas las luces asignadas al perfil."
+        },
+        "manual_control": {
+          "name": "Control manual",
+          "description": "Elige si quieres pausar el brillo y el color, pausar solo uno de ellos o reanudar la adaptación automática."
+        }
+      }
+    },
+    "change_switch_settings": {
+      "name": "Cambiar los ajustes del perfil",
+      "description": "Cambia los ajustes del perfil en ejecución. Los cambios de esta acción son temporales y se restablecen al recargar la integración; usa el panel Circadian Pro para guardarlos de forma permanente.",
+      "fields": {
+        "brightness_mode": {
+          "name": "Modo de brillo / temperatura de color",
+          "description": "Elige la curva de brillo: Natural sigue el ciclo solar; Lineal cambia a ritmo constante; Sigmoide usa una curva en S, más suave en los extremos. En Lineal y Sigmoide, la curva también puede controlar la temperatura de color si activas «Aplicar también a la temperatura de color». Los tiempos de esta acción se expresan en segundos."
+        },
+        "apply_temperature_curve": {
+          "name": "Aplicar también a la temperatura de color",
+          "description": "Comparte la curva y los tiempos entre brillo y temperatura de color, cada uno entre sus límites. Sustituye también la evolución nocturna de la temperatura de color. El modo noche conserva sus propios ajustes."
+        },
+        "brightness_mode_time_light": {
+          "name": "Después del amanecer / antes del atardecer (s)",
+          "description": "Duración en segundos después del amanecer y antes del atardecer, usada en Lineal y Sigmoide. Si ambos tiempos son cero, el objetivo cambia al amanecer y al atardecer; se sigue aplicando la transición configurada."
+        },
+        "brightness_mode_time_dark": {
+          "name": "Antes del amanecer / después del atardecer (s)",
+          "description": "Duración en segundos antes del amanecer y después del atardecer, usada en Lineal y Sigmoide. Si ambos tiempos son cero, el objetivo cambia al amanecer y al atardecer; se sigue aplicando la transición configurada."
+        },
+        "entity_id": {
+          "name": "Interruptor del perfil",
+          "description": "Interruptor principal de Circadian Pro del perfil cuyos ajustes quieres utilizar."
+        },
+        "use_defaults": {
+          "name": "Ajustes no especificados",
+          "description": "Para los ajustes que omitas en esta acción, conserva los valores actuales, usa la configuración guardada del perfil o aplica los valores de fábrica."
+        },
+        "include_config_in_attributes": {
+          "name": "Mostrar la configuración en los atributos de la entidad",
+          "description": "Muestra los ajustes del perfil en los atributos del interruptor principal para consultarlos o usarlos en automatizaciones."
+        },
+        "white_w_kelvin": {
+          "name": "Temperatura del blanco o blanco cálido (K)",
+          "description": "Temperatura de color real de W en RGBW, o del blanco cálido (WW) en RGB+CCT. En RGB+CCT, debe ser menor que la temperatura del blanco frío (CW)."
+        },
+        "white_cw_kelvin": {
+          "name": "Temperatura del blanco frío (CW, K)",
+          "description": "Temperatura de color real del canal blanco frío en RGB+CCT. Si se omite, se usa la temperatura máxima de la luz, o 6500 K si no está disponible."
+        },
+        "cal_white_kelvin_neutral": {
+          "name": "Temperatura de la mezcla blanca neutra (K)",
+          "description": "Temperatura de la mezcla blanca RGB+CCT en la referencia visual de 4000 K, entre las temperaturas reales de blanco cálido y frío. RGB y la intensidad blanca total son independientes. Si se omite, se usan 4000 K ajustados a ese rango."
+        },
+        "turn_on_lights": {
+          "name": "Encender las luces",
+          "description": "Este campo no se usa en «Cambiar los ajustes del perfil». Para encender luces apagadas, usa «Aplicar los ajustes actuales» con «Encender las luces» activado."
+        },
+        "initial_transition": {
+          "name": "Transición inicial (s)",
+          "description": "Duración de la primera transición al pasar de apagado a encendido."
+        },
+        "sleep_transition": {
+          "name": "Transición manual del modo noche (s)",
+          "description": "Duración de la transición al activar/desactivar manualmente el modo noche con su interruptor. El modo noche automático usa la transición general."
+        },
+        "max_brightness": {
+          "name": "Brillo máximo (%)",
+          "description": "Brillo máximo permitido."
+        },
+        "max_color_temp": {
+          "name": "Temperatura de color máxima (K)",
+          "description": "Temperatura de color más alta del ciclo diario. Los valores más altos producen tonos más fríos."
+        },
+        "min_brightness": {
+          "name": "Brillo mínimo (%)",
+          "description": "Brillo mínimo permitido."
+        },
+        "min_color_temp": {
+          "name": "Temperatura de color mínima (K)",
+          "description": "Temperatura de color más baja del ciclo diario. Los valores más bajos producen tonos más cálidos."
+        },
+        "only_once": {
+          "name": "Adaptar solo al encender",
+          "description": "Adapta las luces al encenderlas y después mantiene esos ajustes. Si lo desactivas, la adaptación continúa mientras las luces están encendidas."
+        },
+        "prefer_rgb_color": {
+          "name": "Preferir color RGB",
+          "description": "Usa RGB en lugar del modo nativo de temperatura de color cuando la luz admite ambos."
+        },
+        "separate_turn_on_commands": {
+          "name": "Enviar brillo y color por separado",
+          "description": "Envía llamadas separadas a light.turn_on para el brillo y el color. Útil para luces que no pueden aplicar ambos en un solo comando."
+        },
+        "send_split_delay": {
+          "name": "Retardo entre comandos separados (ms)",
+          "description": "Espera estos milisegundos entre los comandos separados de brillo y color."
+        },
+        "sleep_brightness": {
+          "name": "Brillo en modo noche (%)",
+          "description": "Brillo objetivo en modo noche."
+        },
+        "sleep_rgb_or_color_temp": {
+          "name": "Modo noche: definir con",
+          "description": "Cómo se define el color en modo noche."
+        },
+        "sleep_rgb_color": {
+          "name": "Modo noche: color RGB",
+          "description": "Color RGB del modo noche cuando seleccionas «Definir con RGB». En luces RGBW o RGB+CCT, los canales blancos dedicados se apagan."
+        },
+        "sleep_color_temp": {
+          "name": "Modo noche: temperatura de color (K)",
+          "description": "Temperatura de color del modo noche cuando seleccionas «Definir con temperatura de color»."
+        },
+        "sunrise_offset": {
+          "name": "Desplazamiento del amanecer (s)",
+          "description": "Desplaza el amanecer estos segundos. Los valores positivos lo retrasan y los negativos lo adelantan."
+        },
+        "sunrise_time": {
+          "name": "Hora fija de amanecer",
+          "description": "Usa esta hora de amanecer todos los días. Déjala vacía para calcular el amanecer según tu ubicación y la fecha."
+        },
+        "sunset_offset": {
+          "name": "Desplazamiento del atardecer (s)",
+          "description": "Desplaza el atardecer estos segundos. Los valores positivos lo retrasan y los negativos lo adelantan."
+        },
+        "sunset_time": {
+          "name": "Hora fija de atardecer",
+          "description": "Usa esta hora de atardecer todos los días. Déjala vacía para calcular el atardecer según tu ubicación y la fecha."
+        },
+        "max_sunrise_time": {
+          "name": "Amanecer más tardío",
+          "description": "Impide que el amanecer del perfil ocurra después de esta hora. Déjala vacía para no aplicar este límite."
+        },
+        "min_sunset_time": {
+          "name": "Atardecer más temprano",
+          "description": "Impide que el atardecer del perfil ocurra antes de esta hora. Déjala vacía para no aplicar este límite."
+        },
+        "take_over_control": {
+          "name": "Pausar la adaptación ante cambios manuales",
+          "description": "Pausa la adaptación de una luz cuando otra acción cambia su brillo o color."
+        },
+        "take_over_control_mode": {
+          "name": "Qué pausar ante cambios manuales",
+          "description": "Pausa el brillo y el color, o solo el ajuste modificado manualmente. Requiere «Pausar la adaptación ante cambios manuales»."
+        },
+        "detect_non_ha_changes": {
+          "name": "Detectar cambios fuera de Home Assistant",
+          "description": "Detecta cambios hechos directamente en la luz o desde otro sistema. Requiere «Pausar la adaptación ante cambios manuales». Solicita el estado de la luz en cada intervalo de adaptación; desactívalo si la luz informa de estados incorrectos."
+        },
+        "transition": {
+          "name": "Transición (s)",
+          "description": "Duración de las transiciones durante la adaptación habitual, incluida la entrada y salida automática del modo noche."
+        },
+        "adapt_delay": {
+          "name": "Retardo de adaptación tras encender (s)",
+          "description": "Espera estos segundos tras encender la luz antes de adaptarla. Puede ayudar a evitar parpadeos."
+        },
+        "autoreset_control_seconds": {
+          "name": "Reanudar el control automático tras (s)",
+          "description": "Tiempo para devolver el control a Circadian Pro tras un ajuste manual. Usa 0 para desactivar la recuperación automática."
+        }
+      }
+    }
+  },
+  "entity": {
+    "switch": {
+      "circadian_pro": {
+        "name": "Circadian Pro",
+        "state_attributes": {
+          "configuration": {
+            "name": "Configuración"
+          },
+          "manual_control": {
+            "name": "Luces con control manual"
+          },
+          "autoreset_time_remaining": {
+            "name": "Tiempo hasta reanudar el control automático (s)"
+          },
+          "brightness_pct": {
+            "name": "Brillo (%)"
+          },
+          "color_temp_kelvin": {
+            "name": "Temperatura de color (K)"
+          },
+          "color_temp_mired": {
+            "name": "Temperatura de color (mired)"
+          },
+          "rgb_color": {
+            "name": "Color RGB"
+          },
+          "xy_color": {
+            "name": "Color XY"
+          },
+          "hs_color": {
+            "name": "Color HS"
+          },
+          "sun_position": {
+            "name": "Posición en el ciclo solar"
+          },
+          "force_rgb_color": {
+            "name": "Forzar color RGB"
+          }
+        }
+      },
+      "adapt_brightness": {
+        "name": "Adaptar brillo"
+      },
+      "adapt_color": {
+        "name": "Adaptar color"
+      },
+      "sleep_mode": {
+        "name": "Modo noche"
+      }
+    }
+  },
+  "exceptions": {
+    "service_target_required": {
+      "message": "Selecciona un interruptor de perfil de Circadian Pro o al menos una luz configurada."
+    },
+    "service_multiple_profiles_with_lights": {
+      "message": "Selecciona un solo perfil si también especificas las luces."
+    },
+    "service_profile_not_loaded": {
+      "message": "La entidad {entity_id} no es un interruptor de perfil de Circadian Pro cargado."
+    },
+    "service_target_not_found": {
+      "message": "No se ha encontrado un perfil de Circadian Pro para las entidades seleccionadas."
+    },
+    "service_main_switch_required": {
+      "message": "Selecciona el interruptor principal de Circadian Pro para cambiar los ajustes del perfil."
+    },
+    "service_unknown_defaults": {
+      "message": "Origen de los ajustes predeterminados desconocido: {value}."
+    },
+    "service_lights_multiple_profiles": {
+      "message": "Las luces seleccionadas pertenecen a varios perfiles. Selecciona un perfil mediante entity_id."
+    },
+    "service_lights_not_configured": {
+      "message": "Las luces seleccionadas no pertenecen a ningún perfil de Circadian Pro. Selecciona luces configuradas o un perfil mediante entity_id."
     }
   }
 }

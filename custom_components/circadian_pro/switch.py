@@ -66,7 +66,7 @@ from homeassistant.core import (
     State,
     callback,
 )
-from homeassistant.exceptions import Unauthorized, UnknownUser
+from homeassistant.exceptions import ServiceValidationError, Unauthorized, UnknownUser
 from homeassistant.helpers import entity_platform, entity_registry, target as target_helpers
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_component import async_update_entity
@@ -291,7 +291,7 @@ def _switches_with_lights(
     return switches
 
 
-class NoSwitchFoundError(ValueError):
+class NoSwitchFoundError(ServiceValidationError):
     """No switches found for lights."""
 
 
@@ -313,18 +313,14 @@ def _switch_with_lights(
         if len(on_switches) == 1:
             # Of the multiple switches, only one is on
             return on_switches[0]
-        msg = (
-            f"_switch_with_lights: Light(s) {lights} found in multiple switch configs"
-            f" ({[s.entity_id for s in switches]}). You must pass a switch under"
-            " 'entity_id'."
+        raise NoSwitchFoundError(
+            translation_domain=DOMAIN,
+            translation_key="service_lights_multiple_profiles",
         )
-        raise NoSwitchFoundError(msg)
-    msg = (
-        f"_switch_with_lights: Light(s) {lights} not found in any switch's"
-        " configuration. You must either include the light(s) that is/are"
-        " in the integration config, or pass a switch under 'entity_id'."
+    raise NoSwitchFoundError(
+        translation_domain=DOMAIN,
+        translation_key="service_lights_not_configured",
     )
-    raise NoSwitchFoundError(msg)
 
 
 # For documentation on this function, see integration_entities() from HomeAssistant Core:
@@ -340,21 +336,17 @@ def _switches_from_service_call(
     switch_entity_ids: list[str] | None = data.get("entity_id")
 
     if not lights and not switch_entity_ids:
-        msg = (
-            "circadian-pro: Neither a switch nor a light was provided in the service call."
-            " If you intend to adapt all lights on all switches, please report your"
-            " use case to the Circadian Pro maintainers. Currently, you must pass"
-            " either a circadian-pro switch or the lights to a circadian_pro service call."
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="service_target_required",
         )
-        raise ValueError(msg)
 
     if switch_entity_ids is not None:
         if len(switch_entity_ids) > 1 and lights:
-            msg = (
-                "circadian-pro: Cannot pass multiple switches with lights argument."
-                f" Invalid service data received: {service_call.data}"
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="service_multiple_profiles_with_lights",
             )
-            raise ValueError(msg)
         switches: CircadianProSwitches = []
         ent_reg = entity_registry.async_get(hass)
         for entity_id in switch_entity_ids:
@@ -362,7 +354,11 @@ def _switches_from_service_call(
             config_id = ent_entry.config_entry_id if ent_entry is not None else None
             switch = hass.data.get(DOMAIN, {}).get(config_id, {}).get(SWITCH_DOMAIN)
             if switch is None or entity_id != switch.entity_id:
-                raise ValueError(f"{entity_id} is not a loaded Circadian Pro main switch.")
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="service_profile_not_loaded",
+                    translation_placeholders={"entity_id": entity_id},
+                )
             switches.append(switch)
         return switches
 
@@ -370,11 +366,10 @@ def _switches_from_service_call(
         switch = _switch_with_lights(hass, lights, refresh_lights=refresh_lights)
         return [switch]
 
-    msg = (
-        "circadian-pro: Incorrect data provided in service call."
-        f" Entities not found in the integration. Service data: {service_call.data}"
+    raise ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key="service_target_not_found",
     )
-    raise ValueError(msg)
 
 
 async def _authorized_switch_targets(
@@ -404,7 +399,10 @@ async def handle_change_switch_settings(
 ) -> None:
     """Allows HASS to change config values via a service call."""
     if not isinstance(switch, CircadianProSwitch):
-        raise ValueError("Select the main Circadian Pro switch to change profile settings.")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="service_main_switch_required",
+        )
     await async_check_entity_control(
         switch.hass, service_call.context, [switch.entity_id, *switch.lights],
     )
@@ -418,7 +416,11 @@ async def handle_change_switch_settings(
         # use whatever's in the config flow or configuration.yaml
         defaults = switch._config_backup
     else:
-        raise ValueError(f"Unknown use_defaults value: {which}")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="service_unknown_defaults",
+            translation_placeholders={"value": str(which)},
+        )
 
     # deep copy the defaults so we don't modify the original dicts
     switch._set_changeable_settings(data=data, defaults=deepcopy(defaults))
@@ -1175,6 +1177,9 @@ def _attributes_have_changed(
 class CircadianProSwitch(SwitchEntity, RestoreEntity):
     """Representation of a Circadian Pro switch."""
 
+    _attr_has_entity_name = True
+    _attr_translation_key = "circadian_pro"
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -1357,11 +1362,6 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
             self.lights,
             data,
         )
-
-    @property
-    def name(self) -> str:
-        """Return the name of the device if any."""
-        return f"Circadian Pro: {self._name}"
 
     @property
     def unique_id(self) -> str:
@@ -2210,6 +2210,8 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
 class SimpleSwitch(SwitchEntity, RestoreEntity):
     """Representation of a Circadian Pro switch."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         which: str,
@@ -2224,6 +2226,9 @@ class SimpleSwitch(SwitchEntity, RestoreEntity):
         self._icon = icon
         self._state: bool = initial_state
         self._which = which
+        # Keep the original role string for stable registry and entity IDs.
+        # Only the displayed name is supplied by Home Assistant translations.
+        self._attr_translation_key = slugify(which)
         self._config_name = data[CONF_NAME]
         self._unique_id = f"{self._config_name}_{slugify(self._which)}"
         self._name = f"Circadian Pro {which}: {self._config_name}"
@@ -2233,11 +2238,6 @@ class SimpleSwitch(SwitchEntity, RestoreEntity):
         # Note: Home Assistant may keep an existing entity_id from the entity registry.
         object_id = f"{DOMAIN}_{slugify(self._which)}_{slugify(self._config_name)}"
         self.entity_id = async_generate_entity_id("switch.{}", object_id, hass=hass)
-
-    @property
-    def name(self) -> str:
-        """Return the name of the device if any."""
-        return self._name
 
     @property
     def unique_id(self) -> str:

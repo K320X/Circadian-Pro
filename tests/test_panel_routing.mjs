@@ -35,7 +35,7 @@ function harness(t, search = "?config_entry=one", overrides = {}) {
   const calls = [];
   const panel = new CircadianCalibrationPanel();
   Object.assign(panel, {
-    isConnected: true, initialized: true, catalogLoaded: true,
+    isConnected: true, initialized: true, catalogLoaded: true, translationsReady: true,
     entries: ["one", "two", "three"].map((entry_id) => ({ entry_id, title: entry_id, settings: { lights: [] } })),
     render() {}, updateControls() {},
     _hass: {
@@ -164,7 +164,7 @@ test("a failed preview restoration is shown and never opens another profile", as
   failStop = true;
   await navigate("two");
   assert.equal(panel.flow, null);
-  assert.equal(panel.error, "Restoration offline");
+  assert.equal(panel.error, panel.copy.error, "an untranslated server error must use a localized message");
   assert.deepEqual(starts(), ["one"]);
 });
 

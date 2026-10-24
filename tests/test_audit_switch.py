@@ -10,6 +10,7 @@ import unittest
 from test_color_temperature_bounds import (
     ProtocolHarness, State, complete_immediate, load_functions, production_namespace,
 )
+from test_entity_translations import ServiceValidationError
 
 
 def namespace():
@@ -21,6 +22,7 @@ def namespace():
         SERVICE_TURN_OFF="turn_off", SERVICE_TOGGLE="toggle", Mapping=Mapping,
         is_on=lambda hass, light: (state := hass.states.get(light)) is not None and state.state == "on",
         is_calibration_preview_context=lambda *_: False,
+        ServiceValidationError=ServiceValidationError,
     )
     load_functions(ns, "helpers.py", {"remove_vowels"})
     load_functions(ns, "switch.py", {

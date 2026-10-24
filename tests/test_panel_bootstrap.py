@@ -84,7 +84,9 @@ class PanelBootstrapFlowTests(unittest.TestCase):
         flow = self.Flow([panel, profile])
         form = self.immediate(flow.async_step_user())
         choices = next(iter(form["data_schema"].schema.values()))
-        self.assertEqual(set(choices), {"new", profile.entry_id})
+        self.assertEqual({option["value"] for option in choices.options}, {"new", profile.entry_id})
+        self.assertEqual(choices.translation_key, "profile_action")
+        self.assertEqual(choices.options[-1]["label"], profile.title)
         for target in (panel, profile_entry("foreign")):
             flow.hass.config_entries.async_get_entry = lambda _entry_id, target=target: target
             result = self.immediate(flow.async_step_menu({"action": target.entry_id}))
