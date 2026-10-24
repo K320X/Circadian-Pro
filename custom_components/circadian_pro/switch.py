@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import zoneinfo
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import timedelta
@@ -1344,7 +1343,9 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
             apply_temperature_curve=data.get(CONF_APPLY_TEMPERATURE_CURVE, False),
             brightness_mode_time_dark=data[CONF_BRIGHTNESS_MODE_TIME_DARK],
             brightness_mode_time_light=data[CONF_BRIGHTNESS_MODE_TIME_LIGHT],
-            timezone=zoneinfo.ZoneInfo(self.hass.config.time_zone),
+            # Home Assistant resolves this timezone before integration setup.
+            # Reuse it: constructing ZoneInfo here can read disk on the event loop.
+            timezone=dt_util.get_default_time_zone(),
         )
 
         # Fixed sleep window (only used when sleep_activation_mode == "schedule").
@@ -1557,7 +1558,7 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
         end = getattr(self, "_sleep_schedule_end", None)
         if not start or not end:
             return False
-        now_local = dt_util.now(zoneinfo.ZoneInfo(self.hass.config.time_zone)).time()
+        now_local = dt_util.now().time()
         if start < end:
             return start <= now_local < end
         # Cross-midnight window
@@ -1587,7 +1588,7 @@ class CircadianProSwitch(SwitchEntity, RestoreEntity):
             return self._within_sleep_window()
 
         if mode == "sun":
-            now = dt_util.now(zoneinfo.ZoneInfo(self.hass.config.time_zone))
+            now = dt_util.now()
             try:
                 return self._sun_light_settings.sun.sun_position(now) < 0
             except Exception:  # pragma: no cover

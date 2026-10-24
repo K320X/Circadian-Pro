@@ -15,9 +15,9 @@ Circadian Pro automatically adjusts the brightness and color temperature of your
 
 It supports multiple independent instances, manual-control detection, automatic sleep mode, calibrated RGB/RGBW/RGB+CCT lighting and several brightness-transition profiles.
 
-**Current stable version:** `0.21.29`
+**Current stable version:** `0.21.30`
 
-Version 0.21.29 connects Home Assistant's integration settings buttons directly to the Circadian Pro panel: a profile opens its own configuration, while the panel entry opens the profile list. See the [release notes](docs/release-0.21.29.md). The [full audit report](docs/auditoria-2026-10-13.md) records the earlier code review and its validation limits.
+Version 0.21.30 fixes potentially blocking time-zone loading in the solar chart and adaptation callbacks, while preserving local schedules and daylight-saving behavior. See the [release notes](docs/release-0.21.30.md). The [full audit report](docs/auditoria-2026-10-13.md) records the earlier code review and its validation limits.
 
 ## Screenshots
 

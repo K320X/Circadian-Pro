@@ -15,6 +15,7 @@ from tempfile import TemporaryDirectory
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components" / "circadian_pro"
 
@@ -195,6 +196,17 @@ def load_api_module():
     config_entries.ConfigEntryState = EntryState
     exceptions = ModuleType("homeassistant.exceptions")
     exceptions.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
+    util = ModuleType("homeassistant.util")
+    dt_util = ModuleType("homeassistant.util.dt")
+
+    async def async_get_time_zone(name):
+        try:
+            return ZoneInfo(name)
+        except ZoneInfoNotFoundError:
+            return None
+
+    dt_util.async_get_time_zone = async_get_time_zone
+    util.dt = dt_util
     components.frontend = frontend
     components.panel_custom = panel_custom
     components.websocket_api = ws
@@ -205,6 +217,7 @@ def load_api_module():
         "homeassistant.components.frontend": frontend, "homeassistant.components.panel_custom": panel_custom,
         "homeassistant.components.websocket_api": ws, "homeassistant.components.http": http,
         "homeassistant.config_entries": config_entries, "homeassistant.exceptions": exceptions,
+        "homeassistant.util": util, "homeassistant.util.dt": dt_util,
     })
     name = "calibration_api_tests_package.frontend"
     spec = importlib.util.spec_from_file_location(name, COMPONENT / "frontend.py")

@@ -5,7 +5,7 @@ from datetime import UTC, datetime, time, timedelta
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 from astral import LocationInfo
@@ -74,6 +74,22 @@ class SolarContextApiTests(unittest.TestCase):
         self.assertEqual(result["refresh_at"], result["day_end"])
         self.assertEqual(result["refresh_after"], 23.5 * 3600)
         self.assertEqual(result["generated_at"], datetime(2026, 10, 14, 23, 30, tzinfo=UTC).timestamp())
+
+    def test_timezone_is_resolved_through_ha_async_helper(self):
+        resolver = AsyncMock(return_value=self.sun.timezone)
+        with patch.object(self.api.dt_util, "async_get_time_zone", resolver):
+            result = self.solar()
+        resolver.assert_awaited_once_with("Europe/London")
+        self.assertEqual(result["timezone"], "Europe/London")
+        self.assertIs(self.executor_calls[0][0].timezone, self.sun.timezone)
+
+    def test_unavailable_timezone_returns_error_without_solar_work(self):
+        with patch.object(self.api.dt_util, "async_get_time_zone", AsyncMock(return_value=None)):
+            self.solar()
+        self.assertEqual(self.errors[-1][1], "solar_unavailable")
+        self.assertEqual(self.results, [])
+        self.assertEqual(self.executor_calls, [])
+        self.assertEqual(self.calibration.calls, [])
 
     def test_dst_local_days_have_23_or_25_elapsed_hours(self):
         for day, hours in ((datetime(2026, 3, 29, 12, tzinfo=UTC), 23),

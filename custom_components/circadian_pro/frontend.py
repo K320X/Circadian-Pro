@@ -6,14 +6,13 @@ import asyncio
 from bisect import bisect_right
 from copy import deepcopy
 from dataclasses import replace
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta, tzinfo
 from hashlib import sha256
 from itertools import pairwise
 import json
 import logging
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 try:
     import probatio as ws_schema
@@ -25,6 +24,7 @@ from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 from .calibration import PREVIEW_SECONDS, async_preview_calibration, async_stop_calibration_preview
 from .const import DOMAIN, EXTRA_VALIDATION, NONE_STR, VALIDATION_TUPLES, _DOMAIN_SCHEMA, is_panel_entry, validate_cross_options
@@ -134,7 +134,7 @@ async def websocket_entries(hass: Any, connection: Any, msg: dict[str, Any]) -> 
 
 
 def _schedule_sleep_windows(
-    start: float, end: float, zone: ZoneInfo, sleep_start: time, sleep_end: time,
+    start: float, end: float, zone: tzinfo, sleep_start: time, sleep_end: time,
 ) -> list[dict[str, float]]:
     """Resolve wall-clock membership, including both folds and skipped DST times.
 
@@ -308,7 +308,6 @@ async def websocket_solar(hass: Any, connection: Any, msg: dict[str, Any]) -> No
             value = settings.get(name, 0 if name in _SOLAR_OFFSET_OPTIONS else None)
             overrides[name] = EXTRA_VALIDATION[name][0](value) if value is not None else None
         timezone_name = hass.config.time_zone
-        overrides["timezone"] = ZoneInfo(timezone_name)
         sleep_settings = {"sleep_activation_mode": settings.get("sleep_activation_mode", "disabled")}
         if sleep_settings["sleep_activation_mode"] == "schedule":
             for name in _SLEEP_TIME_OPTIONS:
@@ -317,6 +316,11 @@ async def websocket_solar(hass: Any, connection: Any, msg: dict[str, Any]) -> No
         connection.send_error(msg["id"], "invalid_options", str(err))
         return
     switch = hass.data[DOMAIN][entry.entry_id]["switch"]
+    timezone = await dt_util.async_get_time_zone(timezone_name)
+    if timezone is None:
+        connection.send_error(msg["id"], "solar_unavailable", "Home Assistant's configured time zone is unavailable.")
+        return
+    overrides["timezone"] = timezone
     # Replace the frozen settings instead of mutating the live profile or its
     # cached SunEvents. Its Astral location already comes from HA configuration.
     sun = replace(switch._sun_light_settings.sun, **overrides)
